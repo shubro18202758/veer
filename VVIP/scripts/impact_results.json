@@ -1,0 +1,69 @@
+{
+  "generated_at_utc": "2026-10-23T14:39:29+00:00",
+  "network": {
+    "segments": 49,
+    "junctions": 34,
+    "total_km": 192.0,
+    "mean_lanes": 4.7,
+    "arrival_rate_veh_per_min_per_junction": 71.0,
+    "source": {
+      "mode": "offline",
+      "file": "scripts/data/osm_network.json"
+    },
+    "attribution": "(c) OpenStreetMap contributors, ODbL 1.0 — https://www.openstreetmap.org/copyright"
+  },
+  "scenarios": {
+    "central": {
+      "baseline_hold_min": 25.0,
+      "platform_hold_min": 2.5,
+      "commuter_minutes_baseline": 1131887.8,
+      "commuter_minutes_platform": 11318.9,
+      "reduction_factor": 100.0,
+      "vehicles_delayed_baseline": 60367,
+      "vehicles_delayed_platform": 6037,
+      "idle_liters_baseline": 10187.0,
+      "idle_liters_platform": 101.9,
+      "co2_kg_baseline": 25467.5,
+      "co2_kg_platform": 254.7
+    },
+    "conservative": {
+      "baseline_hold_min": 15.0,
+      "platform_hold_min": 3.0,
+      "commuter_minutes_baseline": 244487.8,
+      "commuter_minutes_platform": 9779.5,
+      "reduction_factor": 25.0,
+      "vehicles_delayed_baseline": 21732,
+      "vehicles_delayed_platform": 4346,
+      "idle_liters_baseline": 2200.4,
+      "idle_liters_platform": 88.0,
+      "co2_kg_baseline": 5501.0,
+      "co2_kg_platform": 220.0
+    },
+    "optimistic": {
+      "baseline_hold_min": 45.0,
+      "platform_hold_min": 2.0,
+      "commuter_minutes_baseline": 3667316.3,
+      "commuter_minutes_platform": 7244.1,
+      "reduction_factor": 506.2,
+      "vehicles_delayed_baseline": 108661,
+      "vehicles_delayed_platform": 4829,
+      "idle_liters_baseline": 33005.8,
+      "idle_liters_platform": 65.2,
+      "co2_kg_baseline": 82514.6,
+      "co2_kg_platform": 163.0
+    }
+  },
+  "per_junction_central": {
+    "commuter_minutes_baseline": 33290.8,
+    "commuter_minutes_platform": 332.9
+  },
+  "ambulance": {
+    "trips_crossing_per_movement_day": 12.0,
+    "minutes_returned_per_movement_day": 132,
+    "minutes_returned_per_year": 33000
+  },
+  "annualization": {
+    "movement_days_per_year": 250,
+    "commuter_hours_returned_per_year_central": 4669037
+  }
+}

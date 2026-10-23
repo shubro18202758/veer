@@ -1,0 +1,64 @@
+{
+ "replay": {
+  "status": "no_data",
+  "reason": "no traffic.hourly_aggregates rows in window (no field observations)",
+  "window_start": "2026-10-20T23:58:47+05:30",
+  "window_end": "2026-10-23T23:58:47+05:30",
+  "n_observations": 0,
+  "speed_mae_kmh": null,
+  "mae_tolerance_kmh": null,
+  "calibrated": false
+ },
+ "city_band_live": "AMBER",
+ "apply": {
+  "http": 409,
+  "band": "AMBER",
+  "applied": false,
+  "reason": "shadow_eval_failed_closed",
+  "planned_junctions": [
+   1,
+   3,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   13,
+   14
+  ],
+  "shadow_eval": {
+   "status": "unavailable",
+   "detail": "twin_not_calibrated",
+   "baseline_disruption_vh": 17.1375,
+   "candidate_disruption_vh": 17.1375
+  }
+ },
+ "last_plan_auditable": {
+  "band": "AMBER",
+  "planned_junctions": [
+   1,
+   3,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   13,
+   14
+  ],
+  "shadow_eval": {
+   "status": "unavailable",
+   "detail": "twin_not_calibrated",
+   "baseline_disruption_vh": 17.1375,
+   "candidate_disruption_vh": 17.1375
+  },
+  "event_id": "c7073ae6-56ae-5048-8bdc-d826d8da5ddc"
+ },
+ "committed_writes": 0,
+ "policy_refusals": 1,
+ "history_rows": 0
+}

@@ -1,0 +1,10 @@
+# Veer release repository — the platform's own ignore rules live in VVIP/.gitignore
+__pycache__/
+*.pyc
+.venv/
+.venvs/
+node_modules/
+.DS_Store
+*.log
+.env
+.env.*
