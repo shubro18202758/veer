@@ -110,9 +110,20 @@
 	--v3-lh-micro: 16px;
 	--v3-text-stat: 30px;
 	--v3-lh-stat: 36px;
+	/* the landing page (/welcome) only: a poster may exceed the console's type scale (V3-LANDING) */
+	--v3-land-hero: 112px;
+	--v3-land-lh-hero: 112px;
+	--v3-land-section: 52px;
+	--v3-land-lh-section: 60px;
+	--v3-land-lead: 22px;
+	--v3-land-lh-lead: 34px;
+	--v3-land-figure: 80px;
+	--v3-land-lh-figure: 84px;
+	--v3-land-lockup: 160px;
+	--v3-land-max: 1440px;
 }
 
-/* 1366-class screens (§6.10): rail 76, top bar 60, gutter 24, display 32/40, title 24/32 */
+/* 1366-class screens (§6.10): rail 76, top bar 60, gutter 24, display 32/40, title 24/32; the landing steps down too */
 @media (max-width: 1500px) {
 	:root {
 		--v3-rail: 76px;
@@ -124,6 +135,16 @@
 		--v3-lh-title: 32px;
 		--v3-text-stat: 26px;
 		--v3-lh-stat: 32px;
+		--v3-land-hero: 92px;
+		--v3-land-lh-hero: 92px;
+		--v3-land-section: 44px;
+		--v3-land-lh-section: 52px;
+		--v3-land-lead: 20px;
+		--v3-land-lh-lead: 30px;
+		--v3-land-figure: 64px;
+		--v3-land-lh-figure: 68px;
+		--v3-land-lockup: 124px;
+		--v3-land-max: 1240px;
 	}
 }
 

@@ -125,7 +125,7 @@ export const V3_COLOURS = {
 	},
 } as const;
 
-/** Keys shared by both themes (shape, motion, type) — the ≥ 1500 px values. */
+/** Keys shared by both themes (shape, motion, type, the landing page's poster scale) — the ≥ 1500 px values. */
 export const V3_SHARED = {
 	'--v3-radius-s': '8px',
 	'--v3-radius-m': '12px',
@@ -157,6 +157,17 @@ export const V3_SHARED = {
 	'--v3-lh-micro': '16px',
 	'--v3-text-stat': '30px',
 	'--v3-lh-stat': '36px',
+	// the landing page (/welcome) only: a poster may exceed the console's type scale (V3-LANDING)
+	'--v3-land-hero': '112px',
+	'--v3-land-lh-hero': '112px',
+	'--v3-land-section': '52px',
+	'--v3-land-lh-section': '60px',
+	'--v3-land-lead': '22px',
+	'--v3-land-lh-lead': '34px',
+	'--v3-land-figure': '80px',
+	'--v3-land-lh-figure': '84px',
+	'--v3-land-lockup': '160px',
+	'--v3-land-max': '1440px',
 } as const;
 
 /** Below 1500 px (§6.10): the overrides of the shared keys. */
@@ -170,6 +181,16 @@ export const V3_COMPACT = {
 	'--v3-lh-title': '32px',
 	'--v3-text-stat': '26px',
 	'--v3-lh-stat': '32px',
+	'--v3-land-hero': '92px',
+	'--v3-land-lh-hero': '92px',
+	'--v3-land-section': '44px',
+	'--v3-land-lh-section': '52px',
+	'--v3-land-lead': '20px',
+	'--v3-land-lh-lead': '30px',
+	'--v3-land-figure': '64px',
+	'--v3-land-lh-figure': '68px',
+	'--v3-land-lockup': '124px',
+	'--v3-land-max': '1240px',
 } as const;
 
 /** The width where the console steps down to the 1366-class layout. */

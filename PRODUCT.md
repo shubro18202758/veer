@@ -126,6 +126,16 @@ the marks of the agencies and data sources Veer works with. The design rule is *
 earlier analyst workspace is kept one click deeper under **Analyst**. Nothing was removed; some things moved one
 level down.
 
+### 3.0 The landing page (`/welcome`)
+
+![Landing page](VVIP/docs/screenshots/landing.jpg)
+
+The public front door, no sign-in: "Regulated, not stopped." over a credited reference photograph of Ahmedabad at night
+with the console beside it; the problem with its modelled figures; See · Decide · Act; the four audiences; the
+principles; what Veer is built on with the agencies' and sources' marks; and the credits — in English, Hindi and
+Gujarati, under the strict public content-security policy, with no API calls. **Open the console** leads to the
+operator sign-in, **Check your road** to the citizen page.
+
 ### 3.1 The shell (every operator page)
 
 - **Left rail**, in the order of the officer's jobs: **Home**, **Map**, **Decide**, **Plan**, **Assistant**,

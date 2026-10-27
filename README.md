@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img width="900" alt="Veer's Home screen on the live stack: the one decision that needs an officer now, over the real satellite map of its place, beside the city's status" src="VVIP/docs/screenshots/home.jpg" />
+  <img width="900" alt="Veer's landing page: Regulated, not stopped. One live picture of Ahmedabad for police, traffic, 108 and the city — the AI proposes, a named officer decides." src="VVIP/docs/screenshots/landing.jpg" />
 </p>
 
 <p align="center">
@@ -75,6 +75,15 @@ Advisories**, with **Analyst** below), a slim top bar with a single search box (
 and grey; colour is kept for meaning — **orange** a named officer must decide, **red** a stolen or watchlisted
 vehicle, **green** approved or healthy, **teal** a protected route, **blue** a link or something the assistant
 wrote — and a dashed outline means emulated or unverified.
+
+### The landing page — the front door
+
+![Landing page](VVIP/docs/screenshots/landing.jpg)
+
+`/welcome` is Veer's public front door (no sign-in): "Regulated, not stopped." over a credited reference photograph of
+Ahmedabad at night, the console beside it, and — below — the problem with its modelled figures, See · Decide · Act,
+the four audiences, the principles, what Veer is built on, and the agencies' and sources' marks, in English, Hindi
+and Gujarati. **Open the console** leads to the operator sign-in; **Check your road** to the citizen page.
 
 ### Home — what needs you, what is happening, what is coming
 

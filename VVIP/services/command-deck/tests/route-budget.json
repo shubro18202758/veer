@@ -13,7 +13,8 @@
 		"/o/event:p4c-size-probe": 324096,
 		"/citizen": 175104,
 		"/driver": 129536,
-		"/comms": 305664
+		"/comms": 305664,
+		"/welcome": 62464
 	},
 	"coldload_en": {
 		"/analyst": 404480,
@@ -28,7 +29,8 @@
 		"/o/event:p4c-size-probe": 344064,
 		"/citizen": 458240,
 		"/driver": 129536,
-		"/comms": 349696
+		"/comms": 349696,
+		"/welcome": 62464
 	},
 	"coldload_hi_gu": {
 		"/analyst": 475136,
@@ -43,7 +45,8 @@
 		"/o/event:p4c-size-probe": 407040,
 		"/citizen": 490496,
 		"/driver": 150016,
-		"/comms": 415232
+		"/comms": 415232,
+		"/welcome": 72192
 	},
 	"routes": {
 		"/map": "/(v3)/map",
@@ -51,7 +54,8 @@
 		"/plan": "/(v3)/plan",
 		"/citizen": "/(public)/citizen",
 		"/driver": "/(public)/driver",
-		"/comms": "/(deck)/comms"
+		"/comms": "/(deck)/comms",
+		"/welcome": "/(landing)/welcome"
 	},
 	"note_v3": "V3-P4 (2026-10-26): the extra routes in \"routes\" are measured exactly like the three of record and held to their own ceilings, set from the honest measurement + ~10 KB \u2014 /map: static 367.1 KB, cold EN 367.1 KB, HI/GU 429.0 KB; /assistant: static 275.2 KB, cold EN 295.5 KB, HI/GU 358.3 KB. The three ceilings of record are unchanged (V3-P4 also moved the canvas's closed Layers/Legend panels off the first paint: about -5.3 KB on /, /ops and /gods-eye).",
 	"note_v3_plan": "V3-P4B (2026-10-26): /plan (the planner's own page) is measured like the other extra routes and held to ceilings from the honest measurement + ~10 KB \u2014 static 266.7 KB, cold EN 289.5 KB, HI/GU 350.3 KB (measured on main + V3-P4B). The three ceilings of record are unchanged; /map and /assistant stay within theirs with the slim header (369.7 / 278.6 KB static).",
@@ -59,5 +63,6 @@
 	"note_p5": "V3-P5 (2026-10-26): the root flip. /analyst is the Analyst workspace (route node /(deck)) and keeps the old / ceilings; / and /home are V3 Home (route node /(v3)/home) at measured + ~10 KB.",
 	"note_p6a": "V3-P6A (2026-10-27): public pages in the V3 day look and Advisories under the V3 shell, measured like the other extra routes (+~10 KB).",
 	"note_p6b": "V3-P6B (2026-10-27): /analyst, /ops and /gods-eye now draw the V3 shell (rail, top bar, operator band) instead of the v2 navbar: static +0.5 KB, but the HI and GU cold loads fetch the V3 string pack (packs.v3.hi/gu, ~4 KB gzip) these routes did not need before. Measured on the production build: /analyst HI 453.3 / GU 452.8 KB, /ops HI 517.1 / GU 516.7 KB, /gods-eye HI 451.8 / GU 451.2 KB (EN and the static ceilings are unchanged and hold). The three HI/GU ceilings are raised to measured + ~10 KB (464.0, 527.5, 462.0 KB).",
-	"note_v3_p7": "V3-P7 (2026-10-27): imagery. The routes that now draw artwork, reference photos or agency marks ship the small media module (src/lib/v3/media: the key-art and vehicle-shot maps, the 21-row photo table, the 17-row mark table, the Cover / VehicleShot / AgencyMark components and the v3i_ string pack) on first load; the pictures themselves are static files under static/{artwork,photos,logos}, lazy-loaded, never in a JS bundle. Measured on the production build: / and /home static 294.5 KB (+2.0 KB over 292.5), /assistant 290.4 KB (+2.4 KB), /plan 280.1 KB (+0.1 KB); these four static ceilings are set to measured + ~10 KB (rounded up to 0.5 KB). Every other route holds its ceiling unchanged; the cold-load ceilings were not re-measured in this package."
+	"note_v3_p7": "V3-P7 (2026-10-27): imagery. The routes that now draw artwork, reference photos or agency marks ship the small media module (src/lib/v3/media: the key-art and vehicle-shot maps, the 21-row photo table, the 17-row mark table, the Cover / VehicleShot / AgencyMark components and the v3i_ string pack) on first load; the pictures themselves are static files under static/{artwork,photos,logos}, lazy-loaded, never in a JS bundle. Measured on the production build: / and /home static 294.5 KB (+2.0 KB over 292.5), /assistant 290.4 KB (+2.4 KB), /plan 280.1 KB (+0.1 KB); these four static ceilings are set to measured + ~10 KB (rounded up to 0.5 KB). Every other route holds its ceiling unchanged; the cold-load ceilings were not re-measured in this package.",
+	"note_landing": "V3-LANDING (2026-10-27): /welcome, the public landing page (route node /(landing)/welcome), is measured like the other extra routes and held to measured + ~10 KB (rounded up to 0.5 KB). Measured on the production build: static 50.6 KB (51809 B: the page, its string pack, the imagery tables and the glyph \u2014 no operator code, no map); cold EN 50.6 KB (nothing dynamic); cold HI 60.5 KB / GU 60.4 KB (the language chunks of strings, packs.ui, packs.media and packs.landing, ~9.9 KB). Its pictures are static files (static/photos, static/landing, static/artwork, static/logos), never in a JS bundle; only the hero photo and the hero window load eagerly."
 }

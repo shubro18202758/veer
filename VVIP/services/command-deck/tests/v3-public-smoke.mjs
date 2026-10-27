@@ -22,7 +22,12 @@
  *   7. the scripted fallback is labelled and files NOTHING (zero POSTs);
  *   8. no registration mark and no operator API call anywhere on either page (only /api/public/*, the segments read and
  *      the dispatch POST the driver itself files);
- *   9. zero other would-be writes; no page error.
+ *   9. zero other would-be writes; no page error;
+ *  10. /welcome (the landing, V3-LANDING): night theme, no shell of either kind; at 1920 × 1080 and 1366 × 768 the first
+ *      viewport is the poster (the lockup, the promise, both doors and the console window inside it); EN · HI · GU at
+ *      1920, 1366 and 390 with no sideways scroll; the doors lead to / (a new document) and /citizen; every picture keeps
+ *      its honest caption; no registration mark; the language switch speaks the pick and persists it; the page makes
+ *      no API call at all; its text inks hold ≥ 4.5:1.
  *
  * Exit 0 with `ok <name>` lines; exit 1 on any failure.
  */
@@ -313,6 +318,55 @@ export async function main() {
 		await s.waitForSelector('[data-testid="window-open"]', { timeout: 30000 });
 		ok('7. …a scripted run files NOTHING (zero POSTs) and reaches its open window', posts.length === postsBefore);
 		await s.close();
+
+		// ── /welcome · the landing (V3-LANDING) ──────────────────────────────
+		const welcomeFrom = calls.length;
+		for (const [w, h] of [[1920, 1080], [1366, 768], [390, 844]]) {
+			for (const lang of ['en', 'hi', 'gu']) {
+				const p = await open('/welcome', { lang, w, h });
+				await p.waitForSelector('[data-testid="landing"]', { timeout: 30000 });
+				await sleep(1400); // the poster's entrance (≤ 1.4 s) settles
+				const m = await p.evaluate(() => {
+					const q = (sel) => document.querySelector(sel);
+					const box = (sel) => q(sel)?.getBoundingClientRect() ?? null;
+					const inView = (sel) => {
+						const b = box(sel);
+						return !!b && b.top >= 0 && b.bottom <= innerHeight && b.height > 0;
+					};
+					return {
+						theme: document.documentElement.dataset.theme,
+						lang: document.documentElement.lang,
+						promise: q('[data-testid="land-promise"]')?.textContent ?? '',
+						heroH: Math.round(box('[data-testid="land-hero"]')?.height ?? 0),
+						poster: ['.lockup img', '[data-testid="land-promise"]', '[data-testid="land-cta-console"]', '[data-testid="land-cta-road"]', '[data-testid="land-hero-shot"]'].map(inView),
+						shells: document.querySelectorAll('[data-shell="v3"], [data-v3="rail"], [data-v3="top-bar"], [data-testid="v3-officer"], [data-shell="citizen"]').length,
+						spill: document.documentElement.scrollWidth - innerWidth,
+						doors: [...document.querySelectorAll('[data-testid="land-cta-console"], [data-testid="land-cta-road"]')].map((a) => `${a.getAttribute('href')}${a.hasAttribute('data-sveltekit-reload') ? ' reload' : ''}`).join(),
+						consoleReload: [...document.querySelectorAll('a[href="/"], a[href="/analyst"]')].every((a) => a.hasAttribute('data-sveltekit-reload')),
+						photoCaps: [...document.querySelectorAll('[data-testid="v3-photo-caption"]')].filter((c) => /\S/.test(c.textContent) && c.querySelector('.credit')?.textContent.includes('Wikimedia Commons')).length,
+						shotCaps: document.querySelectorAll('[data-testid="land-shot-caption"], [data-testid="land-step-caption"]').length,
+						modelled: !!q('[data-testid="land-modelled"] .tag-dashed'),
+						mark: /[A-Z]{2}\s?\d{1,2}\s?[A-Z]{1,3}\s?\d{4}/.test(document.body.innerText),
+					};
+				});
+				const script = lang === 'hi' ? HI : lang === 'gu' ? GU : /^Regulated, not stopped\.$/;
+				ok(`10. ${w} px ${lang}: /welcome is night, speaks ${lang}, wears no shell, no sideways scroll`, m.theme === 'command' && m.lang === lang && script.test(m.promise) && m.shells === 0 && m.spill <= 1, JSON.stringify({ theme: m.theme, lang: m.lang, spill: m.spill, shells: m.shells }));
+				if (w >= 1366) ok(`10. ${w} × ${h} ${lang}: the first viewport is the poster (lockup, promise, both doors, the console window)`, m.heroH === h && m.poster.every(Boolean), JSON.stringify({ heroH: m.heroH, poster: m.poster }));
+				ok(`10. ${w} px ${lang}: the doors (/ reloads, /citizen), honest captions on every picture, the Modelled tag, no registration mark`, m.doors === '/ reload,/citizen' && m.consoleReload && m.photoCaps === 2 && m.shotCaps === 4 && m.modelled && !m.mark, JSON.stringify({ doors: m.doors, photoCaps: m.photoCaps, shotCaps: m.shotCaps }));
+				if (w === 1920 && lang === 'en') {
+					const ink = await contrast(p, ['.eyebrow', '[data-testid="land-promise"]', '.sub', '.rule', '.cap', '.statement', '.fig-label', '.modelled', '.step-body', '.person-body', '.seat', '.principle-body', '.base-body', '.marks-credit', '.foot-credits p', '.nav-links a']);
+					ok('10. /welcome text inks hold ≥ 4.5:1 on the night ground', ink.every((i) => i.ratio === null || i.ratio >= 4.5), ink.map((i) => `${i.s.split(' ').pop()}:${i.ratio}`).join(' '));
+					await p.click('[data-testid="land-lang"] button[lang="gu"]');
+					await sleep(900);
+					const sw = await p.evaluate(() => ({ lang: document.documentElement.lang, promise: document.querySelector('[data-testid="land-promise"]').textContent, cookie: document.cookie }));
+					ok('10. the language switch speaks the pick at once (<html lang>, the promise) and persists it (veer_lang)', sw.lang === 'gu' && GU.test(sw.promise) && /veer_lang=gu/.test(sw.cookie), JSON.stringify(sw));
+				}
+				if (SHOTS) await p.screenshot({ path: path.join(SHOTS, `v3-welcome-${lang}-${w}.png`) });
+				await p.close();
+			}
+		}
+		const welcomeApi = calls.slice(welcomeFrom).filter((c) => / \/api\//.test(c) || / \/gods-eye\//.test(c));
+		ok('10. /welcome made no API call at all (static content and static pictures)', welcomeApi.length === 0, welcomeApi.slice(0, 4).join(' | '));
 
 		// 8 · no operator call
 		const operator = calls.filter((x) => /^(GET|POST) \/api\/v1\/(vehicles|enforcement|dispatches|city|events\/active|units)|^(GET|POST) \/(ops|decide)(\/|$)/.test(x) && !/POST \/api\/v1\/events\/[^/]+\/dispatch/.test(x));

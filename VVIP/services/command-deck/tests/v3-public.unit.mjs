@@ -16,6 +16,9 @@
  *                never uses the alert red or the decision orange (frozen meanings).
  *   5. LAYOUT    one column of 592 px, type floors (posture ≥ 22 px, chips ≥ 16 px, controls ≥ 44 px, the request button ≥ 56 px),
  *                prefers-reduced-motion honoured, the day tokens are the only colours.
+ *   6. LANDING   the third public page, /welcome (V3-LANDING; tests/welcome.unit.mjs holds the rest): the same boundary (no
+ *                operator code, never the operator store), no hex colour, the strict (non-operator) document policy, and its
+ *                links into the console reload (a CSP is per document).
  *
  * Exits 0 with `ok <name>` lines, 1 on any failure.
  */
@@ -153,6 +156,23 @@ const { geo, packs, hi, gu } = await import(`${pathToFileURL(OUT).href}?t=${Date
 	const hex = [...walk('src/lib/v3/public'), 'src/lib/citizen/CitizenAdvisory.svelte', 'src/lib/citizen/GreenCorridorDriver.svelte', 'src/lib/citizen/LightCorridorMap.svelte'].filter((f) => /#[0-9a-fA-F]{3,8}(?![a-zA-Z0-9])/.test(read(f).replace(/\{#(each|if|snippet)/g, '')));
 	ok('5. no hex colour on the public pages (the V3 day tokens only)', hex.length === 0, hex.join());
 	ok('5. the day theme carries the V3 day tokens (the public shell loads tokens.css; the server renders daylight)', /\$lib\/v3\/tokens\.css/.test(read('src/lib/v3/public/PublicShell.svelte')) && /id\.startsWith\('\/\(public\)'\) \? 'daylight'/.test(read('src/hooks.server.ts')));
+}
+
+// ── 6. LANDING ──────────────────────────────────────────────────────────────
+{
+	const files = [...walk('src/lib/v3/landing'), ...walk('src/routes/(landing)')];
+	const DENY = /(\$lib\/v3\/(shell|decide|object|plan|assistant|home|map)\/|\$lib\/shell\/|\$lib\/decisions|\$lib\/workspace|\$lib\/gods-eye|\$lib\/ops|\$lib\/assistant|\$lib\/stores|\$stores|data-service)/;
+	const offenders = [];
+	for (const f of files) for (const m of read(f).matchAll(/(?:from|import)\s+['"]([^'"]+)['"]/g)) if (DENY.test(m[1])) offenders.push(`${f} → ${m[1]}`);
+	ok('6. /welcome loads no operator code (no shell, screen, store, workspace, gods-eye or data-service)', files.length >= 7 && offenders.length === 0, offenders.slice(0, 4).join(' | ') || `${files.length} files`);
+	ok('6. /welcome never starts the operator store or the city registry, and calls no API', files.every((f) => !/\bops\.start\(|cityRegistry\.start\(|liveWorld\.|\bfetch\(/.test(read(f))));
+	const hex = files.filter((f) => /#[0-9a-fA-F]{3,8}(?![a-zA-Z0-9-])/.test(read(f).replace(/href="#[\w-]+"/g, '').replace(/\{#(each|if|snippet)/g, '')));
+	ok('6. no hex colour on /welcome (the V3 tokens only)', hex.length === 0, hex.join());
+	const hooks = read('src/hooks.server.ts');
+	ok('6. /welcome is a strict public document (hooks: only the (deck) and (v3) groups get the operator policy)', /operator: id\.startsWith\('\/\(deck\)'\) \|\| id\.startsWith\('\/\(v3\)'\),/.test(hooks));
+	const land = read('src/lib/v3/landing/Landing.svelte');
+	const toConsole = [...land.matchAll(/<a\b[^>]*href=\{HREF\.console\}[^>]*>/g)].map((m) => m[0]);
+	ok('6. every /welcome link into the console reloads (never a client-side hop into the operator policy)', toConsole.length > 0 && toConsole.every((t) => /data-sveltekit-reload/.test(t)));
 }
 
 if (failures) {

@@ -274,12 +274,19 @@ function isMachineIngestWrite(method: string, pathname: string): boolean {
  * per DOCUMENT and a client-side navigation from Home to the map or to Analyst
  * keeps the document it started in, so Home must already carry the policy the
  * canvas needs (the public pages stay strict; user decision 2026-10-26).
+ *
+ * The landing page (/welcome, route group (landing), V3-LANDING) is public as
+ * well: the STRICT policy (never the operator one — its links into the console
+ * reload, so it never client-navigates into Cesium) and the NIGHT theme, the
+ * console's own ground, rendered by the server so it never flashes daylight.
  */
 function documentDefaults(event: RequestEvent): { theme: string; lang: string; operator: boolean } {
 	const id = event.route.id ?? '';
 	return {
+		// (landing) falls to 'command' with the console: the night ground
 		theme: id.startsWith('/(public)') ? 'daylight' : 'command',
 		lang: langFromCookieHeader(event.request.headers.get('cookie')) ?? (id === '/(public)/driver' ? 'gu' : 'en'),
+		// only the two operator groups; (public) and (landing) keep the strict policy
 		operator: id.startsWith('/(deck)') || id.startsWith('/(v3)'),
 	};
 }
