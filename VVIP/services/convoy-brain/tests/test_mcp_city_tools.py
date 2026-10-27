@@ -40,6 +40,7 @@ from convoy_brain.mcp.server import (
     CANVAS_VERBS,
     FORBIDDEN_TOOL_VERBS,
     POST_ALLOWLIST,
+    POST_ALLOWLIST_PATTERNS,
     TOOL_DEFINITIONS,
     ToolExecutionError,
     ToolExecutor,
@@ -52,6 +53,8 @@ from convoy_brain.mcp.server import (
 VEHICLE = "1b94e9d2-7e11-4174-a735-7dd3be3189cf"
 PURSUIT = "4508d86d-566b-438f-8414-b3d67fd7e6e4"
 CLOSED = "9a28fc47-4991-4745-8f0e-462c2a87b515"
+OSINT_EVENT = "3c8a1f40-92d5-4b6e-8f31-7ab9d2e45c77"
+# city_decision_support sample event (OS-BRAIN): a seeded osint_event uuid
 
 ENTITIES = {
     "as_of": "2026-10-22T21:00:00Z",
@@ -145,6 +148,7 @@ SAMPLE_ARGS = {
     "get_interception_plan": {"event_id": PURSUIT},
     "get_situation_log": {"event_id": PURSUIT},
     "list_enforcement_recommendations": {"status": "pending"},
+    "city_decision_support": {"event_urn": f"osint_event:{OSINT_EVENT}"},
     "canvas_fly_to": {"urn": f"vehicle:{VEHICLE}"},
     "canvas_track_entity": {"urn": f"vehicle:{VEHICLE}"},
     "canvas_highlight": {"urns": [f"vehicle:{VEHICLE}"]},
@@ -164,8 +168,15 @@ class TestReadOnlyRail:
         assert len(names) >= 20
 
     def test_post_allow_list_is_compute_only(self):
-        verbs = re.compile(r"/(predict|optimize|evaluate|simulate)/|/traffic/live$")
+        verbs = re.compile(r"/(predict|optimize|evaluate|simulate)/|/traffic/live$"
+                           r"|/decision-support/[^/]+/generate$")
         assert POST_ALLOWLIST and all(verbs.search(p) for p in POST_ALLOWLIST)
+        # the pattern rail: exactly one, and a canonical generate path it
+        # accepts is a compute-only shape like the rest of the rail
+        assert len(POST_ALLOWLIST_PATTERNS) == 1
+        sample = "/api/v1/decision-support/osint_event:" + OSINT_EVENT + "/generate"
+        assert POST_ALLOWLIST_PATTERNS[0].fullmatch(sample)
+        assert verbs.search(sample)
 
     async def test_every_tool_posts_only_to_the_allow_list(self):
         recorder = Recorder()  # every path 404s: the transport is what we watch
@@ -174,7 +185,10 @@ class TestReadOnlyRail:
         for name, args in SAMPLE_ARGS.items():
             with contextlib.suppress(ToolExecutionError):
                 await executor.execute(name, args)
-        assert recorder.posts() <= POST_ALLOWLIST
+        assert all(
+            p in POST_ALLOWLIST or POST_ALLOWLIST_PATTERNS[0].fullmatch(p)
+            for p in recorder.posts()
+        )
         # the city tools read: not one of them POSTs
         city = {"city_query_entities", "city_get_dossier", "city_feed", "get_signal_state",
                 "list_units", "list_dispatches", "get_interception_plan", "get_situation_log",
@@ -317,7 +331,8 @@ class TestActiveEvents:
     def recorder(self) -> Recorder:
         return Recorder({
             ("GET", "/api/v1/events/active"): EVENTS_ACTIVE,
-            ("GET", "/api/v1/events"): EVENTS_HISTORY,
+            # F-CONN-13: a closed event is read by id, not scanned for
+            ("GET", f"/api/v1/events/{CLOSED}"): EVENTS_HISTORY["events"][0],
         })
 
     async def test_event_id_filters(self):
@@ -348,6 +363,20 @@ class TestActiveEvents:
             "get_active_corridor_events", {"event_id": CLOSED})
         assert result["count"] == 1 and result["events"][0]["status"] == "cancelled"
         assert "no longer active" in result["note"]
+
+    async def test_a_closed_event_is_read_by_id_not_scanned(self):
+        """F-CONN-13: GET /api/v1/events/{id} — never the newest-200 window,
+        which misses any older event."""
+        recorder = self.recorder()
+        await executor_with(recorder).execute("get_active_corridor_events", {"event_id": CLOSED})
+        paths = [path for _m, path, _p, _b in recorder.seen]
+        assert f"/api/v1/events/{CLOSED}" in paths
+        assert "/api/v1/events" not in paths
+        # an unknown id (404) is not on the board and not invented
+        unknown = "0" * 8 + "-0000-4000-8000-" + "0" * 12
+        result = await executor_with(recorder).execute(
+            "get_active_corridor_events", {"event_id": unknown})
+        assert all(e["event_id"] != unknown for e in result["events"])
 
 
 class TestHistoricalBaseline:

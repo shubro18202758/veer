@@ -16,9 +16,11 @@ __all__ = ["UseCaseProfile", "PROFILES", "EVENT_KINDS"]
 
 # The archetypes (domain-model axis 3); they select closure-policy and
 # dossier TEMPLATES downstream, never emulator code paths.  crime_incident
-# and vehicle_pursuit are the watchlist-anpr additions (contract C3
-# lockstep: migration 010's CHECK relaxation + traffic_oracle
-# events.EVENT_KINDS mirror this tuple exactly).
+# and vehicle_pursuit are the watchlist-anpr additions; the last six are the
+# OSINT reported-situation kinds (contract C3 lockstep: migrations 010 and
+# 021's CHECK relaxations + traffic_oracle events.EVENT_KINDS mirror this
+# tuple exactly).  No profile uses the OSINT kinds: a reported situation
+# enters only through a named officer's promotion, never the emulator.
 EVENT_KINDS = (
     "protected_movement",
     "procession",
@@ -31,6 +33,13 @@ EVENT_KINDS = (
     # watchlist-anpr additions (010, C3):
     "crime_incident",
     "vehicle_pursuit",
+    # OSINT reported-situation additions (021, C3; lockstep only):
+    "reported_crime",
+    "public_disorder",
+    "road_accident",
+    "hazard",
+    "flooding",
+    "infra_failure",
 )
 
 

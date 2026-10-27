@@ -40,13 +40,16 @@
 	import { kindLabel, localizeNumber, t } from '$lib/i18n/strings';
 	import { citizenT } from '$lib/i18n/strings.citizen';
 	import { requestDispatch } from '$lib/ops/client';
-	import Badge from '$lib/primitives/Badge.svelte';
-	import Button from '$lib/primitives/Button.svelte';
-	import EmptyState from '$lib/primitives/EmptyState.svelte';
+	import '$lib/v3/public/packs.pub3';
+	import Glyph from '$lib/v3/Glyph.svelte';
+	import PublicTag from '$lib/v3/public/PublicTag.svelte';
 	import LightCorridorMap from './LightCorridorMap.svelte';
 	import { clockAt, clockAtMs, doctrineWindowSec, windowState, windowTiming, type Stretch } from './holds';
 	import { PUBLIC_DISPATCH_API, publicFeed } from './public-feed.svelte';
 	import { fixturePublicEvents, type PublicCorridorEvent } from './public-model';
+	import VehicleShot from '$lib/v3/media/VehicleShot.svelte';
+	import AgencyMark from '$lib/v3/media/AgencyMark.svelte';
+	import '$lib/v3/media/packs.media';
 
 	type Phase =
 		| 'idle'
@@ -88,8 +91,14 @@
 	let unitNo = $state('');
 	let urgency = $state<Urgency>('cardiac');
 	let requestError = $state<string | null>(null);
-	let goldenElapsed = $state(0);
+	/**
+	 * F-08: when THIS driver filed the request (local clock), or null. The
+	 * clock counts from it — never from the page load — and says that the
+	 * golden hour itself began earlier, at the incident Veer cannot see.
+	 */
+	let requestedAtMs = $state<number | null>(null);
 	let nowMs = $state(Date.now());
+	const goldenElapsed = $derived(requestedAtMs == null ? null : Math.max(0, Math.floor((nowMs - requestedAtMs) / 1000)));
 
 	// Live request state (the dispatch the officer decides on).
 	let dispatchId = $state<string | null>(null);
@@ -202,8 +211,6 @@
 		}
 	});
 
-	const minutesSaved = $derived(Math.max(1, Math.round(reachInSec / 60)));
-
 	const URGENCIES: Array<{ key: Urgency; labelKey: string }> = [
 		{ key: 'cardiac', labelKey: 'urgCardiac' },
 		{ key: 'trauma', labelKey: 'urgTrauma' },
@@ -232,7 +239,6 @@
 
 	onMount(() => {
 		const golden = setInterval(() => {
-			goldenElapsed += 1;
 			nowMs = Date.now();
 		}, 1000);
 		return () => {
@@ -243,14 +249,16 @@
 	});
 
 	function goldenClock(): string {
+		if (goldenElapsed == null) return '—:—';
 		const mm = String(Math.floor(goldenElapsed / 60)).padStart(2, '0');
 		const ss = String(goldenElapsed % 60).padStart(2, '0');
 		return localizeNumber(`${mm}:${ss}`, lang);
 	}
 
-	function stretchLabel(roadName: string | null, segmentId: number): string {
-		const seg = localizeNumber(segmentId, lang);
-		return roadName ? citizenT(lang, 'driver_stretch_option', roadName, seg) : `${t(lang, 'freezeZone')} ${seg}`;
+	/** A stretch by its signage name and its place on the route (F-24: never a raw segment id). */
+	function stretchLabel(roadName: string | null, index: number): string {
+		const n = localizeNumber(index + 1, lang);
+		return roadName ? citizenT(lang, 'driver_stretch_option', roadName, n) : citizenT(lang, 'driver_stretch_unnamed', n);
 	}
 
 	/** Where the window length came from, clamping and timing included. */
@@ -363,9 +371,15 @@
 
 	async function request() {
 		const c = chosen;
-		if (!c) return;
+		if (!c) {
+			// The button stays enabled-looking; the reason is inline (SPEC §6.6).
+			requestError = t(lang, 'asst_driver_choose_stretch');
+			return;
+		}
 		requestError = null;
 		if (scripted) {
+			requestedAtMs = Date.now();
+			nowMs = requestedAtMs;
 			runScripted(c.stretch.segmentId);
 			return;
 		}
@@ -375,6 +389,8 @@
 		}
 		resetLive();
 		phase = 'evaluating';
+		requestedAtMs = Date.now();
+		nowMs = requestedAtMs;
 		try {
 			const rec = await requestDispatch(c.ev.eventId, {
 				agency: 'ambulance',
@@ -393,6 +409,7 @@
 			void pollDispatch();
 		} catch (err) {
 			phase = 'idle';
+			requestedAtMs = null; // nothing was filed: the clock has nothing to count from
 			requestError = citizenT(lang, 'driver_request_failed', err instanceof Error ? err.message : String(err));
 		}
 	}
@@ -424,6 +441,7 @@
 		scriptTimers = [];
 		scriptRunning = false;
 		resetLive();
+		requestedAtMs = null;
 		phase = 'idle';
 	}
 
@@ -435,28 +453,30 @@
 {#snippet liveCorridor()}
 	<div class="corridor-block">
 		<h3>{citizenT(lang, 'corridor_map')} · {citizenT(lang, 'corridor_granted_stretch')}</h3>
-		<LightCorridorMap
-			{lang}
-			compact
-			highlightSegmentId={shownStretch?.segmentId ?? null}
-			routes={requestEvent?.stretches.map((s) => ({ segmentId: s.segmentId, live: !scripted })) ?? []}
-			unit={scripted ? null : (unit?.position ?? null)}
-		/>
+		<div class="map-wrap">
+			<LightCorridorMap
+				{lang}
+				compact
+				highlightSegmentId={shownStretch?.segmentId ?? null}
+				routes={requestEvent?.stretches.map((s) => ({ segmentId: s.segmentId, live: !scripted })) ?? []}
+				unit={scripted ? null : (unit?.position ?? null)}
+			/>
+		</div>
 		{#if scripted}
 			<p class="unit" data-unit-status={scriptedUnit}>
-				<Badge variant="emulated" label={citizenT(lang, 'comms_dispatch_demo')} />
+				<PublicTag tone="dashed" glyph="flask" label={citizenT(lang, 'comms_dispatch_demo')} />
 				<span>{scriptedUnit === 'on_scene' ? citizenT(lang, 'unit_on_scene') : citizenT(lang, 'unit_en_route')}</span>
 			</p>
 			<p class="unit-note">{citizenT(lang, 'units_note_fallback')}</p>
 		{:else}
 			<p class="unit" data-unit-status={dispatchStatus ?? 'none'}>
-				<Badge variant="emulated" label={citizenT(lang, 'driver_unit_emulated')} />
-				<span class="mono">{unitNo.trim()}</span>
+				<PublicTag tone="dashed" glyph="flask" label={citizenT(lang, 'driver_unit_emulated')} />
+				<span class="fig">{unitNo.trim()}</span>
 				<span>· {statusWord(dispatchStatus)}</span>
 				{#if unit?.arrived}
 					<span>· {citizenT(lang, 'driver_unit_arrived')}</span>
 				{:else if unit?.etaSec != null}
-					<span class="mono">· {citizenT(lang, 'driver_unit_eta', localizeNumber(unit.etaSec, lang))}</span>
+					<span class="fig">· {citizenT(lang, 'driver_unit_eta', localizeNumber(unit.etaSec, lang))}</span>
 				{:else}
 					<span>· {citizenT(lang, 'driver_unit_no_position')}</span>
 				{/if}
@@ -466,30 +486,30 @@
 {/snippet}
 
 <div class="driver" data-screen="driver" data-phase={phase} data-mode={connecting && dispatchId === null && !scriptRunning ? 'connecting' : scripted ? 'scripted' : 'live'}>
-	<!-- Golden hour: always on screen, mono, ticking. -->
-	<div class="golden" data-testid="golden-hour">
+	<!-- Time since THIS request (F-08): always on screen, tabular; it starts when the
+	     request is sent, never at page load, and never claims to be the golden hour itself. -->
+	<div class="golden" data-testid="golden-hour" data-started={goldenElapsed == null ? '0' : '1'}>
 		<span class="golden-label">{citizenT(lang, 'golden_hour')}</span>
-		<span class="golden-clock mono" data-golden-seconds={goldenElapsed}>{goldenClock()}</span>
-		<span class="golden-elapsed">{citizenT(lang, 'golden_elapsed')}</span>
+		<span class="golden-clock fig" data-golden-seconds={goldenElapsed ?? undefined}>{goldenClock()}</span>
+		<span class="golden-elapsed">{citizenT(lang, goldenElapsed == null ? 'golden_not_started' : 'golden_elapsed')}</span>
 	</div>
 
 	<header class="head">
+		<span class="head-pic" aria-hidden="true"><VehicleShot cls="ambulance" {lang} width={200} decorative /><span class="head-mark"><AgencyMark role="108" {lang} size={24} decorative /></span></span>
 		{#if onBack}
 			<button class="back" onclick={onBack}>← {t(lang, 'driverBack')}</button>
 		{/if}
 		<h1>{t(lang, 'driverTitle')}</h1>
-		<p>{t(lang, 'driverSub')}</p>
+		<!-- F-09: the officer's queue is the live flow's; the scripted fallback sends nothing (its note says so) -->
+		{#if !scripted}<p data-testid="driver-sub">{t(lang, 'driverSub')}</p>{/if}
 	</header>
 
-	<!-- Fixed verb rail. -->
+	<!-- Fixed verb rail: four large steps. The current one is ringed AND bold; a step behind is ticked — never colour alone. -->
 	<ol class="rail" data-testid="phase-rail">
-		{#each rail as r (r.key)}
-			<li
-				class="step"
-				class:active={railActive === r.key}
-				class:done={railActive !== 'idle' && rail.findIndex((x) => x.key === railActive) > rail.findIndex((x) => x.key === r.key)}
-			>
-				<span class="dot" aria-hidden="true"></span>
+		{#each rail as r, i (r.key)}
+			{@const behind = railActive !== 'idle' && rail.findIndex((x) => x.key === railActive) > i}
+			<li class="step" class:is-selected={railActive === r.key} class:done={behind} aria-current={railActive === r.key ? 'step' : undefined}>
+				<span class="dot" aria-hidden="true">{#if behind}<Glyph name="check" size={22} />{:else}<span class="num fig">{localizeNumber(i + 1, lang)}</span>{/if}</span>
 				<span class="word">{citizenT(lang, r.labelKey)}</span>
 			</li>
 		{/each}
@@ -498,33 +518,36 @@
 	{#if connecting && dispatchId === null && !scriptRunning}
 		<!-- no mode claim until the feed has answered -->
 	{:else if scripted}
-		<p class="scripted-note" data-testid="scripted-note">
-			<Badge variant="emulated" label={citizenT(lang, 'scripted_badge')} />
-			{citizenT(lang, 'scripted_note')}
+		<p class="mode-note scripted-note" data-testid="scripted-note">
+			<PublicTag tone="dashed" glyph="flask" label={citizenT(lang, 'scripted_badge')} />
+			<span class="note-text">{citizenT(lang, 'scripted_note')}</span>
 		</p>
 	{:else}
-		<p class="live-note">
-			<Badge variant="live" label={t(lang, 'opsSourceLive')} />
-			{citizenT(lang, 'driver_live_note')}
+		<p class="mode-note live-note">
+			<PublicTag tone="live" glyph="check" label={t(lang, 'opsSourceLive')} />
+			<span class="note-text">{citizenT(lang, 'driver_live_note')}</span>
 		</p>
 	{/if}
 
 	{#if connecting && dispatchId === null && !scriptRunning}
-		<EmptyState title={citizenT(lang, 'citizen_feed_connecting')} />
+		<div class="empty" data-prim="empty-state">
+			<img class="empty-scene" src="/artwork/scenes/day.svg" alt={t(lang, 'v3i_scene_day')} width="960" height="320" decoding="async" />
+			<p class="empty-t">{citizenT(lang, 'citizen_feed_connecting')}</p>
+		</div>
 	{:else if phase === 'evaluating'}
-		<section class="evaluating" data-testid="evaluating">
+		<section class="state-card evaluating" data-testid="evaluating">
 			<div class="pulse" aria-hidden="true"></div>
 			<p>{t(lang, 'evaluating')}</p>
 		</section>
 	{:else if phase === 'requested'}
 		<!-- Live: the officer decides on /ops; the driver can only wait. -->
-		<section class="awaiting" data-testid="awaiting-officer">
+		<section class="state-card awaiting" data-testid="awaiting-officer">
 			<div class="pulse" aria-hidden="true"></div>
 			<div>
 				<h2>{citizenT(lang, 'driver_awaiting_title')}</h2>
 				<p>{citizenT(lang, 'driver_awaiting_body')}</p>
 				{#if dispatchId}
-					<p class="ref mono">{citizenT(lang, 'driver_request_ref', dispatchId.slice(0, 8))} · {unitNo.trim()}</p>
+					<p class="ref fig">{citizenT(lang, 'driver_request_ref', dispatchId.slice(0, 8))} · {unitNo.trim()}</p>
 				{/if}
 				{#if pollFailing}
 					<p class="poll-note">{citizenT(lang, 'driver_status_retry')}</p>
@@ -532,19 +555,16 @@
 			</div>
 		</section>
 	{:else if phase === 'proposal'}
-		<!-- Scripted fallback only: demo-scale numbers, approval is scripted. -->
-		<section class="proposal" data-testid="proposal">
-			<div class="proposal-head">
-				<h2>{t(lang, 'proposalTitle')}</h2>
-				<Badge variant="emulated" label={citizenT(lang, 'scripted_badge')} />
-			</div>
+		<!-- Scripted fallback only: demo-scale numbers, approval is scripted (the note above says so). -->
+		<section class="state-card proposal" data-testid="proposal">
+			<h2>{t(lang, 'proposalTitle')}</h2>
 			<p class="reach">
 				{t(lang, 'convoyReachesIn')}
-				<strong class="mono">{localizeNumber(reachInSec, lang)} s</strong>
-				<span class="mono">({clockAt(reachInSec, lang)})</span>
+				<strong class="fig">{localizeNumber(reachInSec, lang)} s</strong>
+				<span class="fig">({clockAt(reachInSec, lang)})</span>
 			</p>
 			<p class="cross">
-				{t(lang, 'crossBefore')} <strong class="mono">{clockAt(reachInSec + scriptedWindowSec, lang)}</strong>
+				{t(lang, 'crossBefore')} <strong class="fig">{clockAt(reachInSec + scriptedWindowSec, lang)}</strong>
 			</p>
 			<p class="doctrine">{citizenT(lang, 'doctrine_note')}</p>
 			<p class="scripted-approval">{citizenT(lang, 'driver_scripted_approval')}</p>
@@ -557,20 +577,21 @@
 			counting down to that arrival. The scripted run uses 'open' only.
 		-->
 		<section
-			class={phase === 'open' ? 'window-open' : 'primed'}
+			class={['state-card', phase === 'open' ? 'window-open' : 'primed']}
 			data-testid={phase === 'open' ? 'window-open' : 'window-primed'}
 		>
 			{#if phase === 'open'}
 				<h2 class="open-title">{t(lang, 'windowOpen')}</h2>
 				{#if countdown != null}
-					<p class="countdown mono" data-countdown={countdown}>
-						{t(lang, 'windowClosesIn')} {localizeNumber(countdown, lang)} s
+					<p class="countdown fig" data-countdown={countdown}>
+						<span class="cd-l">{t(lang, 'windowClosesIn')}</span>
+						<span class="cd-n">{localizeNumber(countdown, lang)} s</span>
 					</p>
 				{/if}
 			{:else}
 				<h2 class="primed-title">{citizenT(lang, 'driver_primed_title')}</h2>
 				{#if opensIn != null && liveWindow}
-					<p class="countdown mono" data-opens-in={opensIn}>
+					<p class="countdown fig" data-opens-in={opensIn}>
 						{citizenT(lang, 'driver_primed_countdown', localizeNumber(opensIn, lang))}
 					</p>
 					<p class="primed-when">{citizenT(lang, 'driver_primed_when', clockAtMs(liveWindow.opensAt - skewMs, lang))}</p>
@@ -595,25 +616,29 @@
 			<p class="rail-note done-note" data-phase-note="done">{citizenT(lang, 'driver_window_closed')}</p>
 		{/if}
 		{#if pickable.length === 0}
-			<EmptyState title={t(lang, 'noMovement')} hint={t(lang, 'noMovementSub')} />
+			<div class="empty" data-prim="empty-state">
+				<img class="empty-scene" src="/artwork/scenes/day.svg" alt={t(lang, 'v3i_scene_day')} width="960" height="320" decoding="async" />
+				<p class="empty-t">{t(lang, 'noMovement')}</p>
+				<p class="empty-h">{t(lang, 'noMovementSub')}</p>
+			</div>
 		{:else}
 			<section class="request-card">
-				<label class="stretch-pick">
-					<span>{t(lang, 'atStretch')}</span>
+				<label class="field stretch-pick">
+					<span class="lbl">{t(lang, 'atStretch')}</span>
 					<select bind:value={choice} data-testid="stretch-select">
 						<option value="">—</option>
 						{#each pickable as ev (ev.eventId)}
 							<optgroup label={citizenT(lang, 'driver_event_label', kindLabel(lang, ev.eventKind))}>
 								{#each ev.stretches as st (st.segmentId)}
-									<option value={`${ev.eventId}|${st.segmentId}`}>{stretchLabel(st.roadName, st.segmentId)}</option>
+									<option value={`${ev.eventId}|${st.segmentId}`}>{stretchLabel(st.roadName, ev.stretches.indexOf(st))}</option>
 								{/each}
 							</optgroup>
 						{/each}
 					</select>
 				</label>
 				{#if !scripted}
-					<label class="unit-pick">
-						<span>{citizenT(lang, 'driver_unit_label')}</span>
+					<label class="field unit-pick">
+						<span class="lbl">{citizenT(lang, 'driver_unit_label')}</span>
 						<input
 							type="text"
 							bind:value={unitNo}
@@ -627,31 +652,36 @@
 				{/if}
 				<fieldset class="urgency">
 					<legend>{t(lang, 'urgency')}</legend>
-					{#each URGENCIES as u (u.key)}
-						<button type="button" class="urg" class:active={urgency === u.key} onclick={() => (urgency = u.key)}>
-							{t(lang, u.labelKey)}
-						</button>
-					{/each}
+					<div class="chips">
+						{#each URGENCIES as u (u.key)}
+							<button type="button" class="urg" class:is-selected={urgency === u.key} aria-pressed={urgency === u.key} onclick={() => (urgency = u.key)}>
+								{#if urgency === u.key}<Glyph name="check" size={18} />{/if}{t(lang, u.labelKey)}
+							</button>
+						{/each}
+					</div>
 				</fieldset>
 				<div class="request-row">
-					<Button
-						variant="primary"
-						size="citizen"
-						actor="108-driver"
+					<button
+						type="button"
+						class="big"
+						data-testid="request-btn"
 						onclick={() => void request()}
-						disabled={!chosen || (!scripted && !UNIT_RE.test(unitNo.trim()))}
+						disabled={!scripted && !UNIT_RE.test(unitNo.trim())}
 					>
 						{t(lang, 'requestBtn')}
-					</Button>
+					</button>
+					{#if !chosen}
+						<!-- the inline reason: the control reads enabled, the missing pick is said -->
+						<p class="request-hint">{t(lang, 'asst_driver_choose_stretch')}</p>
+					{/if}
 				</div>
 				{#if requestError}
 					<p class="request-error" data-testid="request-error">{requestError}</p>
 				{/if}
 				{#if phase === 'done' && scripted}
 					<div class="after-action" data-testid="after-action">
-						<Badge variant="emulated" label={citizenT(lang, 'scripted_badge')} />
-						<p class="saved mono">~{localizeNumber(minutesSaved, lang)} {t(lang, 'minutesReturned')}</p>
-						<p>{citizenT(lang, 'after_action', localizeNumber(minutesSaved, lang))}</p>
+						<!-- COPY-4: a scripted run measures nothing — no "minutes returned" figure -->
+						<p>{citizenT(lang, 'after_action')}</p>
 					</div>
 				{/if}
 			</section>
@@ -660,19 +690,19 @@
 
 	{#if (phase === 'deferred' || phase === 'cancelled' || (phase === 'done' && !scripted)) && pickable.length === 0}
 		<!-- Only when no request card is on screen (it carries the one request button). -->
-		<Button variant="ghost" size="sm" onclick={again}>{citizenT(lang, 'driver_new_request')}</Button>
+		<button type="button" class="again" onclick={again}>{citizenT(lang, 'driver_new_request')}</button>
 	{/if}
 
 	{#if emulatedWithheld > 0 && dispatchId === null}
 		<p class="emulated-withheld" data-testid="driver-emulated-withheld" data-count={emulatedWithheld}>
-			<Badge variant="emulated" label={citizenT(lang, 'citizen_emulated_badge')} />
-			{citizenT(lang, 'driver_emulated_hidden', localizeNumber(emulatedWithheld, lang))}
+			<PublicTag tone="dashed" glyph="flask" label={citizenT(lang, 'citizen_emulated_badge')} />
+			<span class="note-text">{citizenT(lang, 'driver_emulated_hidden', localizeNumber(emulatedWithheld, lang))}</span>
 		</p>
 	{/if}
 
 	<div class="control-room">
 		<h3>{citizenT(lang, 'control_room')}</h3>
-		<p class="mono">{citizenT(lang, 'control_room_line')}</p>
+		<p class="fig">{citizenT(lang, 'control_room_line')}</p>
 	</div>
 
 	<p class="baseline">{t(lang, 'baselineNote')}</p>
@@ -683,476 +713,582 @@
 
 <style>
 	.driver {
-		max-width: 640px;
-		margin: 0 auto;
-		padding: var(--v-space-4);
+		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-gap-panel);
-		font-size: var(--v-text-md);
-		color: var(--v-ink-1);
+		gap: 16px;
+		width: 100%;
+		max-width: 592px;
+		margin: 0 auto;
+		padding: 20px 16px 40px;
+		color: var(--v3-t1);
+		font-size: 18px;
+		line-height: 26px;
 	}
 
-	.mono {
-		font-family: var(--v-font-mono);
+	.fig {
+		font-variant-numeric: tabular-nums;
 	}
 
-	.emulated-withheld {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: var(--v-space-2);
-		margin: 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-2);
-	}
-
-	/* ── Golden hour: always on screen ──────────────────────────────────── */
+	/* ── the hero: time since THIS request ─────────────────────────────── */
 	.golden {
 		display: flex;
-		align-items: baseline;
-		gap: var(--v-space-3);
-		padding: var(--v-space-3) var(--v-space-4);
-		background: var(--v-surface-1);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-panel);
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+		padding: 22px 20px 20px;
+		border-radius: var(--v3-radius-xl);
+		background: var(--v3-primary-bg);
+		color: var(--v3-primary-ink);
+		text-align: center;
+		box-shadow: var(--v3-elev-2);
 	}
 
 	.golden-label {
-		font-size: var(--v-text-2xs);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-act-text);
+		font-size: 17px;
+		font-weight: 650;
+		line-height: 24px;
 	}
 
 	.golden-clock {
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-xl);
-		font-weight: 600;
+		font-size: 68px;
+		font-weight: 680;
+		line-height: 76px;
 	}
 
 	.golden-elapsed {
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
+		max-width: 30rem;
+		font-size: var(--v3-text-meta);
+		line-height: 20px;
+		opacity: 0.88;
 	}
 
 	.head h1 {
-		margin: var(--v-space-1) 0 0;
-		font-size: var(--v-text-xl);
+		margin: 4px 4px 0;
+		font-size: 30px;
+		font-weight: 680;
+		line-height: 38px;
 	}
 
 	.head p {
-		margin: var(--v-space-1) 0 0;
-		color: var(--v-ink-2);
-		font-size: var(--v-text-sm);
+		margin: 4px 4px 0;
+		color: var(--v3-t2);
+		font-size: 17px;
+		line-height: 24px;
 	}
 
 	.back {
-		background: none;
-		border: none;
-		padding: 0;
-		color: var(--v-data);
-		font-size: var(--v-text-sm);
+		min-height: 44px;
+		padding: 0 8px;
+		border: 0;
+		background: transparent;
+		color: var(--v3-brand-text);
+		font: inherit;
+		font-weight: 600;
 		cursor: pointer;
 	}
 
-	/* ── Verb rail ──────────────────────────────────────────────────────── */
+	/* ── the phase rail: four large steps ──────────────────────────────── */
 	.rail {
-		list-style: none;
-		margin: 0;
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 6px;
+		margin: 4px 0 0;
 		padding: 0;
-		display: flex;
-		gap: var(--v-space-2);
-		flex-wrap: wrap;
+		list-style: none;
 	}
 
 	.step {
-		display: inline-flex;
+		position: relative;
+		display: flex;
+		flex-direction: column;
 		align-items: center;
-		gap: var(--v-space-1);
-		padding: var(--v-space-1) var(--v-space-3);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-pill);
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
+		gap: 8px;
+		padding: 0 2px;
+		color: var(--v3-t2);
+		text-align: center;
 	}
 
-	.step .dot {
-		width: 8px;
-		height: 8px;
+	/* the connecting rule */
+	.step + .step::before {
+		content: '';
+		position: absolute;
+		top: 21px;
+		right: 50%;
+		width: 100%;
+		height: 3px;
+		background: var(--v3-line-2);
+	}
+
+	.step.done + .step::before,
+	.step.is-selected::before {
+		background: var(--v3-brand-strong);
+	}
+
+	.dot {
+		position: relative;
+		z-index: 1;
+		display: grid;
+		place-items: center;
+		width: 44px;
+		height: 44px;
 		border-radius: 50%;
-		border: 1px solid var(--v-line-2);
-	}
-
-	.step.active {
-		border-color: var(--v-act-text);
-		color: var(--v-ink-1);
-	}
-
-	.step.active .dot {
-		background: var(--v-act);
-		border-color: var(--v-act-text);
-	}
-
-	.step.done {
-		color: var(--v-ink-2);
+		background: var(--v3-s1);
+		box-shadow: inset 0 0 0 2px var(--v3-line-3);
+		color: var(--v3-t2);
+		font-size: 18px;
+		font-weight: 650;
 	}
 
 	.step.done .dot {
-		background: var(--v-band-green);
-		border-color: var(--v-band-green);
+		background: var(--v3-brand-strong);
+		box-shadow: none;
+		color: var(--v3-on-brand);
+	}
+
+	/* the current step: a ring AND bold words (the global .is-selected veil is for data rows) */
+	.step.is-selected {
+		background: transparent !important;
+		box-shadow: none !important;
+		color: var(--v3-t1);
+	}
+
+	.step.is-selected .dot {
+		box-shadow:
+			inset 0 0 0 3px var(--v3-brand-strong),
+			0 0 0 4px var(--v3-brand-veil);
+		color: var(--v3-t1);
+	}
+
+	.word {
+		font-size: 15px;
+		font-weight: 600;
+		line-height: 20px;
+		overflow-wrap: anywhere;
+	}
+
+	.step.is-selected .word {
+		font-weight: 700;
+	}
+
+	/* ── notes ─────────────────────────────────────────────────────────── */
+	.mode-note,
+	.emulated-withheld {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px 10px;
+		margin: 0;
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		line-height: 20px;
+	}
+
+	.note-text {
+		flex: 1 1 14rem;
+		min-width: 0;
 	}
 
 	.rail-note {
 		margin: 0;
-		font-size: var(--v-text-sm);
-		color: var(--v-act-text);
+		padding: 14px 16px;
+		border: 1px solid var(--v3-line-2);
+		border-radius: var(--v3-radius-l);
+		background: var(--v3-s1);
+		font-size: 17px;
+		line-height: 24px;
 	}
 
-	/* ── Request card ───────────────────────────────────────────────────── */
-	.request-card,
-	.proposal,
-	.primed,
-	.window-open,
-	.control-room {
-		background: var(--v-surface-1);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-panel);
-		padding: var(--v-space-4);
+	.done-note {
+		border-color: var(--v3-ok);
+		background: var(--v3-ok-veil);
 	}
 
-	.stretch-pick {
+	/* ── state cards ───────────────────────────────────────────────────── */
+	.state-card {
 		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding: 20px;
+		border: 1px solid var(--v3-line-1);
+		border-radius: var(--v3-radius-xl);
+		background: var(--v3-s1);
+		box-shadow: var(--v3-elev-1);
+	}
+
+	.state-card h2 {
+		margin: 0;
+		font-size: 24px;
+		font-weight: 680;
+		line-height: 32px;
+	}
+
+	.state-card p {
+		margin: 0;
+	}
+
+	.evaluating,
+	.awaiting {
+		flex-direction: row;
 		align-items: center;
-		gap: var(--v-space-3);
-		margin-bottom: var(--v-space-3);
+		gap: 16px;
 	}
 
-	/* min-width 0: on a phone the select shrinks to the card (its longest
-	 * option never pushes it past the edge or squeezes the label) */
-	.stretch-pick select {
-		flex: 1;
-		min-width: 0;
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-btn);
-		padding: var(--v-space-2) var(--v-space-3);
-		font-size: var(--v-text-sm);
-		background: var(--v-surface-2);
-		color: var(--v-ink-1);
-		height: var(--v-ctl-touch);
-	}
-
-
-	.urgency {
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-chip);
-		padding: var(--v-space-2) var(--v-space-3);
-		margin: 0 0 var(--v-space-4);
-		display: flex;
-		gap: var(--v-space-2);
-		flex-wrap: wrap;
-	}
-
-	.urgency legend {
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-		padding: 0 var(--v-space-1);
-	}
-
-	.urg {
-		border: 1px solid var(--v-line-2);
-		background: var(--v-surface-2);
-		border-radius: var(--v-radius-pill);
-		padding: var(--v-space-2) var(--v-space-4);
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-2);
-		cursor: pointer;
-		min-height: var(--v-ctl-sm);
-	}
-
-	.urg.active {
-		border-color: var(--v-act-text);
-		color: var(--v-act-text);
-		background: color-mix(in srgb, var(--v-act) 8%, transparent);
-	}
-
-	.request-row {
-		width: 100%;
-	}
-
-	.request-row :global(button) {
-		width: 100%;
-	}
-
-	/* ── Evaluating ─────────────────────────────────────────────────────── */
-	.evaluating {
-		display: flex;
-		align-items: center;
-		gap: var(--v-space-4);
-		padding: var(--v-space-6) var(--v-space-4);
-		background: var(--v-surface-1);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-panel);
+	.awaiting p {
+		margin-top: 4px;
+		color: var(--v3-t2);
+		font-size: 16px;
+		line-height: 24px;
 	}
 
 	.pulse {
-		width: 14px;
-		height: 14px;
+		flex: none;
+		width: 22px;
+		height: 22px;
 		border-radius: 50%;
-		background: var(--v-act);
-		animation: pulse var(--v-dur-pulse) infinite alternate;
+		background: var(--v3-brand-strong);
+		box-shadow: 0 0 0 0 var(--v3-brand-veil);
+		animation: pulse 1.6s var(--v3-ease) infinite;
 	}
 
 	@keyframes pulse {
-		from {
-			opacity: 0.35;
+		70% {
+			box-shadow: 0 0 0 16px transparent;
 		}
-		to {
-			opacity: 1;
+		100% {
+			box-shadow: 0 0 0 0 transparent;
 		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.pulse {
 			animation: none;
-			opacity: 1;
+			box-shadow: 0 0 0 6px var(--v3-brand-veil);
 		}
 	}
 
-	/* ── Proposal ───────────────────────────────────────────────────────── */
-	.proposal-head {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		gap: var(--v-space-2);
-	}
-
-	.proposal h2 {
-		margin: 0 0 var(--v-space-2);
-		font-size: var(--v-text-lg);
+	.ref,
+	.poll-note,
+	.doctrine,
+	.scripted-approval,
+	.unit-note,
+	.window-source,
+	.primed-when {
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		line-height: 20px;
 	}
 
 	.reach,
 	.cross {
-		margin: var(--v-space-1) 0;
-		font-size: var(--v-text-md);
+		font-size: 18px;
 	}
 
-	.reach strong,
-	.cross strong {
-		color: var(--v-act-text);
-	}
-
-	.doctrine {
-		margin: var(--v-space-2) 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-		border-top: 1px dashed var(--v-line-1);
-		padding-top: var(--v-space-2);
-	}
-
-	.scripted-approval {
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-	}
-
-	/* ── Approved: window primed (live) ─────────────────────────────────── */
-	.primed {
-		border-color: color-mix(in srgb, var(--v-act-text) 35%, transparent);
-	}
-
-	.primed-title {
-		margin: 0;
-		font-size: var(--v-text-lg);
-		color: var(--v-act-text);
-	}
-
-	.primed-when {
-		margin: calc(-1 * var(--v-space-2)) 0 var(--v-space-3);
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-2);
-	}
-
-	.primed .poll-note,
-	.window-open .poll-note {
-		margin: 0 0 var(--v-space-2);
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-	}
-
-	/* ── Window open ────────────────────────────────────────────────────── */
+	/* the open window is the 108 green corridor: the clear green, with words */
 	.window-open {
-		border-color: color-mix(in srgb, var(--v-band-green) 40%, transparent);
-		background: color-mix(in srgb, var(--v-band-green) 6%, var(--v-surface-1));
+		border-color: var(--v3-ok);
+		background: var(--v3-ok-veil);
 	}
 
-	.open-title {
-		margin: 0;
-		color: var(--v-band-green);
-		font-size: var(--v-text-lg);
-		letter-spacing: 0.04em;
+	.open-title,
+	.primed-title {
+		font-size: 26px;
 	}
 
+	.window-open .open-title {
+		color: var(--v3-ok-text);
+	}
+
+	/* the label small, the number the biggest thing on the page */
 	.countdown {
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-xl);
-		font-weight: 600;
-		margin: var(--v-space-2) 0 var(--v-space-3);
+		display: flex;
+		flex-direction: column;
+		margin: 0;
+		font-size: 22px;
+		font-weight: 650;
+		line-height: 30px;
+	}
+
+	.cd-l {
+		color: var(--v3-t2);
+		font-size: 18px;
+		line-height: 26px;
+	}
+
+	.cd-n {
+		font-size: 64px;
+		font-weight: 700;
+		line-height: 72px;
+	}
+
+	.corridor-block {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin-top: 6px;
 	}
 
 	.corridor-block h3 {
-		margin: 0 0 var(--v-space-2);
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-2);
+		margin: 0;
+		font-size: 17px;
+		font-weight: 650;
+	}
+
+	.map-wrap {
+		overflow: hidden;
+		border-radius: var(--v3-radius-l);
+	}
+
+	.map-wrap :global(.light-map) {
+		border-radius: var(--v3-radius-l);
 	}
 
 	.unit {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: var(--v-space-2);
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-sm);
+		gap: 6px 10px;
+		margin: 0;
+		font-size: 16px;
 	}
 
-	.unit-note {
-		margin: var(--v-space-1) 0 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-	}
-
-	.after-action {
-		margin-top: var(--v-space-4);
-		border-top: 1px dashed var(--v-line-1);
-		padding-top: var(--v-space-3);
+	/* ── the request card ──────────────────────────────────────────────── */
+	.request-card {
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-1);
-		align-items: flex-start;
+		gap: 18px;
+		padding: 20px;
+		border: 1px solid var(--v3-line-1);
+		border-radius: var(--v3-radius-xl);
+		background: var(--v3-s1);
+		box-shadow: var(--v3-elev-1);
 	}
 
-	.saved {
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-lg);
-		color: var(--v-band-green);
-		margin: 0;
-	}
-
-	.after-action p:last-child {
-		margin: 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-	}
-
-	/* ── Control room + notes ───────────────────────────────────────────── */
-	.control-room h3 {
-		margin: 0 0 var(--v-space-1);
-		font-size: var(--v-text-md);
-	}
-
-	.control-room p {
-		margin: 0;
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-2);
-	}
-
-	.baseline {
-		margin: 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-2);
-		border-top: 1px dashed var(--v-line-1);
-		padding-top: var(--v-space-3);
-	}
-
-	.scripted-note,
-	.live-note {
+	.field {
 		display: flex;
-		align-items: center;
-		gap: var(--v-space-2);
-		margin: 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-	}
-
-	.unit-pick {
-		display: flex;
-		align-items: center;
-		gap: var(--v-space-3);
-		margin-bottom: var(--v-space-3);
-	}
-
-	.unit-pick input {
-		flex: 1;
+		flex-direction: column;
+		gap: 6px;
 		min-width: 0;
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-btn);
-		padding: var(--v-space-2) var(--v-space-3);
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-sm);
-		background: var(--v-surface-2);
-		color: var(--v-ink-1);
-		height: var(--v-ctl-touch);
 	}
 
-	.unit-pick input:focus-visible,
-	.stretch-pick select:focus-visible {
-		outline: 1px solid var(--v-act-focus);
+	.lbl,
+	legend {
+		padding: 0;
+		font-size: 17px;
+		font-weight: 650;
+		line-height: 24px;
+	}
+
+	.field select,
+	.field input {
+		box-sizing: border-box;
+		width: 100%;
+		min-width: 0;
+		height: 56px;
+		padding: 0 14px;
+		border: 1px solid var(--v3-line-3);
+		border-radius: var(--v3-radius-m);
+		background: var(--v3-s1);
+		color: var(--v3-t1);
+		font: inherit;
+		font-size: 18px;
+	}
+
+	.field select:focus-visible,
+	.field input:focus-visible,
+	.urg:focus-visible,
+	.big:focus-visible,
+	.again:focus-visible,
+	.back:focus-visible {
+		outline: 2px solid var(--v3-brand-strong);
 		outline-offset: 2px;
 	}
 
-	.request-error {
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-sm);
-		color: var(--v-band-red);
-	}
-
-	/* ── Awaiting the duty officer (live) ────────────────────────────────── */
-	.awaiting {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--v-space-4);
-		padding: var(--v-space-5) var(--v-space-4);
-		background: var(--v-surface-1);
-		border: 1px solid color-mix(in srgb, var(--v-act-text) 35%, transparent);
-		border-radius: var(--v-radius-panel);
-	}
-
-	.awaiting h2 {
-		margin: 0 0 var(--v-space-1);
-		font-size: var(--v-text-lg);
-	}
-
-	.awaiting p {
-		margin: 0 0 var(--v-space-1);
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-2);
-	}
-
-	.awaiting .ref,
-	.awaiting .poll-note {
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-	}
-
-	.awaiting .pulse {
-		margin-top: var(--v-space-2);
-	}
-
-	.window-source {
-		margin: 0 0 var(--v-space-3);
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-	}
-
-	.done-note {
-		color: var(--v-ink-2);
-	}
-
-	.demo {
+	.urgency {
+		min-width: 0;
 		margin: 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
+		padding: 0;
+		border: 0;
+	}
+
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 8px;
+	}
+
+	.urg {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		min-height: 48px;
+		padding: 0 18px;
+		border: 1px solid var(--v3-line-3);
+		border-radius: 24px;
+		background: var(--v3-s1);
+		color: var(--v3-t1);
+		font: inherit;
+		font-size: 17px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	/* the chosen urgency: ticked and filled ink — words and a mark, never colour alone */
+	.urg.is-selected {
+		border-color: var(--v3-primary-bg);
+		background: var(--v3-primary-bg) !important;
+		box-shadow: none !important;
+		color: var(--v3-primary-ink);
+	}
+
+	.request-row {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.big {
+		min-height: 60px;
+		padding: 0 24px;
+		border: 0;
+		border-radius: var(--v3-radius-l);
+		background: var(--v3-primary-bg);
+		color: var(--v3-primary-ink);
+		font: inherit;
+		font-size: 20px;
+		font-weight: 680;
+		cursor: pointer;
+		transition: background var(--v3-dur-1) var(--v3-ease);
+	}
+
+	.big:hover:not(:disabled) {
+		background: var(--v3-primary-hover);
+	}
+
+	.big:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.request-hint {
+		margin: 0;
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		line-height: 20px;
+	}
+
+	.request-error {
+		margin: 0;
+		padding: 12px 14px;
+		border: 1px solid var(--v3-line-3);
+		border-radius: var(--v3-radius-m);
+		background: var(--v3-s2);
+		font-size: 16px;
+		line-height: 24px;
+	}
+
+	.after-action p {
+		margin: 0;
+		color: var(--v3-t2);
+		font-size: 16px;
+		line-height: 24px;
+	}
+
+	.again {
+		align-self: flex-start;
+		min-height: 48px;
+		padding: 0 18px;
+		border: 1px solid var(--v3-line-3);
+		border-radius: var(--v3-radius-m);
+		background: var(--v3-s1);
+		color: var(--v3-t1);
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	/* ── empty and footer ──────────────────────────────────────────────── */
+	.empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		padding: 20px 16px 4px;
+		text-align: center;
+	}
+
+	.empty-scene {
+		display: block;
+		width: 100%;
+		height: 150px;
+		margin-bottom: 8px;
+		object-fit: cover;
+		border-radius: var(--v3-radius-l);
+	}
+
+	/* V3-P7: the 108 ambulance's studio shot heads the driver page, its service's mark beside it */
+	.head-pic {
+		position: relative;
+		display: block;
+		width: 200px;
+		margin: 0 auto 4px;
+	}
+
+	.head-pic :global(.shot) {
+		width: 200px;
+		height: auto;
+	}
+
+	.head-mark {
+		position: absolute;
+		right: -8px;
+		bottom: 8px;
+	}
+
+	.empty-t {
+		margin: 0;
+		font-size: 20px;
+		font-weight: 650;
+		line-height: 28px;
+	}
+
+	.empty-h {
+		margin: 0;
+		color: var(--v3-t2);
+		font-size: 16px;
+		line-height: 24px;
+	}
+
+	.control-room h3 {
+		margin: 0;
+		font-size: 17px;
+		font-weight: 650;
+	}
+
+	.control-room p,
+	.baseline,
+	.demo {
+		margin: 2px 0 0;
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		line-height: 20px;
+	}
+
+	@media (max-width: 420px) {
+		.golden-clock {
+			font-size: 60px;
+			line-height: 68px;
+		}
+
+		.word {
+			font-size: 14px;
+		}
+
+		.cd-n {
+			font-size: 56px;
+			line-height: 64px;
+		}
 	}
 </style>

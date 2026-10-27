@@ -5,13 +5,15 @@ Live-audit context (finding tier0-cache-never-hits-live): verify_all.sh only
 runs the MOCKED pytest suite for the tier-0 gate; nothing measured the gate
 against the live stack, where nothing fed traffic.memory_docs and every
 checkpoint read ``miss_novel`` forever. This script is that live
-measurement. It runs the EXACT checkpoint the plan flow runs
-(``run_pre_movement_workflow`` step 2: same state-doc builder, same
-``pre_movement_questions``) through a real ``DeciderBrain`` against the
-LIVE model-host (:8083, the 27B) and LIVE embedding service (:8085, the
-corpus), N times with the identical body — the same experiment as POSTing
-the identical movement body to /api/convoy/movements/{id}/plan N times,
-minus the container HTTP shell.
+measurement. It runs the plan flow's pre-movement checkpoint (the same
+``DeciderBrain.build_state_doc`` / ``pre_movement_questions`` builders, the
+same trigger, forced) through a real ``DeciderBrain`` against the LIVE
+model-host (:8083, the 27B) and LIVE embedding service (:8085, the corpus),
+N times with the identical body. Its state doc is a fixed stand-in for the
+gate body: production's lists the oracle's candidate routes under their
+content-derived labels (``workflows/pre_movement.py`` ``_route_state_doc``),
+so this measures the cache on an identical repeat, not production's exact
+bytes — check_tier0_live.sh (a) measures the real /plan flow.
 
 Two run modes:
 
@@ -19,8 +21,8 @@ Two run modes:
     python3 scripts/probe_tier0_live.py --verify-corpus
 
 ``--verify-corpus`` only asserts the corpus/read side against the current
-DB state (a :8085/search for the exact state doc recalls the feeder's
-kind=decision doc) — no 27B calls.
+DB state (a :8085/search scoped to the movement id recalls the feeder's
+kind=decision doc, judged against the tier-0 floor) — no 27B calls.
 
 Output: one JSON line per checkpoint (tier, tier0 status, novelty status,
 best score/doc, per-answer confidences) + a summary with Prometheus
@@ -66,8 +68,9 @@ from convoy_brain.memory.memory_client import (  # noqa: E402
 #: The gate's movement body: Lal Darwaja → SVPI Airport, class Z,
 #: far-future departure — the POIs re-anchored onto the real-road network
 #: (WP-20; Lal Darwaja snaps to Relief Road 1005, SVPI to the airport spur
-#: 1029). MUST equal check_tier0_live.sh BODY: --verify-corpus rebuilds this
-#: state doc to recall the decision doc the gate's plans fed.
+#: 1029). MUST equal check_tier0_live.sh BODY: --verify-corpus searches with
+#: this body's state doc, scoped to the gate's movement, to recall the
+#: decision doc its plans fed.
 GATE_BODY = {
     "origin": (72.5813, 23.0264),
     "destination": (72.6221, 23.072),
@@ -91,7 +94,8 @@ BODIES = {"gate": GATE_BODY, "different_poi": DIFFERENT_POI_BODY}
 
 
 def build_state_doc(body: dict | None = None) -> str:
-    """The exact state doc run_pre_movement_workflow builds for a body."""
+    """A pre-movement state doc for a body (the plan flow's builder and
+    trigger; a fixed stand-in for production's candidate-route list)."""
     body = body or GATE_BODY
     return DeciderBrain.build_state_doc(
         trigger="pre_movement",
@@ -207,7 +211,8 @@ async def run_experiment(args: argparse.Namespace) -> int:
         rows.append(row)
         print(json.dumps(row))
 
-    # Corpus verification: recall the exact state doc like the gate does.
+    # Corpus verification: recall with the same state doc, scoped to the
+    # movement, like the gate does.
     recall = await memory.search(state_doc, movement_id=movement_id)
 
     summary = {

@@ -1,9 +1,16 @@
 <script lang="ts">
 	/**
-	 * DataTile — one of the commander's counters. The value is ALWAYS
-	 * mono at the 28px display step (every mutable number is mono).
+	 * DataTile — one of the commander's counters, rebuilt as src/lib/ui's
+	 * MetricCard (SPEC §5.2): a 12 px caption (sentence case: its first
+	 * letter capitalised, HI and GU untouched), the value in Inter 600 with
+	 * tabular figures (a zero recedes to ink-2 at 400), the unit, and the
+	 * source honesty tag (live, emulated, fixture …) as its sub line. A tile
+	 * with `onClick` is a button around the card. `data-prim="data-tile"`
+	 * stays on the root (the /ops wall keeps exactly four).
 	 */
+	import MetricCard from '$lib/ui/MetricCard.svelte';
 	import Badge, { type BadgeVariant } from './Badge.svelte';
+	import { sentenceStart } from './text';
 
 	interface Props {
 		label: string;
@@ -17,90 +24,48 @@
 	let { label, value, unit, source = null, onClick }: Props = $props();
 
 	const interactive = $derived(typeof onClick === 'function');
+	const caption = $derived(sentenceStart(label));
 </script>
 
+{#snippet sourceTag()}
+	{#if source}<Badge variant={source.variant} label={source.label} />{/if}
+{/snippet}
+
 {#if interactive}
-	<button class="tile clickable" type="button" onclick={onClick} data-prim="data-tile">
-		<span class="inner">
-			<span class="label">{label}</span>
-			<span class="value-line">
-				<span class="value">{value}</span>
-				{#if unit}<span class="unit">{unit}</span>{/if}
-			</span>
-			{#if source}<Badge variant={source.variant} label={source.label} />{/if}
-		</span>
+	<button class="tile-btn" type="button" onclick={onClick} data-prim="data-tile">
+		<MetricCard {caption} {value} unit={unit ?? null} sub={source ? sourceTag : null} />
 	</button>
 {:else}
-	<div class="tile" data-prim="data-tile">
-		<span class="label">{label}</span>
-		<span class="value-line">
-			<span class="value">{value}</span>
-			{#if unit}<span class="unit">{unit}</span>{/if}
-		</span>
-		{#if source}<Badge variant={source.variant} label={source.label} />{/if}
-	</div>
+	<MetricCard {caption} {value} unit={unit ?? null} sub={source ? sourceTag : null} class="tile" data-prim="data-tile" />
 {/if}
 
 <style>
-	.tile {
-		display: flex;
-		flex-direction: column;
-		gap: var(--v-space-1);
-		min-width: 0;
-		padding: var(--v-pad-panel);
-		background: var(--v-surface-1);
-		border: 1px solid var(--v-line-1);
+	.tile-btn {
+		display: block;
+		width: 100%;
+		margin: 0;
+		padding: 0;
+		border: 0;
 		border-radius: var(--v-radius-panel);
-		text-align: left;
-		font: inherit;
+		background: transparent;
 		color: inherit;
-	}
-
-	.clickable {
+		font: inherit;
+		text-align: left;
 		cursor: pointer;
-		transition: border-color var(--v-dur-out) var(--v-ease);
 	}
 
-	.clickable:hover,
-	.clickable:focus-visible {
-		border-color: var(--v-line-select);
+	.tile-btn:hover {
+		background: var(--v-row-hover);
 	}
 
-	.clickable:focus-visible {
-		outline: 1px solid var(--v-act-focus);
+	.tile-btn:focus-visible {
+		outline: 2px solid var(--v-focus);
 		outline-offset: 2px;
 	}
 
-	.inner {
-		display: flex;
-		flex-direction: column;
-		gap: var(--v-space-1);
-	}
-
-	.label {
-		font-size: var(--v-text-xs);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-ink-3);
-	}
-
-	.value-line {
-		display: flex;
-		align-items: baseline;
-		gap: var(--v-space-1);
-	}
-
-	.value {
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-xl);
-		line-height: 1.1;
-		color: var(--v-ink-1);
-	}
-
-	.unit {
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
+	:global([data-ui='metric-card'].tile) {
+		background: var(--v-surface-1);
+		border-radius: var(--v-radius-panel);
+		box-shadow: var(--v-elev-0);
 	}
 </style>

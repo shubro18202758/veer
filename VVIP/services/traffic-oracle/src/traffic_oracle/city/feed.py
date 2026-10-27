@@ -32,6 +32,19 @@ exist — nothing is synthesized that did not happen:
                  became an operation stay in the brain's own
                  ledger (/ops/degradation-taxonomy) and are
                  counted as ``unlinked_movements``
+    osint        osint.resolved_events: a situation SURFACED  machine (osint-ingress)
+                 (021) — "Situation surfaced: <label> ·
+                 <verification label> · <n> sources";
+                 its promotion to a corridor event (the        human
+                 promoted event's creation ledger row) —
+                 "Promoted to a corridor event by <officer>";
+                 decision.dss_decision_log (022) —             human
+                 "Decision support: <decision> <COA label>
+                 by <officer>".  Always ``source`` osint for
+                 an OSINT subject, with its verification
+                 state and credibility; held situations are
+                 never narrated.  Before 021 / 022 these
+                 sources are absent (today's feed, unchanged).
 
 Ids are stable (``<table>:<key>``) so a poller dedupes by id.  A source
 that fails is reported in ``sources`` and the rest of the narrative is
@@ -90,7 +103,12 @@ from typing import Any
 import structlog
 
 from traffic_oracle.city.common import (
+    DECISION_LOG_RELATION,
     FEED_KINDS,
+    OSINT_CONTEXT_MEMBERS_SQL,
+    OSINT_PROVENANCE_COLUMNS,
+    OSINT_PROVENANCE_LATERAL,
+    OSINT_SURFACED_SQL,
     SQL_LAWFUL_READ,
     ResolvedSubjects,
     actor_kind_of,
@@ -98,17 +116,21 @@ from traffic_oracle.city.common import (
     as_dict,
     as_list,
     as_uuid,
+    decision_store_present,
     event_source,
     feed_item,
     finite,
     label_source,
     mask_plate,
     mask_plates_in_text,
+    osint_provenance,
+    osint_store_present,
     parse_ts,
     relation_exists,
     resolve_subjects,
     subject_urns,
     urn,
+    verification_label,
 )
 from traffic_oracle.enforcement.engine import SQL_STOLEN_EARMARK
 from traffic_oracle.enforcement.rules import CHALLAN_WITHHELD_TEXT, is_penal
@@ -156,6 +178,8 @@ class FeedScope:
     unit_ids: list[str] = field(default_factory=list)
     junction_ids: list[int] = field(default_factory=list)
     camera_ids: list[str] = field(default_factory=list)
+    #: OSINT situations (C-T): their surfacing, promotion and decisions
+    osint_event_ids: list[str] = field(default_factory=list)
 
     def uuids(self, name: str) -> list[_uuid.UUID]:
         out: list[_uuid.UUID] = []
@@ -220,6 +244,38 @@ _SQL_FEED_SITUATIONS = "SELECT x.log_id, x.movement_id, x.situation_class, x.pre
 #: Published params that are non-baseline, or whose shadow verdict
 #: (source|shadow_eval|detail) differs from the subject's previous publish.
 _SQL_FEED_OVERRIDES = "SELECT x.override_id, x.movement_id, x.situation_class, x.source, x.shadow_eval, x.detail, x.fail_closed_reason, x.floor_applied, x.advance_closure_sec, x.protection_class, x.published_at, x.prev_verdict FROM (SELECT p.override_id, p.movement_id, p.situation_class, p.source, p.shadow_eval, p.evidence->>'shadow_eval_detail' AS detail, p.evidence->>'fail_closed_reason' AS fail_closed_reason, p.evidence->>'floor_applied' AS floor_applied, p.params->>'advance_closure_sec' AS advance_closure_sec, p.protection_class, p.published_at, LAG(p.source || '|' || p.shadow_eval || '|' || COALESCE(p.evidence->>'shadow_eval_detail', '')) OVER (PARTITION BY p.movement_id ORDER BY p.published_at, p.override_id) AS prev_verdict FROM adaptive.param_overrides p WHERE p.published_at > $1::timestamptz - $5::interval AND ($3::boolean OR p.movement_id = ANY($4::text[]))) x WHERE x.published_at > $1::timestamptz AND (x.source <> 'baseline' OR COALESCE(x.prev_verdict, $6::text) <> (x.source || '|' || x.shadow_eval || '|' || COALESCE(x.detail, ''))) ORDER BY x.published_at DESC LIMIT $2"  # noqa: E501
+
+#: OSINT (021, guarded): situations SURFACED since $1, with their C-Q
+#: provenance — ($4 osint_event ids, $5 the corridor events they became).
+#: ``context_members`` (FIX-C) counts the CONTEXT members in a column of
+#: their own — ``common.OSINT_CONTEXT_MEMBERS_SQL``, the very subquery the
+#: snapshot's entities and the city dossier select, so every surface counts
+#: the REPORTS alike: C-T keeps ``source_count`` == every member, context
+#: included, so the row can narrate REPORTS without touching that contract.
+_SQL_FEED_OSINT_SURFACED = (
+    "SELECT r.osint_event_id, r.label, r.event_class, r.veer_event_kind, "
+    "r.verification_state, r.credibility, r.source_count, r.toponym, r.segment_id, "
+    "r.junction_id, r.promoted_event_id, r.created_at, r.geocode_confidence, "
+    "r.second_order, r.area_level, "
+    + OSINT_CONTEXT_MEMBERS_SQL
+    + ", "
+    + OSINT_PROVENANCE_COLUMNS
+    + " FROM osint.resolved_events r " + OSINT_PROVENANCE_LATERAL
+    + " WHERE " + OSINT_SURFACED_SQL + " AND r.created_at > $1::timestamptz"
+    + " AND ($3::boolean OR r.osint_event_id = ANY($4::uuid[])"
+    + " OR r.promoted_event_id = ANY($5::uuid[]))"
+    + " ORDER BY r.created_at DESC, r.osint_event_id LIMIT $2"
+)
+
+#: OSINT (021, guarded): each promotion, once per corridor event — the
+#: promoted event's creation ledger row names the officer who promoted it.
+_SQL_FEED_OSINT_PROMOTED = "SELECT x.osint_event_id, x.label, x.verification_state, x.credibility, x.promoted_event_id, x.seq, x.actor, x.at, x.event_kind FROM (SELECT DISTINCT ON (r.promoted_event_id) r.osint_event_id, r.label, r.verification_state, r.credibility, r.promoted_event_id, l.seq, l.actor, l.at, e.event_kind FROM osint.resolved_events r JOIN events.event_status_log l ON l.event_id = r.promoted_event_id AND l.from_status IS NULL JOIN events.corridor_events e ON e.event_id = r.promoted_event_id WHERE r.promoted_event_id IS NOT NULL AND l.at > $1::timestamptz AND ($3::boolean OR r.osint_event_id = ANY($4::uuid[]) OR r.promoted_event_id = ANY($5::uuid[])) ORDER BY r.promoted_event_id, (r.superseded_by IS NULL) DESC, r.created_at, l.seq) x ORDER BY x.at DESC, x.seq DESC LIMIT $2"  # noqa: E501
+
+#: Decision support (022, guarded): every officer decision — ($4 subject
+#: URNs osint_event:<id> | event:<id>, $5 the events a decision promoted).
+#: The subject joins on the uuid PARSED from its URN (a well-formed uuid
+#: only, so the cast never fails), which the primary keys index.
+_SQL_FEED_DSS_DECISIONS = "SELECT l.log_id, l.dss_id, l.decision, l.coa_id, l.officer, l.note, l.at, l.promoted_event_id, l.dispatch_ids, d.event_urn, c.label AS coa_label, r.label AS subject_label, r.verification_state, r.credibility, e.metadata AS event_metadata, e.source_kind AS event_source_kind FROM decision.dss_decision_log l JOIN decision.decision_support d ON d.dss_id = l.dss_id LEFT JOIN decision.coa c ON c.dss_id = l.dss_id AND c.coa_id = l.coa_id LEFT JOIN osint.resolved_events r ON r.osint_event_id = CASE WHEN d.event_urn ~* '^osint_event:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN substr(d.event_urn, 13)::uuid END LEFT JOIN events.corridor_events e ON e.event_id = CASE WHEN d.event_urn ~* '^event:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN substr(d.event_urn, 7)::uuid END WHERE l.at > $1::timestamptz AND ($3::boolean OR d.event_urn = ANY($4::text[]) OR l.promoted_event_id = ANY($5::uuid[])) ORDER BY l.at DESC, l.log_id DESC LIMIT $2"  # noqa: E501
 
 #: The event an audit is about (+ its dispatch keys).
 _SQL_AUDIT_EVENT = "SELECT e.event_id, e.movement_id, e.metadata FROM events.corridor_events e WHERE e.event_id = $1"  # noqa: E501
@@ -769,6 +825,154 @@ def brain_items(
     return out
 
 
+#: Situation classes narrated as a warning (an incident to respond to).
+_OSINT_WARN_CLASSES = frozenset(
+    {
+        "reported_crime", "public_conflict", "road_accident", "fire", "urban_flooding",
+        "infra_failure", "hazard", "unrest", "weather_hazard",
+    }
+)
+
+#: The machine actor of every surfaced-situation row.
+OSINT_INGRESS_ACTOR = "osint-ingress (system)"
+
+
+def osint_surfaced_item(r: Mapping[str, Any]) -> dict:
+    """A situation SURFACED (C-T): label, honest verification label and how
+    many REPORTS stand behind it.  A CONTEXT member (a district alert in
+    effect there) is never one of them — it rides beside the count as the
+    provenance's context note.  Always source ``osint``."""
+    oid = str(r["osint_event_id"])
+    # C-T keeps source_count == len(member_signal_ids), context INCLUDED: the
+    # reporting count is the members that are not context.  The store stands
+    # every situation on at least one reporting member (its primary); the
+    # max() only guards a row a pre-FIX reader miscounted.
+    context = int(r.get("context_members") or 0)
+    n = max(1, int(r["source_count"] or 1) - context)
+    state = r["verification_state"]
+    text = (
+        f"Situation surfaced: {r['label']} · {verification_label(state)} · "
+        f"{n} report{'' if n == 1 else 's'}"
+    )
+    provenance = osint_provenance(r)
+    note = provenance.get("context_note")
+    if note:  # context members exist: the area alert rides beside the count
+        text += f" · {note[:1].lower()}{note[1:]}"
+    urns = [urn("osint_event", oid)]
+    seg, junction = finite(r.get("segment_id")), finite(r.get("junction_id"))
+    if seg is not None:
+        urns.append(urn("segment", int(seg)))
+    if junction is not None:
+        urns.append(urn("junction", int(junction)))
+    promoted = r.get("promoted_event_id")
+    if promoted is not None:
+        urns.append(urn("event", str(promoted)))
+    second_order = [f for f in as_list(r.get("second_order")) if isinstance(f, Mapping)]
+    warn = bool(second_order) or r.get("event_class") in _OSINT_WARN_CLASSES
+    return feed_item(
+        f"resolved_events:{oid}",
+        r["created_at"],
+        "osint",
+        urns,
+        actor=OSINT_INGRESS_ACTOR,
+        actor_kind="machine",
+        text=text,
+        source="osint",
+        severity="warn" if warn else "info",
+        verification_state=state,
+        credibility=r.get("credibility"),
+        props={
+            "action": "surfaced",
+            "osint_event_id": oid,
+            "event_class": r.get("event_class"),
+            "veer_event_kind": r.get("veer_event_kind"),
+            "source_count": n,  # reports only — context is never counted
+            "toponym": r.get("toponym"),
+            "area_level": bool(r.get("area_level")),
+            "promoted_event_id": str(promoted) if promoted is not None else None,
+            "second_order": len(second_order),
+            # additive (C-Q): what the situation stands on
+            "provenance": provenance,
+        },
+    )
+
+
+def osint_promoted_item(r: Mapping[str, Any]) -> dict:
+    """A named officer promoted a situation to a corridor event (C-T)."""
+    oid = str(r["osint_event_id"])
+    eid = str(r["promoted_event_id"])
+    actor = r["actor"]
+    return feed_item(
+        f"osint_promotion:{eid}",
+        r["at"],
+        "osint",
+        [urn("osint_event", oid), urn("event", eid)],
+        actor=actor,
+        actor_kind=actor_kind_of(actor),
+        text=f"Promoted to a corridor event by {actor} · {r['label']}",
+        source="osint",
+        severity="warn",
+        verification_state=r.get("verification_state"),
+        credibility=r.get("credibility"),
+        props={
+            "action": "promoted",
+            "osint_event_id": oid,
+            "event_id": eid,
+            "event_kind": r.get("event_kind"),
+        },
+    )
+
+
+_DSS_VERBS = {"approve": "approved", "reject": "rejected", "defer": "deferred"}
+
+
+def dss_decision_item(r: Mapping[str, Any]) -> dict:
+    """One officer decision on a decision support (C-U, 022 log)."""
+    decision = str(r["decision"])
+    verb = _DSS_VERBS.get(decision, decision)
+    officer = r["officer"]
+    coa_label = r.get("coa_label")
+    text = f"Decision support: {verb}"
+    if coa_label:
+        text += f" {coa_label}"
+    text += f" by {officer}"
+    if r.get("note"):
+        text += f" — {r['note']}"
+    subject = str(r["event_urn"])
+    promoted = r.get("promoted_event_id")
+    urns = [subject] + ([urn("event", str(promoted))] if promoted is not None else [])
+    osint_subject = subject.startswith("osint_event:")
+    source = (
+        "osint"
+        if osint_subject
+        else event_source(as_dict(r.get("event_metadata")), r.get("event_source_kind"))
+    )
+    return feed_item(
+        f"dss_decision_log:{r['log_id']}",
+        r["at"],
+        "osint",
+        urns,
+        actor=officer,
+        actor_kind=actor_kind_of(officer),
+        text=text,
+        source=source,
+        severity="warn" if decision == "approve" else "info",
+        verification_state=r.get("verification_state") if osint_subject else None,
+        credibility=r.get("credibility") if osint_subject else None,
+        props={
+            "action": "dss_decision",
+            "dss_id": str(r["dss_id"]),
+            "decision": decision,
+            "coa_id": r.get("coa_id"),
+            "coa_label": coa_label,
+            "note": r.get("note"),
+            "subject_urn": subject,
+            "promoted_event_id": str(promoted) if promoted is not None else None,
+            "dispatch_ids": [str(d) for d in (r.get("dispatch_ids") or [])],
+        },
+    )
+
+
 def brain_row_simulated(row: Mapping[str, Any]) -> bool | None:
     """Did a brain decision stand on the simulated feed?  Pure.
 
@@ -979,6 +1183,54 @@ class _Feed:
         out.sort(key=lambda i: i["t"], reverse=True)
         return out[: self.limit]
 
+    # -- OSINT (021) and decision support (022): None = store not migrated,
+    #    the source is left out entirely (the pre-OSINT feed, unchanged) ----
+    def _osint_args(self) -> tuple:
+        return (
+            self.since,
+            self.limit,
+            self.unscoped,
+            self._u("osint_event_ids"),
+            self._u("event_ids"),
+        )
+
+    async def osint_situations(self) -> list[dict] | None:
+        if not await osint_store_present(self.conn):
+            return None
+        if self.skip("osint_event_ids", "event_ids"):
+            return []
+        rows = await self.conn.fetch(_SQL_FEED_OSINT_SURFACED, *self._osint_args())
+        return [osint_surfaced_item(r) for r in rows]
+
+    async def osint_promotions(self) -> list[dict] | None:
+        if not await osint_store_present(self.conn):
+            return None
+        if self.skip("osint_event_ids", "event_ids"):
+            return []
+        rows = await self.conn.fetch(_SQL_FEED_OSINT_PROMOTED, *self._osint_args())
+        return [osint_promoted_item(r) for r in rows]
+
+    async def dss_decisions(self) -> list[dict] | None:
+        if not (
+            await osint_store_present(self.conn)
+            and await decision_store_present(self.conn)
+            and await relation_exists(self.conn, DECISION_LOG_RELATION)
+        ):
+            return None
+        if self.skip("osint_event_ids", "event_ids"):
+            return []
+        subjects = [urn("osint_event", str(u)) for u in self._u("osint_event_ids")]
+        subjects += [urn("event", str(u)) for u in self._u("event_ids")]
+        rows = await self.conn.fetch(
+            _SQL_FEED_DSS_DECISIONS,
+            self.since,
+            self.limit,
+            self.unscoped,
+            subjects,
+            self._u("event_ids"),
+        )
+        return [dss_decision_item(r) for r in rows]
+
 
 _ID_PART_RE = re.compile(r"(\d+)")
 
@@ -1003,6 +1255,10 @@ FEED_SOURCES: tuple[tuple[str, str, str], ...] = (
     ("situation_log", "ama", "situations"),
     ("param_overrides", "ama", "overrides"),
     ("decisions_log", "brain", "brain"),
+    # OSINT (C-T): only once migration 021 / 022 is in
+    ("resolved_events", "osint", "osint_situations"),
+    ("osint_promotions", "osint", "osint_promotions"),
+    ("dss_decision_log", "osint", "dss_decisions"),
 )
 
 
@@ -1028,6 +1284,10 @@ async def collect_feed(
             continue
         try:
             got = await getattr(feed, method)()
+            if got is None:
+                # the source's store is not migrated (OSINT 021 / 022): the
+                # feed is exactly the pre-OSINT one — no entry, no error
+                continue
             sources[name] = {"status": "ok", "count": len(got), **feed.meta.get(name, {})}
         except SourceUnavailableError as exc:
             got = []
@@ -1081,6 +1341,7 @@ __all__ = [
     "BRAIN_SCAN_TTL_SEC",
     "FEED_SOURCES",
     "GLOBAL_LOOKBACK",
+    "OSINT_INGRESS_ACTOR",
     "VERDICT_LOOKBACK",
     "FeedScope",
     "SourceUnavailableError",
@@ -1090,10 +1351,13 @@ __all__ = [
     "brain_row_simulated",
     "collect_feed",
     "dispatch_item",
+    "dss_decision_item",
     "enforcement_items",
     "event_audit",
     "event_created_item",
     "event_log_item",
+    "osint_promoted_item",
+    "osint_surfaced_item",
     "override_item",
     "reset_brain_cache",
     "signal_plan_item",

@@ -1,149 +1,136 @@
 <script lang="ts">
 	/**
-	 * BandMasthead — the city's posture in one line. Band word in the band
-	 * color + one-sentence posture; during hysteresis the candidate band
-	 * renders as a HOLLOW outline beside a mono dwell counter, then commits
-	 * as the 600ms wipe (the showcase/band_easing.json artifact: RED held
-	 * n=1..3, transition at n=4). BLACK alone breathes (2s hairline — the
-	 * deck's only breathing element).
+	 * BandMasthead — the city's posture in one line (SPEC §5.2), rebuilt on
+	 * the tokens of src/lib/ui: the band's swatch and word ("Amber"), the
+	 * one-sentence posture in ink-2, and — during hysteresis — the candidate
+	 * band as a hollow BandChip beside its dwell count. A band change commits
+	 * with the 600 ms wipe (the reduced-motion block turns it into a static
+	 * change). Below the line runs the `.hairline`; BLACK draws it in the
+	 * band's red and alone breathes on it (--v-dur-breathe; static without
+	 * motion). `data-prim="band-masthead"` and `data-band` stay on the root.
 	 */
 	import type { Band } from '$lib/design/tokens';
-	import BandChip from './BandChip.svelte';
 	import { t } from '$lib/i18n/strings';
+	import '$lib/i18n/packs';
+	import { uiLang } from '$lib/ui/lang';
+	import BandChip from './BandChip.svelte';
 
 	interface Props {
 		band: Band | null;
-		/** One sentence, e.g. 'AMBER — Rath Yatra corridor active, 1 pursuit'. */
+		/** One sentence, e.g. 'Amber: Rath Yatra corridor active, 1 pursuit'. */
 		posture?: string;
-		/** Hysteresis candidate: { band, ticks, required } — hollow + counter. */
+		/** Hysteresis candidate: { band, ticks, required } — hollow chip + count. */
 		candidate?: { band: Band; ticks: number; required: number } | null;
 		bandSource?: string | null;
 		lang?: string;
 	}
 
-	let {
-		band,
-		posture = '',
-		candidate = null,
-		bandSource = null,
-		lang = 'en'
-	}: Props = $props();
+	let { band, posture = '', candidate = null, bandSource = null, lang }: Props = $props();
 
-	const word = $derived(band ?? '—');
+	const ctxLang = uiLang();
+	const L = $derived(lang ?? ctxLang());
+	const word = $derived(band ? t(L, `shell_band_word_${band}`) : '—');
 </script>
 
 <header class="masthead" data-prim="band-masthead" data-band={band ?? 'none'}>
 	<div class="line">
-		{#key word}
-			<span
-				class="band-word bw-{word}"
-				class:bw-black={word === 'BLACK'}
-				class:bw-null={band === null}
-			>
+		{#key band}
+			<span class="band-word bw-{band ?? 'none'}">
 				<span class="wipe" aria-hidden="true"></span>
-				{word}
+				<i class="sw" aria-hidden="true"></i>
+				<span class="w">{word}</span>
 			</span>
 		{/key}
-		<span class="posture">{posture || t(lang, 'masthead_posture_none')}</span>
+		<span class="posture">{posture || t(L, 'masthead_posture_none')}</span>
 		<span class="spacer"></span>
 		{#if candidate}
-			<span class="dwell" title={t(lang, 'masthead_dwell_hint')}>
-				<BandChip band={candidate.band} hollow size="sm" />
-				<span class="dwell-count">
-					{candidate.band} {t(lang, 'masthead_held')} · {t(lang, 'masthead_tick')} {candidate.ticks}/{candidate.required}
-				</span>
+			<span class="dwell" title={t(L, 'masthead_dwell_hint')}>
+				<BandChip band={candidate.band} hollow size="sm" lang={L} />
+				<span class="dwell-count"
+					>{t(L, 'masthead_held')} · {t(L, 'masthead_tick')} {candidate.ticks}/{candidate.required}</span
+				>
 			</span>
 		{/if}
-		{#if bandSource}<span class="source mono">{bandSource}</span>{/if}
+		{#if bandSource}<span class="source">{bandSource}</span>{/if}
 	</div>
-	<div class="hairline" class:breathing={word === 'BLACK'} aria-hidden="true"></div>
+	<div class="hairline" class:breathing={band === 'BLACK'} aria-hidden="true"></div>
 </header>
 
 <style>
 	.masthead {
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-2);
-		padding: var(--v-space-3) var(--v-space-4);
+		gap: 8px;
+		padding: 12px 16px;
 		background: var(--v-surface-1);
-		border: 1px solid var(--v-line-1);
 		border-radius: var(--v-radius-panel);
+		box-shadow: var(--v-elev-0);
+		color: var(--v-ink-1);
+		font-family: var(--v-font-ui);
 	}
 
 	.line {
 		display: flex;
-		align-items: center;
-		gap: var(--v-space-3);
 		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px 12px;
+		min-width: 0;
 	}
 
 	.band-word {
 		position: relative;
-		font-family: var(--v-font-mono);
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
 		font-size: var(--v-text-lg);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		line-height: 1;
-		color: var(--v-ink-3);
+		font-weight: 600;
+		line-height: 24px;
 	}
 
-	.bw-GREEN {
-		color: var(--v-band-green);
+	.sw {
+		display: inline-block;
+		width: 12px;
+		height: 12px;
+		border-radius: 2px;
+		background: var(--v-ink-4);
 	}
 
-	.bw-AMBER {
-		color: var(--v-band-amber);
+	.bw-GREEN .sw {
+		background: var(--v-band-green);
 	}
 
-	.bw-RED {
-		color: var(--v-band-red);
+	.bw-AMBER .sw {
+		background: var(--v-band-amber);
 	}
 
-	.bw-black {
-		color: var(--v-ink-1);
+	.bw-RED .sw {
+		background: var(--v-band-red);
 	}
 
-	.bw-null {
-		color: var(--v-ink-3);
+	/* BLACK: a dark fill with a 1 px red hairline */
+	.bw-BLACK .sw {
+		background: var(--v-band-black-fill);
+		box-shadow: inset 0 0 0 1px var(--v-band-black-hairline);
 	}
 
-	/* The 600ms commit wipe — replays on every band change ({#key}). */
+	.bw-none {
+		color: var(--v-ink-2);
+	}
+
+	.bw-none .sw {
+		background: transparent;
+		box-shadow: inset 0 0 0 1px var(--v-line-strong);
+	}
+
+	/* the 600 ms commit wipe — replays on every band change ({#key}) */
 	.wipe {
 		position: absolute;
 		inset: -2px -4px;
 		border-radius: var(--v-radius-chip);
-		background: linear-gradient(
-			90deg,
-			color-mix(in srgb, var(--v-band-amber) 24%, transparent),
-			transparent
-		);
+		background: var(--v-neutral-veil);
 		transform-origin: left;
-		animation: wipe var(--v-dur-wipe) var(--v-ease) 1;
+		animation: wipe var(--v-dur-wipe) var(--v-ease) 1 forwards;
 		pointer-events: none;
-	}
-
-	.bw-GREEN .wipe {
-		background: linear-gradient(
-			90deg,
-			color-mix(in srgb, var(--v-band-green) 24%, transparent),
-			transparent
-		);
-	}
-
-	.bw-RED .wipe {
-		background: linear-gradient(
-			90deg,
-			color-mix(in srgb, var(--v-band-red) 24%, transparent),
-			transparent
-		);
-	}
-
-	.bw-black .wipe {
-		background: linear-gradient(
-			90deg,
-			color-mix(in srgb, var(--v-band-black-hairline) 24%, transparent),
-			transparent
-		);
 	}
 
 	@keyframes wipe {
@@ -156,9 +143,9 @@
 	}
 
 	.posture {
-		font-size: var(--v-text-base);
-		color: var(--v-ink-2);
 		min-width: 0;
+		color: var(--v-ink-2);
+		font-size: var(--v-text-base);
 	}
 
 	.spacer {
@@ -168,25 +155,17 @@
 	.dwell {
 		display: inline-flex;
 		align-items: center;
-		gap: var(--v-space-2);
+		gap: 8px;
 	}
 
-	.dwell-count {
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
+	.dwell-count,
 	.source {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
+		color: var(--v-ink-2);
+		font-size: var(--v-text-xs);
+		font-variant-numeric: tabular-nums;
 	}
 
-	.mono {
-		font-family: var(--v-font-mono);
-	}
-
-	/* The masthead hairline; BLACK breathes on it (2s, the only breathing). */
+	/* the masthead hairline; BLACK breathes on it (the deck's only breathing element) */
 	.hairline {
 		height: 1px;
 		background: var(--v-line-1);
@@ -207,13 +186,11 @@
 		}
 	}
 
-	/* Doctrine: reduced motion — wipe becomes a static crossfade, breathing
-	 * becomes a static hairline. */
+	/* reduced motion: the wipe becomes a static change, the hairline static */
 	@media (prefers-reduced-motion: reduce) {
 		.wipe {
 			animation: none;
 			opacity: 0;
-			transition: opacity var(--v-dur-wipe) var(--v-ease);
 		}
 
 		.breathing {

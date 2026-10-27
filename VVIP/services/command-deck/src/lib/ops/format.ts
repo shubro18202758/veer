@@ -9,6 +9,7 @@
  */
 
 import { IST_ZONE, istClock, istDay, istHm, istHmDated, toEpochMs } from '$lib/primitives/time';
+import { MARK_MASK, STATE_CODES, maskMarks } from '$lib/workspace/mask';
 
 export { IST_ZONE, istClock, istDay, istHm, istHmDated, toEpochMs };
 
@@ -84,20 +85,27 @@ export function fmtWindowIst(start: string | null | undefined, end: string | nul
 
 // ─── Plates (C6: masked unless a named duty officer is on console) ──────────
 
-const PLATE_MASK = '•••';
+const PLATE_MASK = MARK_MASK;
 
 /**
- * Indian registration marks inside free text (state code, RTO number,
- * optional series, 4-digit number) — the oracle's own pattern
- * (traffic_oracle/city/common.py _PLATE_IN_TEXT_RE): only the 4-digit
- * number is masked, its last digit kept, so GJ27EM9001 → GJ27EM•••1.
+ * Indian registration marks inside free text, by the ONE rule the workspace
+ * uses (src/lib/workspace/mask.ts, adopted here per the orchestrator's wave-B
+ * ethics ruling, SPEC §9.3): any case; a space, dot, dash, slash or
+ * underscore (up to three) between the parts; a real state or UT code (39);
+ * a UUID held out; a month-series candidate is a date unless the state code
+ * and the series are both upper case. Only the 4-digit number is masked, its
+ * last digit kept: GJ27EM9001 → GJ27EM•••1, gj 27 em 9001 → gj 27 em •••1.
+ *
+ * MARK_SPAN_RE mirrors mask.ts's candidate shape (for clipText's "never cut
+ * inside a mark"); tests/decisions.unit.mjs keeps the two in lockstep.
  */
-const PLATE_IN_TEXT_RE = /\b([A-Z]{2}[ -]?\d{1,2}[ -]?(?:[A-Z]{1,3}[ -]?)?)(\d{4})\b/g;
+const SEP = '[\\s.\\-/_]{0,3}';
+const MARK_SPAN_RE = new RegExp(`\\b(?:${STATE_CODES.join('|')})${SEP}\\d{1,2}${SEP}(?:[a-z]{1,3}${SEP})?\\d{4}\\b`, 'gi');
 
-/** Mask every registration mark inside free text (server parity). */
+/** Mask every registration mark inside free text (the workspace rule; text without a mark comes back unchanged). */
 export function maskPlatesInText(text: string | null | undefined): string {
 	if (!text) return '';
-	return text.replace(PLATE_IN_TEXT_RE, (_m, head: string, digits: string) => `${head}${PLATE_MASK}${digits.slice(-1)}`);
+	return maskMarks(text);
 }
 
 /** `GJ27EM9001` → `GJ27EM•••1` (city/common.mask_plate parity); an already-masked plate is kept. */
@@ -146,7 +154,7 @@ export function maskDetail(value: unknown): unknown {
 export function clipText(text: string, max: number): string {
 	if (text.length <= max) return text;
 	let cut = max;
-	for (const m of text.matchAll(PLATE_IN_TEXT_RE)) {
+	for (const m of text.matchAll(MARK_SPAN_RE)) {
 		const start = m.index ?? 0;
 		if (start >= cut) break;
 		const end = start + m[0].length;

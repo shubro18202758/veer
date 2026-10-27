@@ -67,7 +67,7 @@ export const PHOTOREAL_PICK_PREFIX = 'p3d:';
 export const PHOTOREAL_READY_TIMEOUT_MS = 12_000;
 /**
  * Detail vs load (Cesium default 16). Measured on the demo box under
- * SwiftShader at 1920×1080 (judge view, every layer on): the frame is
+ * SwiftShader at 1920×1080 (the overview, every layer on): the frame is
  * fill-bound — 283 ms median at 16, 24 and 32 alike — so the error only
  * trades tiles: 24 keeps the old city's buildings as sharp as 16 does at
  * that range with ~59 MB of tiles instead of ~74 MB, and fewer tiles to
@@ -418,5 +418,8 @@ export const photoreal3dLayer: GodsEyeLayer = {
 	requiresKeyId: 'ion',
 	pickPrefix: PHOTOREAL_PICK_PREFIX,
 	defaultOn: true,
+	// the base map itself: the LayerTree's Photoreal · Streets · Dark control, not a row
+	group: 'traffic',
+	basemap: true,
 	create: createPhotoreal3dLayer,
 };

@@ -327,7 +327,9 @@ class TestEntityProvenance:
         e = ent.anomaly_entity(_anomaly(details), NOW)
         assert e["props"]["data_quality"] == quality
         assert e["props"]["feed_source"] == details["source"]
-        assert e["source"] == "live"  # the C-C badge keeps its meaning
+        # HON-11: a flag on the SIMULATED feed is never badged live (the C-C vocabulary's non-live badge);
+        # a real feed's flag keeps the live badge
+        assert e["source"] == ("emulated" if quality == "synthetic" else "live")
 
     def test_a_vehicle_without_lawful_reads_is_badged_from_the_aggregate(self):
         row = {"vehicle_id": uuid.uuid4(), "plate": "GJ27EM4321", "vehicle_class": "car",
@@ -859,3 +861,77 @@ def test_feed_situation_sql_casts_the_boolean_safely():
     assert ("CASE WHEN jsonb_typeof(l.inputs->'simulated_feed') = 'boolean' THEN "
             "(l.inputs->>'simulated_feed')::boolean END AS simulated_feed") in flat
 
+
+
+# ─── C-T / C-Q extension: OSINT provenance on every surface (OS-5) ───────────
+
+OSINT_PROVENANCE_KEYS = {"source_feeds", "publishers", "geocoder", "geocode_confidence"}
+
+
+def _osint_city():
+    """The canned city + the OSINT store, the canonical synthetic set ingested (test_city_snapshot)."""
+    import asyncio
+
+    from test_city_snapshot import OsintCity, _gazetteer_entries, _ingest
+
+    from fixtures.osint.signals import new_tag
+    from traffic_oracle.osint import store as osint_store
+
+    city = OsintCity()
+
+    async def seed():
+        async with city.osint_pool.acquire() as conn:
+            async with conn.transaction():
+                await osint_store.sync_gazetteer(conn, _gazetteer_entries())
+        return await _ingest(city.osint_pool, new_tag())
+
+    return city, asyncio.run(seed())
+
+
+class TestOsintProvenance:
+    def test_entities_feed_rows_and_dossiers_say_what_a_situation_stands_on(self):
+        from httpx import ASGITransport, AsyncClient
+        import asyncio
+
+        from osint_common import ethics
+
+        city, ids = _osint_city()
+        app = city.app()
+
+        async def get(path):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as c:
+                return (await c.get(path)).json()
+
+        snap = asyncio.run(get("/api/v1/city/entities?kinds=osint_event"))
+        feed = asyncio.run(get("/api/v1/city/feed?kinds=osint&limit=500"))
+        dossier = asyncio.run(get(f"/api/v1/city/entity/osint_event/{ids['sg']}"))
+        entity = next(e for e in snap["entities"] if e["id"] == ids["sg"])
+        row = next(i for i in feed["items"] if i["id"] == f"resolved_events:{ids['sg']}")
+        for prov in (entity["props"]["provenance"], row["props"]["provenance"],
+                     dossier["entity"]["props"]["provenance"]):
+            assert OSINT_PROVENANCE_KEYS <= set(prov)
+            assert prov["source_feeds"] == ["google_news_rss"]
+            assert prov["publishers"] == ["news-a.example", "news-b.example"]
+            assert prov["geocoder"] == "gazetteer_exact" and prov["geocode_confidence"] == 0.719
+            # a news link is withheld (it can name a person) — and the record says so
+            assert prov["links_withheld"] == 5 and prov["link_note"] == common.SOURCE_LINK_WITHHELD
+        sachet = next(e for e in snap["entities"] if e["id"] == ids["sachet"])
+        assert sachet["props"]["provenance"]["links_withheld"] == 0
+        assert sachet["props"]["provenance"]["link_note"] is None  # official: nothing withheld
+        assert sachet["props"]["provenance"]["source_feeds"] == ["sachet_cap"]
+        for payload in (snap, feed, dossier):
+            ethics.assert_no_person_keys(payload)
+        # the honest badge rides beside the provenance on every OSINT record
+        assert entity["source"] == row["source"] == dossier["entity"]["source"] == "osint"
+        assert entity["verification_state"] == row["verification_state"] == "NEWS-REPORTED"
+
+    def test_the_provenance_helper_is_total(self):
+        assert common.osint_provenance({}) == {
+            "source_feeds": [], "publishers": [], "geocoder": None, "geocode_confidence": None,
+            "links_withheld": 0, "link_note": None,
+        }
+        got = common.osint_provenance({"source_feeds": ["reddit_rss", "gdelt_doc", "gdelt_doc"],
+                                       "publishers": ["b.example", "a.example"], "links_withheld": 2,
+                                       "geocoder": "grammar", "geocode_confidence": 0.51234})
+        assert got["source_feeds"] == ["gdelt_doc", "reddit_rss"] and got["publishers"] == ["a.example", "b.example"]
+        assert got["geocode_confidence"] == 0.5123 and got["link_note"] == common.SOURCE_LINK_WITHHELD

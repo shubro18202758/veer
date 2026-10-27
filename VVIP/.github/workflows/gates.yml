@@ -8,9 +8,9 @@
 # smokes (puppeteer's Chrome for Testing has no linux-arm64 build), the
 # ingress-vs-store check, the signed-in live tier and the model panels.
 #
-# The repository is checked out into VVIP/ so the consistency oracle sees the
-# layout it expects (VVIP/ beside the workspace's submission/); the workspace
-# documents are not in this repository, so the oracle runs --vvip-only.
+# The repository is checked out into VVIP/ so the docs-consistency oracle sees
+# the layout it expects (VVIP/ inside its workspace); the workspace documents
+# are not in this repository, so the oracle runs --vvip-only.
 
 name: gates
 
@@ -121,6 +121,23 @@ jobs:
       - run: ./node_modules/.bin/svelte-kit sync
       - run: ./node_modules/.bin/svelte-check --tsconfig ./tsconfig.json --threshold error
 
+  # The deck's BROWSER smokes are LOCAL-ONLY: each drives a running deck whose
+  # backends are the int3cl sandbox (oracle :8162, brain :8262, emulator :8962,
+  # PostGIS), which a GitHub runner does not have. scripts/verify_all.sh runs
+  # every one of them (tier deck-ui spawns a gate-off preview of build/ for the
+  # four that spawn none; tiers gods-eye-canvas and design-smoke run theirs):
+  #   - tests/ops-wall-smoke.mjs            (tier deck-ui; hermetic C6 masking)
+  #   - tests/dss-card-smoke.mjs            (tier deck-ui)
+  #   - tests/assistant-smoke.mjs           (tier deck-ui)
+  #   - tests/frame-geometry.mjs            (tier deck-ui; WITHOUT the opt-in
+  #                                          GEOMETRY_ESCORT section)
+  #   - node tests/osint-dom.unit.mjs --inspector <deck>  (tier deck-ui)
+  #   - tests/city-command-smoke.mjs        (tier deck-ui, the C6 'plates' group
+  #                                          when the oracle has a plate-titled item)
+  #   - tests/gods-eye-smoke.mjs            (tier gods-eye-canvas)
+  #   - tests/design-smoke.mjs              (tier design-smoke)
+  # The hermetic deck gates (contract replay, design tokens, copy lint, the
+  # tolerant-pin self-check, every tests/*.unit.mjs, edge-basemap) run here.
   deck-unit:
     name: deck contract + unit tests (hermetic)
     runs-on: ubuntu-24.04-arm
@@ -140,6 +157,10 @@ jobs:
         run: node tests/contract/run.mjs
       - name: design tokens (parity, contrast, hex sweep, import boundaries)
         run: node tests/design-tokens.mjs
+      - name: copy lint (SPEC §2.5 over every EN pack; acronym allowlist + 3 per-key shields, listed in its output)
+        run: node tests/copy-lint.mjs
+      - name: tolerant-pin self-check (the smokes' final pins and verdicts over real markup samples)
+        run: node tests/lib/queue.mjs --self-check
       - name: unit tests (canvas bus, basemap + photoreal 3D, canvas layers)
         run: for unit in tests/*.unit.mjs; do echo "== $unit"; node "$unit" || exit 1; done
       - name: edge-basemap entry (CSP, <html lang>, /gods-eye/mode; gate-off and keyless)
@@ -170,7 +191,7 @@ jobs:
       - run: cargo test --locked
 
   consistency:
-    name: submission-consistency --selftest (VVIP-only)
+    name: docs-consistency --selftest (VVIP-only)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:

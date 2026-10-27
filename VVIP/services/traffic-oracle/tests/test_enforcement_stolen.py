@@ -633,8 +633,9 @@ class TestCitySurfaces:
              "at": (T0 + timedelta(minutes=2)).isoformat(), "note": ""},
         ]
         created, decided = enforcement_items(row, common.EPOCH)
+        # the read is emulated (emulated_anpr): its FIR is a demo reference, said so (HON-4)
         assert created["text"].startswith(
-            "Stolen vehicle GJ27EM•••1 (FIR 4401/2026) sighted at EM-CAM-02"
+            "Stolen vehicle GJ27EM•••1 (demo FIR 4401/2026) sighted at EM-CAM-02"
         )
         assert "e-challan withheld" in created["text"]
         assert "recommended" not in created["text"]

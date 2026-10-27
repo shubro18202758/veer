@@ -47,14 +47,26 @@
  * operator dispatch list: status + approval time + the bound emulated unit
  * (with the instant its ETA was measured, so the page can time the window
  * against the projected arrival). It reads GET /dispatches/{id}; an oracle
- * without that route falls back to the event's ambulance list.
+ * without that route falls back to the event's ambulance list. The PUBLIC
+ * OSINT FIREWALL (plan X17): an OSINT-sourced event row (source_kind
+ * 'osint', or metadata.source 'osint') is dropped from the feed before
+ * projection whatever its kind — before the horizon split, so it reaches
+ * neither a hold card nor the Later list — and a dispatch on such an
+ * event answers the same not-found body as an unknown dispatch: a
+ * promoted OSINT report never reaches a citizen or a 108 driver as a real
+ * corridor. The dispatch side FAILS CLOSED: the event row is read by id
+ * (GET /events/{id}, the authoritative read — never a window of recent
+ * rows), and only a row that was READ and is not OSINT-sourced lets the
+ * dispatch body out; an absent event answers not-found, an unreadable one
+ * 503 'temporarily unavailable'.
  *
  * Every upstream call goes through the SvelteKit server `fetch` the route
  * passes in, i.e. through the deck proxy's pinned loopback rules (hooks
  * marks these as sub-requests). Static facts are cached for 10 min, the
  * whole feed for 5 s with single-flight, so N citizens cost one oracle
- * read per 5 s; the driver status reads (the dispatch, unit projection)
- * for 2 s, so N polling drivers cost one read pair per 2 s.
+ * read per 5 s; the driver status reads (the dispatch, its event row, the
+ * unit projection) for 2 s — a failed event read too — so N polling
+ * drivers cost one set of reads per 2 s.
  */
 
 import { NETWORK_BBOX } from '$lib/ops/endpoints';
@@ -69,6 +81,7 @@ import {
 	type HoldSource,
 	type StripTier,
 } from './holds';
+import { emulatedByMetadata } from '$lib/ops/event-source';
 import type { PublicEventWire, PublicFeedWire, PublicLaterWire, UnavailableFact } from './public-model';
 
 /** The server-side fetch the route hands in (event.fetch). */
@@ -206,6 +219,7 @@ const paramsCache = new Map<string, CacheEntry<AdaptiveClosure | null>>();
 const dispatchListCache = new Map<string, CacheEntry<Timed<Array<Record<string, unknown>>>>>();
 const dispatchCache = new Map<string, CacheEntry<Record<string, unknown> | null>>();
 const unitsCache = new Map<string, CacheEntry<Timed<Array<Record<string, unknown>>>>>();
+const eventCache = new Map<string, CacheEntry<EventRead>>();
 let feedEntry: { at: number; value: Promise<PublicResult<PublicFeedWire>> } | null = null;
 
 /** A read and the instant it was taken (the driver times its window on it). */
@@ -215,8 +229,8 @@ interface Timed<T> {
 }
 
 /** Test hook: how many keys the per-id caches hold (the cap is asserted). */
-export function publicCacheSizes(): { dispatch: number; dispatchList: number } {
-	return { dispatch: dispatchCache.size, dispatchList: dispatchListCache.size };
+export function publicCacheSizes(): { dispatch: number; dispatchList: number; event: number } {
+	return { dispatch: dispatchCache.size, dispatchList: dispatchListCache.size, event: eventCache.size };
 }
 
 /** Test hook: drop every cache (the guard suite runs scenarios back to back). */
@@ -228,6 +242,7 @@ export function resetPublicCaches(): void {
 	dispatchListCache.clear();
 	dispatchCache.clear();
 	unitsCache.clear();
+	eventCache.clear();
 	feedEntry = null;
 }
 
@@ -367,12 +382,23 @@ async function loadBand(fetchFn: FetchLike, eventId: string, nowMs: number): Pro
 }
 
 /**
+ * An OSINT-sourced row (plan X17): the oracle's own provenance column
+ * (021: source_kind 'osint') or a metadata.source 'osint' marker. A
+ * promoted OSINT report never reaches a citizen feed or a 108 driver as a
+ * real corridor — dropped before projection, whatever its kind.
+ */
+export function isOsintRow(row: Record<string, unknown>): boolean {
+	const meta = row.metadata && typeof row.metadata === 'object' ? (row.metadata as Record<string, unknown>) : null;
+	return row.source_kind === 'osint' || meta?.source === 'osint';
+}
+
+/**
  * An event the event emulator opened (contract C-G: metadata.source
  * 'event-emulator') — projected as a boolean only, never the metadata.
  */
 export function isEmulatedRow(row: Record<string, unknown>): boolean {
-	const meta = row.metadata && typeof row.metadata === 'object' ? (row.metadata as Record<string, unknown>) : null;
-	return meta?.source === 'event-emulator';
+	// the emulator opened it, or its authorising evidence is emulated (HON-4: metadata.evidence_source)
+	return emulatedByMetadata(row.metadata);
 }
 
 /**
@@ -391,15 +417,18 @@ export function isRehearsalRow(row: Record<string, unknown>): boolean {
  * position is never LIVE to a citizen. Empty when the brain cannot say
  * (unreachable, or it predates the listing) — the other labels still hold.
  */
-export async function loadEmulatedPositionEvents(fetchFn: FetchLike): Promise<Set<string>> {
+export async function loadEmulatedPositionEvents(fetchFn: FetchLike): Promise<Set<string> | null> {
 	const out = new Set<string>();
 	let body: unknown;
 	try {
 		body = await getJson(fetchFn, '/api/convoy/escorts');
 	} catch {
-		return out;
+		// F-CONN-03: the brain did not answer — the position source is UNKNOWN
+		// (null), never "no emulated escort" (an empty set read as live)
+		return null;
 	}
 	const escorts = body && typeof body === 'object' ? (body as { escorts?: unknown }).escorts : null;
+	if (!Array.isArray(escorts)) return null;
 	for (const e of Array.isArray(escorts) ? escorts : []) {
 		if (!e || typeof e !== 'object') continue;
 		const lane = e as Record<string, unknown>;
@@ -457,8 +486,11 @@ interface EventFacts {
 	band: string | null;
 	/** Reads that FAILED this pass (never conflated with "none exists"). */
 	unavailable?: readonly UnavailableFact[];
-	/** Its escort drives on the brain's EMULATED GPS walker (never LIVE). */
-	emulatedPosition?: boolean;
+	/**
+	 * Its escort drives on the brain's EMULATED GPS walker (never LIVE);
+	 * null = the brain could not say this pass (F-CONN-03: unverified).
+	 */
+	emulatedPosition?: boolean | null;
 }
 
 /** The primary spine of an events/active row (routes[0]; legacy flat field). */
@@ -535,6 +567,9 @@ export function projectEvent(
 	// emulator-opened, a TEST / rehearsal label, or an emulated position:
 	// labelled SIMULATED FEED · EMULATED, never LIVE / 'Holding now'
 	const emulated = isEmulatedRow(row) || isRehearsalRow(row) || facts.emulatedPosition === true;
+	// F-CONN-03: a movement whose position source could not be read is not
+	// vouched for as live — labelled unverified and kept out of the strip's tier
+	const positionUnverified = !emulated && kind === 'protected_movement' && facts.emulatedPosition === null;
 
 	return {
 		event_id: eventId,
@@ -549,6 +584,7 @@ export function projectEvent(
 		tier,
 		unavailable,
 		emulated,
+		...(positionUnverified ? { position_unverified: true } : {}),
 	};
 }
 
@@ -618,9 +654,12 @@ async function buildFeedOnce(fetchFn: FetchLike, nowMs: number): Promise<PublicR
 		};
 	}
 
-	const publicRows = rows.filter(
-		(r) => isPublicKind(typeof r.event_kind === 'string' ? r.event_kind : null) && LIVE_STATUSES.has(String(r.status)),
-	);
+	const publicRows = rows
+		// The public OSINT firewall (plan X17): a promoted OSINT report is
+		// dropped before the kind filter — an osint-sourced row never becomes
+		// a citizen hold card or a driver corridor, whatever its kind.
+		.filter((r) => !isOsintRow(r))
+		.filter((r) => isPublicKind(typeof r.event_kind === 'string' ? r.event_kind : null) && LIVE_STATUSES.has(String(r.status)));
 	const candidates = publicRows.filter((r) => withinHorizon(r, nowMs));
 	const beyond = publicRows.filter((r) => !withinHorizon(r, nowMs));
 	if (publicRows.length === 0) {
@@ -635,7 +674,7 @@ async function buildFeedOnce(fetchFn: FetchLike, nowMs: number): Promise<PublicR
 		candidates.length ? attempt(loadJunctions(fetchFn)) : Promise.resolve<Attempt<Array<{ id: number; lon: number; lat: number }>>>({ ok: true, value: [] }),
 		candidates.some((r) => r.event_kind === 'protected_movement')
 			? loadEmulatedPositionEvents(fetchFn)
-			: Promise.resolve(new Set<string>()),
+			: Promise.resolve<Set<string> | null>(new Set<string>()),
 	]);
 	const segments = segmentsRead.ok ? segmentsRead.value : new Map<number, SegmentFact>();
 	const junctions = junctionsRead.ok ? junctionsRead.value : [];
@@ -675,7 +714,7 @@ async function buildFeedOnce(fetchFn: FetchLike, nowMs: number): Promise<PublicR
 					alternate: alternateWire(spine, paths.ok ? paths.value : [], segments),
 					band: band.ok ? band.value : null,
 					unavailable,
-					emulatedPosition: emulatedPositions.has(eventId),
+					emulatedPosition: emulatedPositions === null ? null : emulatedPositions.has(eventId),
 				},
 				nowMs,
 			);
@@ -690,7 +729,7 @@ async function buildFeedOnce(fetchFn: FetchLike, nowMs: number): Promise<PublicR
 			later,
 			// The city strip speaks for REAL roads: an emulated event is shown
 			// on its own badged card but never turns the strip to "holds".
-			tier: worstTier(projected.filter((e) => !e.emulated).map((e) => e.tier)) ?? 'calm',
+			tier: worstTier(projected.filter((e) => !e.emulated && !e.position_unverified).map((e) => e.tier)) ?? 'calm',
 			emulated_labelling: true,
 		},
 	};
@@ -779,11 +818,45 @@ function loadUnits(fetchFn: FetchLike): Promise<Timed<Array<Record<string, unkno
 }
 
 /**
+ * A by-id event read, settled: the row, the oracle's own "no such event",
+ * or a read that failed (timeout, 5xx, an oracle without the route, a body
+ * that is not this event's row). Never thrown, so `cached` keeps a failure
+ * for the same 2 s as an answer.
+ */
+type EventRead = { kind: 'row'; row: Record<string, unknown> } | { kind: 'absent' } | { kind: 'failed' };
+
+/**
+ * GET /events/{id} — the dispatch's OWN event row (the OSINT firewall reads
+ * source_kind / metadata.source here, never anything the requesting browser
+ * sent), 2 s cache per id shared across drivers. A failed read is cached
+ * too, so polling drivers never multiply upstream reads while the oracle is
+ * failing. 'absent' only on the oracle's own words (404 'event … not
+ * found'): a 404 from an oracle without the route is a failed read.
+ */
+function loadEventRow(fetchFn: FetchLike, eventId: string): Promise<EventRead> {
+	return cached(eventCache, eventId, DISPATCH_TTL_MS, async (): Promise<EventRead> => {
+		try {
+			const row = await getJson(fetchFn, `${V1}/events/${eventId}`);
+			if (!row || typeof row !== 'object' || Array.isArray(row)) return { kind: 'failed' };
+			const r = row as Record<string, unknown>;
+			if (typeof r.event_id !== 'string' || r.event_id.toLowerCase() !== eventId.toLowerCase()) return { kind: 'failed' };
+			return { kind: 'row', row: r };
+		} catch (err) {
+			if (err instanceof UpstreamError && err.status === 404 && /^event \S+ not found$/i.test(err.detail ?? '')) {
+				return { kind: 'absent' };
+			}
+			return { kind: 'failed' };
+		}
+	});
+}
+
+/**
  * GET /api/public/dispatches/{id}?event= — one AMBULANCE dispatch's
  * status for the requesting driver. Only the 108 agency is readable here
- * (police / Jan Rakshak dispatches never are), and no officer names,
- * notes or audit tails are returned. Upstream reads are shared for 2 s
- * across every polling driver.
+ * (police / Jan Rakshak dispatches never are), only on an event the oracle
+ * answered for and that is not OSINT-sourced, and no officer names, notes
+ * or audit tails are returned. Upstream reads are shared for 2 s across
+ * every polling driver.
  */
 export async function publicDispatchStatus(
 	fetchFn: FetchLike,
@@ -816,6 +889,18 @@ export async function publicDispatchStatus(
 	// a police or Jan Rakshak dispatch is never readable here.
 	if (!row || row.event_id !== eventId || row.agency !== 'ambulance') return NO_SUCH;
 	const d = row;
+
+	// The public OSINT firewall (plan X17), FAIL-CLOSED: the dispatch's event
+	// row is read by id from the oracle (never the client's query string) and
+	// only a row that was read and is not OSINT-sourced lets the body out. An
+	// OSINT-sourced or absent event answers the SAME not-found body as an
+	// unknown dispatch; an unreadable one is 'temporarily unavailable' — a
+	// promoted OSINT report never shows a driver a green corridor.
+	const eventRead = await loadEventRow(fetchFn, eventId);
+	if (eventRead.kind === 'failed') {
+		return { status: 503, body: { detail: 'dispatch status temporarily unavailable' } };
+	}
+	if (eventRead.kind === 'absent' || isOsintRow(eventRead.row)) return NO_SUCH;
 
 	const unitsRead = await attempt(loadUnits(fetchFn));
 	const units = unitsRead.ok ? unitsRead.value.rows : [];

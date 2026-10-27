@@ -59,6 +59,19 @@
  *   6. grep gate: no $lib/stores or data-service import under the
  *      citizen/comms paths (the stream's import boundary).
  *
+ * Old-or-new (UI-S7A): the EN emulated badge is compared case-insensitively
+ * ('SIMULATED FEED · EMULATED' → 'Simulated feed · emulated'; HI and GU stay
+ * verbatim, SPEC §12.5); Share is the navbar's `.share` OR the view header's
+ * `[data-share]` (the navbar loses Share, SPEC §5.3); the shell links are
+ * today's nav rail OR the redesign's navbar / More menu (tests/lib/tolerant.mjs).
+ * On a vite dev server (it serves /@vite/client) the production-only edge
+ * contracts — the CSP header and the proxy's WebSocket 501 (hooks.server.ts:
+ * "the prod path only"), the absent /design nav entry (shell/nav.ts shows it
+ * under vite dev) — cannot hold: the CSP header is asserted absent, the WS
+ * upgrade must be answered promptly with any status, the CSP-eval and /design
+ * checks are not asserted, and each such check's name says so. Built decks
+ * run the original assertions.
+ *
  * Usage:
  *   node tests/citizen-smoke.mjs [origin]        # default http://127.0.0.1:5199
  *
@@ -73,6 +86,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { textIs, textMatches } from './lib/queue.mjs';
+import { COMMS_DRAFTS, COPY, SEL, commsDrafts, findShellLink, isViteDevServer, shellNavigate, textHas, withheldColumnsVerdict } from './lib/tolerant.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DECK = path.resolve(HERE, '..');
@@ -289,19 +304,29 @@ try {
 	const origin = process.argv[2] ?? `http://127.0.0.1:${portArg}`;
 	deckProc = await ensureOrigin(origin, portArg);
 	ok('deck-origin up', true, origin);
+	const devServer = await isViteDevServer(origin);
+	if (devServer) console.log('note the origin is a vite dev server: the production-only edge contracts are checked as it serves them');
 
 	// ── 0. Edge: headers, documents, favicon, WS upgrade ─────────────────
 	{
 		const head = await fetch(`${origin}/citizen`, { method: 'HEAD' });
 		const csp = head.headers.get('content-security-policy') ?? '';
-		ok('edge: CSP on /citizen', csp.includes("default-src 'self'"), csp.slice(0, 60));
+		ok(
+			'edge: CSP on /citizen',
+			devServer ? csp === '' : csp.includes("default-src 'self'"),
+			devServer ? "vite dev server: no CSP header — the CSP is the production build's contract (hooks.server.ts sets it only outside NODE_ENV=development)" : csp.slice(0, 60),
+		);
 		ok(
 			'edge: no framing (frame-ancestors none / x-frame-options)',
 			csp.includes("frame-ancestors 'none'") || head.headers.get('x-frame-options') === 'DENY',
 		);
 		ok('edge: nosniff', head.headers.get('x-content-type-options') === 'nosniff');
 		ok('edge: referrer-policy', !!head.headers.get('referrer-policy'), head.headers.get('referrer-policy') ?? '');
-		ok('edge: public CSP has no eval', !csp.includes("'unsafe-eval'"));
+		ok(
+			devServer ? 'edge: public CSP has no eval (vite dev server: no CSP header, not asserted here)' : 'edge: public CSP has no eval',
+			!csp.includes("'unsafe-eval'"),
+			devServer ? 'no CSP header on the vite dev server — asserted on built decks' : '',
+		);
 
 		const html = await (await fetch(`${origin}/citizen`)).text();
 		ok('edge: exactly one <title> on /citizen', (html.match(/<title>/g) ?? []).length === 1);
@@ -318,7 +343,11 @@ try {
 		ok('edge: /favicon.png 200', fav.status === 200 && (fav.headers.get('content-type') ?? '').includes('png'));
 
 		const ws = await upgradeProbe(origin, '/api/convoy/ws/event/x');
-		ok('edge: WS upgrade → 501 in < 0.2 s', ws.status === 501 && ws.seconds < 0.2, `${ws.status} in ${ws.seconds.toFixed(3)} s`);
+		ok(
+			devServer ? 'edge: WS upgrade answered in < 0.2 s (vite dev server: the 501 is not asserted here)' : 'edge: WS upgrade → 501 in < 0.2 s',
+			(devServer ? typeof ws.status === 'number' : ws.status === 501) && ws.seconds < 0.2,
+			`${ws.status} in ${ws.seconds.toFixed(3)} s${devServer ? ' — vite dev server: its own proxy answers the upgrade, so any prompt status passes here; the 501 is the adapter-node edge (hooks.server.ts), asserted on built decks' : ''}`,
+		);
 	}
 
 	// ── 1. /citizen — the REAL public feed ───────────────────────────────
@@ -444,7 +473,7 @@ try {
 		ok('/citizen bar tier is plain language', (await page.$eval('[data-shell="citizen-bar"] [data-tier]', (el) => el.getAttribute('data-tier'))) === 'watch');
 		await page.type('[data-testid="subscribe-phone"]', '9876543210');
 		await page.select('[data-testid="subscribe-lang"]', 'gu');
-		await page.click('.subscribe [data-prim="button"]');
+		await page.click('.subscribe button[type="submit"]');
 		await page.waitForSelector('[data-testid="subscribe-preview"]', { timeout: 5000 });
 		const preview = await text(page, '[data-testid="subscribe-preview"] p');
 		ok('/citizen subscribe preview in the chosen alert language', GU.test(preview) && preview.includes('Ellis Bridge Road'), preview.slice(0, 60));
@@ -498,14 +527,30 @@ try {
 		await page.goto(`${origin}/citizen`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 		const card = `.event-card[data-event="${EMU_EVENT.event_id}"]`;
 		await page.waitForSelector(card, { timeout: 20000 });
-		const EMU_BADGE = { en: 'SIMULATED FEED · EMULATED', hi: 'सिम्युलेटेड फ़ीड · EMULATED', gu: 'સિમ્યુલેટેડ ફીડ · EMULATED' };
+		const EMU_BADGE = COPY.emuBadge;
+		// EN: the final string, exact (§12.5 S7b — 'Simulated feed · emulated'); HI and GU verbatim
+		const badgeHas = (code, text) => (code === 'en' ? text.trim() === EMU_BADGE.en : text.includes(EMU_BADGE[code]));
 		for (const code of ['en', 'hi', 'gu']) {
 			await page.click(`[data-shell="citizen-bar"] .lang button[lang="${code}"]`);
-			await sleep(400);
+			// wait for THIS language's badge to render (a fixed 400 ms read the
+			// previous language's text under load); the assertion below is unchanged
+			await page
+				.waitForFunction(
+					(sel, want, exact) => {
+						const t = document.querySelector(sel)?.textContent?.trim() ?? '';
+						return exact ? t === want : t.includes(want);
+					},
+					{ timeout: 10000 },
+					`${card} [data-source-badge="emulated"]`,
+					EMU_BADGE[code],
+					code === 'en',
+				)
+				.catch(() => undefined);
+			await sleep(200);
 			const badge = await text(page, `${card} [data-source-badge="emulated"]`);
-			ok(`/citizen ${code}: an event-emulator row is badged '${EMU_BADGE[code]}'`, badge.includes(EMU_BADGE[code]) && (await page.$eval(card, (e) => e.dataset.source)) === 'emulated', badge.trim());
+			ok(`/citizen ${code}: an event-emulator row is badged '${EMU_BADGE[code]}'`, badgeHas(code, badge) && (await page.$eval(card, (e) => e.dataset.source)) === 'emulated', badge.trim());
 			const hero = await page.$eval('.hero', (e) => ({ emu: e.querySelector('[data-source-badge="emulated"]')?.textContent ?? '', live: !!e.querySelector('[data-source-badge="live"]') }));
-			ok(`/citizen ${code}: the hero is never LIVE over emulated rows`, hero.emu.includes(EMU_BADGE[code]) && !hero.live, hero.emu.trim());
+			ok(`/citizen ${code}: the hero is never LIVE over emulated rows`, badgeHas(code, hero.emu) && !hero.live, hero.emu.trim());
 			ok(`/citizen ${code}: the emulated note is shown`, !!(await page.$('[data-feed-note="emulated"]')));
 		}
 		await page.click('.accordion .acc-head');
@@ -523,7 +568,7 @@ try {
 		ok("/citizen an event starting beyond 2 h is listed under 'Later' with its IST date", !!laterRow && laterRow.starts === Date.parse(LATER_EVENT.starts_at) && laterRow.when.includes(IST_DAY.format(LATER_START)) && laterRow.when.endsWith(IST_HM.format(LATER_START)) && laterRow.text.includes('Ashram Road / Relief Road'), laterRow ? `${laterRow.when} · ${laterRow.text.slice(0, 80)}` : 'no Later row');
 		ok('/citizen …and it is not a hold card', !(await page.$(`.event-card[data-event="${LATER_EVENT.event_id}"]`)));
 		const vvipRow = await page.$eval(`[data-testid="citizen-later"] .later-row[data-event="${LATER_VVIP.event_id}"]`, (e) => ({ withheld: !!e.querySelector('[data-roads-withheld="true"]'), text: e.textContent?.replace(/\s+/g, ' ').trim() ?? '' })).catch(() => null);
-		ok('/citizen a VVIP movement in Later shows its date, and says its route comes within 2 h (no roads)', !!vvipRow && vvipRow.withheld && /route announced within 2 hours/.test(vvipRow.text), vvipRow?.text.slice(0, 90) ?? 'no VVIP Later row');
+		ok('/citizen a VVIP movement in Later shows its date, and says its route comes within 2 h (no roads)', !!vvipRow && vvipRow.withheld && /route announced within 2 hours/i.test(vvipRow.text), vvipRow?.text.slice(0, 90) ?? 'no VVIP Later row');
 		const mapped = await page.waitForFunction(() => (window.__CITIZEN_MAP__?.routeCount ?? 0) > 0, { timeout: 15000 }).then(() => true).catch(() => false);
 		const hook = await page.evaluate(() => window.__CITIZEN_MAP__ ?? null);
 		ok('/citizen an emulated event’s routes never draw as live', mapped && hook?.liveRouteCount === 0, JSON.stringify({ routeCount: hook?.routeCount, liveRouteCount: hook?.liveRouteCount }));
@@ -690,19 +735,25 @@ try {
 		ok('/driver daylight theme', driverTheme === 'daylight', `data-theme=${driverTheme}`);
 		ok('/driver Gujarati first', GU.test(await text(page, '.head h1')));
 
-		const tick1 = Number(await page.$eval('[data-golden-seconds]', (el) => el.getAttribute('data-golden-seconds')));
-		await sleep(2300);
-		const tick2 = Number(await page.$eval('[data-golden-seconds]', (el) => el.getAttribute('data-golden-seconds')));
-		ok('/driver golden-hour ticks', tick2 > tick1, `${tick1} → ${tick2}`);
+		// F-08: the clock counts from THIS request — before one is sent it has not started (never from page load)
+		const before = await page.$eval('[data-testid="golden-hour"]', (el) => ({ started: el.getAttribute('data-started'), secs: el.querySelector('[data-golden-seconds]')?.getAttribute('data-golden-seconds') ?? null }));
+		await sleep(1500);
+		const before2 = await page.$eval('[data-testid="golden-hour"]', (el) => el.querySelector('[data-golden-seconds]')?.getAttribute('data-golden-seconds') ?? null);
+		ok('/driver the request clock has not started before a request (F-08: never counted from page load)', before.started === '0' && before.secs === null && before2 === null, JSON.stringify(before));
 
 		const options = await page.$$eval('[data-testid="stretch-select"] option', (els) => els.map((o) => ({ v: o.value, t: o.textContent })));
 		ok('/driver stretches labelled with road names', options.some((o) => o.t?.includes('CG Road (West)')), options.map((o) => o.t).join(' | '));
+		ok('/driver no stretch is named by a raw segment id (F-24)', options.filter((o) => o.v).every((o) => !/\b10\d\d\b/.test(o.t ?? '')), options.map((o) => o.t).join(' | '));
 		await page.select('[data-testid="stretch-select"]', `${STUB_EVENT.event_id}|1003`);
 		await page.type('[data-testid="unit-input"]', '108-14');
 		await sleep(250);
-		await page.click('.request-row [data-prim="button"]');
+		await page.click('[data-testid="request-btn"]');
 
 		await page.waitForSelector('[data-testid="awaiting-officer"]', { timeout: 10000 });
+		const tick1 = Number(await page.$eval('[data-golden-seconds]', (el) => el.getAttribute('data-golden-seconds')));
+		await sleep(2300);
+		const tick2 = Number(await page.$eval('[data-golden-seconds]', (el) => el.getAttribute('data-golden-seconds')));
+		ok('/driver the request clock ticks once the request is sent (from the request, F-08)', tick1 >= 0 && tick1 <= 3 && tick2 > tick1, `${tick1} → ${tick2}`);
 		ok('/driver request body: ambulance · 108 unit · junction · 108-driver',
 			posted?.agency === 'ambulance' && posted?.unit_id === '108-14' && posted?.waypoint_junction === 6 && posted?.requested_by === '108-driver',
 			JSON.stringify(posted));
@@ -727,7 +778,7 @@ try {
 		await sleep(2300);
 		const cd2 = Number(await page.$eval('[data-countdown]', (el) => el.getAttribute('data-countdown')));
 		ok('/driver window counts down to the unit reaching the junction', cd1 <= 150 && cd1 >= 140 && cd2 < cd1, `${cd1} → ${cd2} (150 s window closing on arrival)`);
-		ok('/driver unit labelled EMULATED', (await text(page, '[data-testid="window-open"] .unit')).includes('EMULATED'));
+		ok('/driver unit labelled EMULATED', textMatches(await text(page, '[data-testid="window-open"] .unit'), COPY.unitEmulated));
 		const mapHook = await page.waitForFunction(() => window.__CITIZEN_MAP__?.highlight === 1003 && window.__CITIZEN_MAP__?.unit === true, { timeout: 15000 }).then(() => true).catch(() => false);
 		ok('/driver granted stretch + tracked unit on the map', mapHook);
 		await page.screenshot({ path: path.join(HERE, 'artifacts', 'driver-open.png') });
@@ -755,7 +806,7 @@ try {
 		await page.select('[data-testid="stretch-select"]', first);
 		await page.type('[data-testid="unit-input"]', '108-77');
 		await sleep(250);
-		await page.click('.request-row [data-prim="button"]');
+		await page.click('[data-testid="request-btn"]');
 		await page.waitForSelector('[data-testid="awaiting-officer"]', { timeout: 15000 });
 		const post = log.find((r) => r.method === 'POST' && /\/api\/v1\/events\/[^/]+\/dispatch$/.test(r.path));
 		ok('/driver (live writes) POSTed the dispatch request', !!post, post?.path ?? '');
@@ -780,7 +831,7 @@ try {
 		const first = await page.$eval('[data-testid="stretch-select"]', (el) => [...el.querySelectorAll('option')].find((o) => o.value.includes('|'))?.value ?? '');
 		await page.select('[data-testid="stretch-select"]', first);
 		await sleep(250);
-		await page.click('.request-row [data-prim="button"]');
+		await page.click('[data-testid="request-btn"]');
 		await page.waitForSelector('[data-testid="proposal"]', { timeout: 10000 });
 		ok('/driver scripted proposal has no approve button', (await page.$$('[data-testid="proposal"] button')).length === 0);
 		await page.waitForSelector('[data-testid="window-open"]', { timeout: 10000 });
@@ -833,7 +884,7 @@ try {
 		await page.select('[data-testid="stretch-select"]', `${STUB_EVENT.event_id}|1003`);
 		await page.type('[data-testid="unit-input"]', '108-15');
 		await sleep(250);
-		await page.click('.request-row [data-prim="button"]');
+		await page.click('[data-testid="request-btn"]');
 		const cancelled = await page.waitForSelector('[data-screen="driver"][data-phase="cancelled"]', { timeout: 15000 }).then(() => true).catch(() => false);
 		const requestButtons = await page.$$eval('[data-screen="driver"] button', (els) => els.filter((b) => /કોરિડોર સમયની વિનંતી|નવી વિનંતી/.test(b.textContent ?? '')).map((b) => b.textContent?.trim()));
 		ok('/driver after the officer cancels, exactly ONE request button remains', cancelled && requestButtons.length === 1, `${requestButtons.length}: ${requestButtons.join(' | ')}`);
@@ -892,7 +943,7 @@ try {
 								{ type: 'tool_result', data: { id: 'c1', name: 'get_live_traffic', ok: true, summary: '2 segments · avg 31 km/h' } },
 								{ type: 'token', data: 'HELLO_FROM_' },
 								{ type: 'token', data: 'MOCK_STREAM — the corridor is flowing.' },
-								{ type: 'done', data: { session_id: 'sess-smoke-123', tiers_used: ['decider:pplx-decider-v1-27b', 'gemma:aditi-ps18-v7h-12b'], operator_alerts: [], degraded: false } },
+								{ type: 'done', data: { session_id: 'sess-smoke-123', tiers_used: ['decider:pplx-decider-v1-27b', 'gemma:gemma4-12b-veer'], operator_alerts: [], degraded: false } },
 							]),
 						};
 					},
@@ -1048,21 +1099,25 @@ try {
 		const factsLine = await page.$eval('[data-testid="comms-facts"]', (el) => ({ src: el.getAttribute('data-hold-source'), text: el.textContent?.replace(/\s+/g, ' ').trim() })).catch(() => null);
 		ok('/comms facts line shows the hold provenance', factsLine?.src === 'closure_policy', JSON.stringify(factsLine));
 
-		const genBtn = await page.evaluateHandle(() => [...document.querySelectorAll('.gen-row [data-prim="button"]')].find((b) => !b.disabled));
+		const genBtn = await page.evaluateHandle(() => [...document.querySelectorAll('.gen-row button')].find((b) => !b.disabled));
 		if (genBtn && genBtn.asElement()) await genBtn.asElement().click();
 		await sleep(400);
-		const clearBtn = await page.evaluateHandle(() => [...document.querySelectorAll('.gen-row [data-prim="button"]')][1]);
+		const clearBtn = await page.evaluateHandle(() => document.querySelector('[data-testid="comms-all-clear"]'));
 		if (clearBtn && clearBtn.asElement()) await clearBtn.asElement().click();
 		await sleep(400);
+		await page.click('[data-testid="comms-open-log"]'); // V3: the draft log lives in the side sheet
+		await page.waitForSelector('[data-testid="comms-sheet"]', { timeout: 5000 });
 		const logLangs = await page.$$eval('.log-langs', (els) => els.map((e) => e.textContent?.trim()));
-		ok('/comms generate + all-clear logged in en · hi · gu', logLangs.length === 2 && logLangs.every((l) => l === 'en · hi · gu'), logLangs.join(' | '));
+		ok('/comms generate + all-clear logged in en · hi · gu', logLangs.length === 2 && logLangs.every((l) => textIs(l, COPY.logLangs)), logLangs.join(' | '));
 		const pageText = await page.evaluate(() => document.body.innerText);
 		ok('/comms drafted-not-delivered honesty', pageText.toUpperCase().includes('NOT DELIVERED'));
 		ok('/comms no false "logged for the audit record" claim', !/logged for the audit record|echoed into the decision audit/i.test(pageText));
 
+		await page.click('[data-testid="comms-open-threads"]'); // V3: the dispatch threads live in the same sheet, on their own tab
+		await page.waitForSelector('.thread', { timeout: 10000 });
 		const steps = await page.$$eval('.thread .th-step.reached', (els) => els.length);
 		ok('/comms ladder mirrors the backend (completed reaches 5 steps)', steps === 5, `${steps} reached`);
-		await page.click('.scope button[data-scope="all"]');
+		await page.click('.scope button[data-scope="all"], button[data-scope="all"]');
 		await sleep(300);
 		const exits = await page.$$eval('.th-exit', (els) => els.map((e) => e.getAttribute('data-step')));
 		ok('/comms all-events view shows the cancelled exit chip', exits.includes('cancelled'), exits.join(','));
@@ -1071,7 +1126,14 @@ try {
 		await page.waitForFunction(() => document.querySelector('[data-lang="en"]')?.getAttribute('data-withheld') === 'yes', { timeout: 15000 }).catch(() => undefined);
 		const withheld = await page.$$eval('[data-lang]', (els) => els.map((e) => e.getAttribute('data-withheld')));
 		ok('/comms pursuit: no citizen draft in any language', withheld.length === 3 && withheld.every((w) => w === 'yes'), withheld.join(','));
-		const allClearDisabled = await page.evaluate(() => [...document.querySelectorAll('.gen-row [data-prim="button"]')][1]?.disabled === true);
+		// …and the withheld columns hold the operator-only contract POSITIVELY (audit
+		// E-S7B W1): the badge states it once; each column's draft line empty, no Copy,
+		// empty data-facts; no road, no registration mark.
+		{
+			const v = withheldColumnsVerdict({ ...(await page.evaluate(commsDrafts, COMMS_DRAFTS)), reason: 'operator-kind' });
+			ok('/comms pursuit: the withheld columns are empty (no draft text, no Copy, no data-facts; the badge states it once)', v.ok, v.detail);
+		}
+		const allClearDisabled = await page.evaluate(() => document.querySelector('[data-testid="comms-all-clear"]')?.disabled === true);
 		ok('/comms pursuit: no citizen all-clear (button disabled)', allClearDisabled);
 
 		await page.select('[data-testid="comms-event-select"]', NEWKIND);
@@ -1080,6 +1142,10 @@ try {
 			.then(() => true)
 			.catch(() => false);
 		ok('/comms a kind unknown to the board mapper is withheld (raw oracle kind)', newKindWithheld);
+		{
+			const v = withheldColumnsVerdict({ ...(await page.evaluate(commsDrafts, COMMS_DRAFTS)), reason: 'operator-kind' });
+			ok('/comms the unknown kind\'s withheld columns are empty (no draft text, no Copy, no data-facts; the badge states it once)', v.ok, v.detail);
+		}
 		const raw = (await page.evaluate(() => document.body.innerText)).match(RAW_KEY);
 		ok('/comms no raw kind_ key', !raw, raw ? raw[0] : 'clean');
 		await page.screenshot({ path: path.join(HERE, 'artifacts', 'comms-trilingual.png') });
@@ -1090,9 +1156,15 @@ try {
 	{
 		const page = await newPage(browser);
 		await page.goto(`${origin}/ops`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-		await page.waitForSelector('[data-shell="command-bar"] .share', { timeout: 30000 });
+		await page.waitForSelector(SEL.share, { timeout: 30000 });
 		ok('/ops sets SHARE VIEW (baseline for the leak check)', true);
-		ok('nav: the design sheet is a dev-only entry (not in a production build)', !(await page.$('nav.rail a[href="/design"]')));
+		// The shell's links: today's nav rail, or the redesign's navbar and its More menu (opened and closed again).
+		const designLink = await findShellLink(page, '/design');
+		ok(
+			devServer ? 'nav: the design sheet is a dev-only entry (vite dev server: shown or not, not asserted here)' : 'nav: the design sheet is a dev-only entry (not in a production build)',
+			devServer || !designLink,
+			devServer ? `vite dev server: /design entry ${designLink ? `shown (${designLink})` : 'not shown'} — dev-only by design (shell/nav.ts); its absence is asserted on built decks` : designLink ? `production build lists /design (${designLink})` : 'production build: no /design entry in the shell or its More menu',
+		);
 		// Client-side navigation to the (unlisted) design sheet: SvelteKit's
 		// router takes any same-origin anchor click.
 		await page.evaluate(() => {
@@ -1104,10 +1176,11 @@ try {
 		});
 		await page.waitForFunction(() => location.pathname === '/design', { timeout: 15000 });
 		await sleep(800);
-		ok('/ops → /design: SHARE VIEW cleared', !(await page.$('[data-shell="command-bar"] .share')));
+		ok('/ops → /design: SHARE VIEW cleared', !(await page.$(SEL.share)));
 		ok('/ops → /design: band chip reset', !!(await page.$('[data-shell="command-bar"] [data-band="pending"]')));
-		await page.click('nav.rail a[href="/citizen"]');
+		const via = await shellNavigate(page, '/citizen');
 		await page.waitForSelector('[data-shell="citizen-bar"]', { timeout: 15000 });
+		ok('deck → /citizen: the shell links the public page', via !== 'anchor', via === 'shell-link' ? 'a /citizen link in the shell' : via === 'more-menu' ? 'a /citizen link in the navbar More menu' : 'no /citizen link in the shell or its More menu (navigated by a client-side anchor)');
 		await sleep(800);
 		const bar = await text(page, '[data-shell="citizen-bar"]');
 		ok('deck → /citizen: public bar has no band code / SHARE', !BAND_CODE.test(bar) && !/share/i.test(bar), bar.trim().slice(0, 80));

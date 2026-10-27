@@ -1,132 +1,126 @@
 <script lang="ts">
 	/**
-	 * DegradationLedger — the recurring-failure taxonomy mined from the
-	 * brain's decisions_log audit trail (oracle /ops/degradation-taxonomy).
-	 * Self-criticism surface: every row is a cause the audit log ACTUALLY
-	 * carries (Wave-1 latch firings, tier-0 misses, tactical fallbacks,
-	 * operator alerts, failed turns) with its recurrence count, the
-	 * first→last seen window, and the sample ref naming one real row
-	 * (click a row for the full entry). An empty log renders the honest
-	 * EmptyState — never invented entries — and a down endpoint degrades
-	 * to a labelled note over the last-good ledger.
+	 * Degradation ledger (ownership UI-S5B), inside the /ops Lab and system
+	 * section: the recurring-failure taxonomy mined from the brain's
+	 * decisions_log audit trail (GET /ops/degradation-taxonomy). Every row is
+	 * a cause the log actually carries — a novelty-latch firing, a tier-0
+	 * miss, a tactical fallback, a failed turn — with its count, first and
+	 * last seen (IST) and the reference of one real row. An empty log says so
+	 * honestly; a failing endpoint keeps the last-good ledger with the reason.
 	 */
-	import Panel from '$lib/primitives/Panel.svelte';
-	import FeedItem from '$lib/primitives/FeedItem.svelte';
-	import EmptyState from '$lib/primitives/EmptyState.svelte';
+	import { Id, NonIdealState, Tooltip } from '$lib/ui';
+	import { colStamp } from '$lib/ui/format/format';
+	import { t } from '$lib/i18n/strings';
+	import '$lib/i18n/packs.wall';
 	import { ops } from '$lib/ops/store.svelte';
-	import { POLL_MS } from '$lib/ops/endpoints';
-	import { istClock } from '$lib/ops/format';
-	import { tOps } from '$lib/i18n/strings.ops';
-	import type { DegradationTaxonomyEntry } from '$lib/ops/types';
+	import { displayText } from '$lib/workspace/display';
 
 	const lang = $derived(ops.lang);
-	const taxonomy = $derived(ops.degradation);
+	const L = (key: string, ...args: unknown[]) => t(lang, key, ...args);
+	const tax = $derived(ops.degradation);
+	const entries = $derived(tax?.entries ?? []);
+	const last = $derived(colStamp(entries.map((e) => (e.lastSeen ?? e.firstSeen ?? NaN) * 1000)));
 
-	const panelStatus = $derived(
-		ops.degradationUpdated
-			? {
-					state: (ops.degradationLive === false ? 'stale' : 'live') as 'stale' | 'live',
-					updatedAt: ops.degradationUpdated,
-				}
-			: null,
-	);
-
-	/** Cause → feed level: hard failures error, withheld/outage signals band,
-	 * everything else (misses, refusals, limitations) info. */
-	function levelFor(cause: string): 'error' | 'band' | 'info' {
-		if (
-			cause.startsWith('checkpoint_fallback:') ||
-			cause.startsWith('orchestrator:') ||
-			cause.includes('unavailable') ||
-			cause.endsWith(':error')
-		) {
-			return 'error';
-		}
-		if (cause.startsWith('novelty_latch:') || cause.startsWith('alert:novel')) return 'band';
-		return 'info';
-	}
-
-	/** Epoch SECONDS (the taxonomy's unit) → IST HH:MM:SS. */
-	function clock(ts: number | null): string {
-		return ts == null ? '—' : istClock(ts * 1000);
-	}
-
-	function rowText(entry: DegradationTaxonomyEntry): string {
-		const first = entry.firstSeen != null ? clock(entry.firstSeen) : '?';
-		return `${tOps(lang, 'ledgerTimes', entry.count)} · ${tOps(lang, 'ledgerFirstSeen', first)}`;
+	/** "novelty_latch:novel" → "Novelty latch · novel" (the raw cause stays in the tooltip). */
+	function causeWord(cause: string): string {
+		const [family, detail] = cause.split(':', 2);
+		const key = `wall_ledger_${family}`;
+		const w = L(key);
+		const head = w === key ? displayText(family) : w;
+		return detail ? `${head} · ${displayText(detail)}` : head;
 	}
 </script>
 
-<Panel
-	title={tOps(lang, 'ledgerTitle')}
-	sub={taxonomy
-		? tOps(lang, 'ledgerScanLine', taxonomy.rowsScanned, taxonomy.contextsScanned)
-		: tOps(lang, 'ledgerSub')}
-	status={panelStatus}
-	pollMs={POLL_MS.ledger}
-	lang={lang}
->
-	{#if taxonomy && taxonomy.entries.length}
-		<div class="feed" role="log" aria-label={tOps(lang, 'ledgerTitle')}>
-			{#each taxonomy.entries as entry (entry.cause)}
-				<FeedItem
-					ts={(entry.lastSeen ?? entry.firstSeen ?? 0) * 1000}
-					actor={entry.cause}
-					actorKind="machine"
-					level={levelFor(entry.cause)}
-					text={rowText(entry)}
-					detail={entry}
-					lang={lang}
-				>
-					{#snippet right()}
-						<span class="sample mono" title={tOps(lang, 'ledgerSampleRef')}>{entry.sampleRef}</span>
-					{/snippet}
-				</FeedItem>
-			{/each}
-		</div>
-		{#if taxonomy.truncated}
-			<p class="foot-note">{tOps(lang, 'ledgerTruncated')}</p>
-		{/if}
+<div class="ledger" data-wall="ledger">
+	<div class="sub-head">
+		<h3 class="h">{L('wall_ledger')}</h3>
+		<span class="grow"></span>
+		{#if tax}<span class="muted tn">{L('wall_ledger_scan', tax.rowsScanned, tax.contextsScanned)}</span>{/if}
+	</div>
+	{#if ops.degradationNote}<p class="note">{ops.degradationNote}</p>{/if}
+	{#if entries.length}
+		<table class="wdt" aria-label={L('wall_ledger')}>
+			<colgroup><col /><col style:width="56px" /><col style:width="72px" /><col style:width="112px" /></colgroup>
+			<thead>
+				<tr>
+					<th scope="col">{L('wall_ledger_cause')}</th>
+					<th scope="col" class="num">{L('wall_ledger_count')}</th>
+					<th scope="col" class="num">{L('wall_ledger_last')}</th>
+					<th scope="col">{L('wall_ledger_sample')}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each entries as e, i (e.cause)}
+					<tr data-cause={e.cause}>
+						<td><div class="c"><Tooltip content={e.cause}><span class="ell">{causeWord(e.cause)}</span></Tooltip></div></td>
+						<td class="num"><div class="c tn">{e.count}</div></td>
+						<td class="num"><div class="c tn">{last[i]}</div></td>
+						<td><div class="c"><span class="ell" title={e.sampleRef}><Id value={e.sampleRef} /></span></div></td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+		{#if tax?.truncated}<p class="note">{L('wall_ledger_truncated')}</p>{/if}
 	{:else}
-		<EmptyState
-			title={ops.degradationNote ?? tOps(lang, 'ledgerEmpty')}
-			hint={taxonomy ? tOps(lang, 'ledgerEmptyHint') : tOps(lang, 'ledgerSub')}
-		/>
+		<div class="empty">
+			<NonIdealState icon="tick-circle" iconSize={20} layout="horizontal" description={tax ? L('wall_ledger_empty') : L('wall_ledger_waiting')} />
+		</div>
 	{/if}
-</Panel>
+</div>
 
 <style>
-	.feed {
+	.ledger {
 		display: flex;
 		flex-direction: column;
-		gap: 1px;
-		max-height: 280px;
-		overflow-y: auto;
-		border-top: 1px solid var(--v-line-1);
-		padding-top: var(--v-space-2);
+		gap: 6px;
+		padding: 8px 0 12px;
+		font-size: var(--v-text-xs);
+		line-height: 16px;
 	}
 
-	.sample {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-pill);
-		padding: 0 var(--v-space-1);
-		align-self: center;
-		flex-shrink: 0;
-		max-width: 18ch;
+	.sub-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		min-height: 28px;
+		padding: 0 16px;
+	}
+
+	.h {
+		margin: 0;
+		font-size: var(--v-text-base);
+		font-weight: 600;
+		line-height: 18px;
+		white-space: nowrap;
+	}
+
+	.grow {
+		flex: 1 1 auto;
+	}
+
+	.muted {
+		color: var(--v-ink-2);
+	}
+
+	.tn {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.ell {
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.foot-note {
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
+	.note {
+		margin: 0;
+		padding: 0 16px;
+		color: var(--v-ink-2);
 	}
 
-	.mono {
-		font-family: var(--v-font-mono);
+	.empty {
+		padding: 0 16px;
 	}
 </style>

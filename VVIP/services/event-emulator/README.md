@@ -7,7 +7,7 @@ vehicles and patrolling agency units — and drives the **real stack through
 its real APIs**. It never produces outcomes: no decision, parameter,
 situation band, e-challan or approval comes from here. The real stack plans,
 classifies, escalates and degrades on its own, and a named officer makes
-every decision the scenarios lead up to — a signed-in human in the judged
+every decision the scenarios lead up to — a signed-in human in a live
 demo (an unattended script, like the flagship showcase, records its
 approvals as `Scripted demo officer (showcase script)`).
 

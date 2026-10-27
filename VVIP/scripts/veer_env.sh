@@ -27,6 +27,14 @@
 # the VEER_CESIUM_ION_TOKEN, …): a boot bring-up has no login shell to
 # inherit them from, and a deck recreated without the PIN serves the LAN
 # with the gate OFF. Secrets go in with `--set KEY -` (stdin).
+#
+# VEER_OSINT (0 by default; plan R7) switches the OSINT event-intelligence
+# service on: with VEER_OSINT=1, VEER_COMPOSE_FILES also names
+# infra/compose.osint-ingress.yml (vvip-argus-osint-ingress, loopback :8093)
+# and scripts/veer_up.sh gates a 12th readiness component, osint. Any other
+# value is off: the stack is exactly the 11 components and 3 compose files it
+# was before the flag existed. The deploy sets it with
+#     scripts/veer_env.sh --set VEER_OSINT 1
 
 # ─── loader (works when sourced or executed) ────────────────────────────────
 
@@ -38,17 +46,22 @@ VEER_ENV_FILE="${VEER_ENV_FILE:-$HOME/.config/veer/veer.env}"
 VEER_ENV_KEYS=(
     VEER_ROOT VEER_RUN_DIR VEER_LOG_DIR VEER_VENV_DIR VEER_MODELS_CONFIG
     POSTGIS_HOST_PORT DECIDER_SNAPSHOT_PATH LLAMA_SERVER_BIN GEMMA_GGUF
-    BGE_M3_PATH VEER_DEMO VEER_CONVERGE_TIMEOUT
+    BGE_M3_PATH VEER_DEMO VEER_OSINT VEER_CONVERGE_TIMEOUT
 )
 
 # Values compose interpolates into the stack that must survive a reboot:
 # --write keeps them (from veer.env, or from this shell when only it has
 # them) and scripts/veer_up.sh warns when this shell carries one veer.env
 # lacks. Any OTHER line already in veer.env is carried over by --write too.
+# The second group are compose PASS-THROUGH flags (infra/compose.argus-override.yml:
+# a key with no value there reaches the container only when set here).
 VEER_PERSIST_KEYS=(
     VEER_OPERATOR_PIN VEER_SESSION_SECRET VEER_SESSION_SECURE VEER_CESIUM_ION_TOKEN
     POSTGIS_PASSWORD VVIP_ESCORT_SIM_GPS VVIP_REQUIRE_OFFICER
-    EMULATOR_LIVING_VIOLATORS EMULATOR_CITY_SEED
+    EMULATOR_LIVING_VIOLATORS EMULATOR_CITY_SEED OSINT_MODE
+    VVIP_ACCEPT_LIVE_ANPR VVIP_ADAPTIVE_ROBUST_INPUTS
+    VVIP_ESCORT_SIM_SPEED_KMH VVIP_ESCORT_GPS_TIMEOUT_SEC VVIP_ESCORT_APPROVAL_TIMEOUT_SEC
+    VVIP_CONFIDENCE_FLOOR DECIDER_TIER0_DISABLE INGRESS_CITY_SEED
 )
 
 veer_env_load() {  # <file> — export KEY=VALUE lines not already set
@@ -78,8 +91,13 @@ export VEER_VENV_DIR="${VEER_VENV_DIR:-$VEER_ROOT/.venvs}"
 export VEER_MODELS_CONFIG_DIR="${VEER_MODELS_CONFIG_DIR:-$VEER_ROOT/models-config}"
 export VEER_MODELS_CONFIG="${VEER_MODELS_CONFIG:-$VEER_MODELS_CONFIG_DIR/configs/veer_models.yaml}"
 export VEER_DEMO="${VEER_DEMO:-0}"
+# 1 = the OSINT service (compose.osint-ingress.yml, readiness component 12)
+export VEER_OSINT="${VEER_OSINT:-0}"
 
-# host ports (fixed platform constants of the argus stack)
+# host ports (fixed platform constants of the argus stack). Overridable for
+# scripts aimed at a sandbox; scripts/veer_up.sh does NOT trust an override:
+# it re-reads the live stack's ports from the rendered compose files and
+# probes exactly those (compose binds them, not these variables).
 export POSTGIS_HOST_PORT="${POSTGIS_HOST_PORT:-56434}"
 export VALKEY_HOST_PORT="${VALKEY_HOST_PORT:-6380}"
 export NATS_HOST_PORT="${NATS_HOST_PORT:-4223}"
@@ -91,6 +109,7 @@ export DECK_PORT="${DECK_PORT:-5273}"
 export MODEL_HOST_PORT="${MODEL_HOST_PORT:-8083}"
 export LLAMA_PORT="${LLAMA_PORT:-8084}"
 export EMBEDDING_PORT="${EMBEDDING_PORT:-8085}"
+export OSINT_PORT="${OSINT_PORT:-8093}"
 
 # container names (infra/compose.argus-override.yml)
 export POSTGIS_CONTAINER="${POSTGIS_CONTAINER:-vvip-argus-postgis}"
@@ -101,6 +120,7 @@ export ORACLE_CONTAINER="${ORACLE_CONTAINER:-vvip-argus-traffic-oracle}"
 export BRAIN_CONTAINER="${BRAIN_CONTAINER:-vvip-argus-convoy-brain}"
 export DECK_CONTAINER="${DECK_CONTAINER:-vvip-argus-command-deck}"
 export EMULATOR_CONTAINER="${EMULATOR_CONTAINER:-vvip-argus-event-emulator}"
+export OSINT_CONTAINER="${OSINT_CONTAINER:-vvip-argus-osint-ingress}"
 
 # The one compose invocation of the argus stack.
 VEER_COMPOSE_FILES=(
@@ -108,6 +128,11 @@ VEER_COMPOSE_FILES=(
     -f "$VEER_ROOT/infra/compose.gb10-override.yml"
     -f "$VEER_ROOT/infra/compose.argus-override.yml"
 )
+# The OSINT service's own stanza, only with VEER_OSINT=1 (plan R7): with the
+# flag at 0 the invocation is exactly the three files above.
+if [ "$VEER_OSINT" = 1 ]; then
+    VEER_COMPOSE_FILES+=(-f "$VEER_ROOT/infra/compose.osint-ingress.yml")
+fi
 veer_compose() {
     docker compose -p "$VEER_COMPOSE_PROJECT" "${VEER_COMPOSE_FILES[@]}" "$@"
 }
@@ -217,6 +242,10 @@ BGE_M3_PATH=$bge
 # (VVIP_SIGNAL_POLICY_WRITER) + living-city emulation (EMULATOR_LIVING_CITY)
 VEER_DEMO=${VEER_DEMO:-0}
 
+# 1 = the OSINT event-intelligence service (infra/compose.osint-ingress.yml,
+# readiness component 12); 0 = off, the stack as before the flag existed
+VEER_OSINT=${VEER_OSINT:-0}
+
 # values compose interpolates, when not the defaults, and every other line
 # this file already carried (the operator gate's VEER_OPERATOR_PIN /
 # VEER_SESSION_SECRET, POSTGIS_PASSWORD, VEER_CESIUM_ION_TOKEN, …) — set
@@ -276,9 +305,11 @@ EOF
         local k
         for k in "${VEER_ENV_KEYS[@]}" VEER_COMPOSE_PROJECT VEER_LOG_DIR VEER_MODELS_CONFIG_DIR \
                  VALKEY_HOST_PORT NATS_HOST_PORT NATS_MON_PORT ORACLE_PORT BRAIN_PORT \
-                 EMULATOR_PORT DECK_PORT MODEL_HOST_PORT LLAMA_PORT EMBEDDING_PORT; do
+                 EMULATOR_PORT DECK_PORT MODEL_HOST_PORT LLAMA_PORT EMBEDDING_PORT \
+                 OSINT_PORT OSINT_CONTAINER; do
             printf '%s=%s\n' "$k" "${!k:-}"
         done | awk '!seen[$0]++'
+        echo "# osint: VEER_OSINT=$VEER_OSINT ($([ "$VEER_OSINT" = 1 ] && echo "on: 12 components, + infra/compose.osint-ingress.yml" || echo "off: 11 components, 3 compose files"))"
         echo "# compose: docker compose -p $VEER_COMPOSE_PROJECT ${VEER_COMPOSE_FILES[*]}"
     }
 

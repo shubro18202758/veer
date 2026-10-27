@@ -28,6 +28,18 @@ scoped in SQL to the entity's own keys).
     convoy          event                                    event_id / movement_id
     anomaly         segment                                  anomaly_log.segment_id
     segment         adjacent_junction, spine_of, anomaly     adjacency, spines, anomaly_log
+    osint_event     reported_at (place), corroborates /      toponyms (situation + member
+                    promoted_to (event), on_road (segment),  geocodes), attach, promotion,
+                    at_junction (junction)                   segment_id / junction_id
+    place           reported_at (osint_event), on_road,      toponyms, gazetteer
+                    at_junction                              segment_id / junction_id
+
+OSINT (021, C-T): an ``osint_event`` dossier resolves only a SURFACED,
+not-superseded situation (a held one is never an entity: 404); its audit is
+the situation's own narrative (surfaced, promoted, decision support) plus
+the promoted corridor event's.  A ``place`` resolves by its id
+(``<name slug>_<gaz_id>``) or, failing that, by its bare name slug.  Before
+migration 021 both kinds are simply unknown (404), never a 500.
 
 Privacy rail (C6): an individual read surfaces only under
 ``SQL_LAWFUL_READ`` (city/common.py) — its vehicle holds an ACTIVE
@@ -67,15 +79,25 @@ import structlog
 from traffic_oracle.city.cameras import load_cameras
 from traffic_oracle.city.common import (
     EPOCH,
+    OSINT_CONTEXT_MEMBERS_SQL,
+    OSINT_EVENT_COLUMNS,
+    OSINT_PROVENANCE_COLUMNS,
+    OSINT_PROVENANCE_LATERAL,
+    OSINT_SURFACED_SQL,
     SQL_LAWFUL_READ,
     age_sec,
     as_dict,
     as_uuid,
     city_entity,
     display_geom_supported,
+    event_provenance_supported,
     finite,
     json_doc,
+    name_slug,
+    osint_store_present,
     parse_ts,
+    place_gaz_id,
+    place_slug,
     routes_supersede_supported,
     scan_mget,
     subject_key,
@@ -93,16 +115,23 @@ from traffic_oracle.city.entities import (
     event_entity,
     history_doc,
     junction_entity,
+    link_places,
+    load_dss,
     load_event_spines,
+    osint_event_entity,
+    osint_row_ok,
+    place_entity,
     recommendation_entity,
     sighting_entity,
     spine_doc,
     unit_entity,
     vehicle_entity,
+    with_event_provenance,
 )
 from traffic_oracle.city.feed import FeedScope, collect_feed
 from traffic_oracle.enforcement.engine import SQL_STOLEN_EARMARK
 from traffic_oracle.ingest.cache_writer import emulated_latest_key, live_latest_key
+from traffic_oracle.osint import store as osint_store
 from traffic_oracle.units.agencies import agency_label
 from traffic_oracle.units.router import collect_units
 
@@ -183,6 +212,35 @@ _SQL_SEGMENT_ANOMALIES_DISPLAY = _SQL_SEGMENT_ANOMALIES.replace(
     "ST_PointOnSurface(rs.geom)", _DISPLAY_POINT
 )
 
+#: Migration 021 (probed): events with their first-class provenance.
+_SQL_DOSSIER_EVENTS_PROVENANCE = with_event_provenance(_SQL_DOSSIER_EVENTS)
+
+#: OSINT (021, guarded): one SURFACED situation with its C-Q provenance and its
+#: context-member count (FIX-E R2 — the same subquery the snapshot and the feed select,
+#: so every surface counts the REPORTS as ``source_count - context_members`` alike).
+_SQL_DOSSIER_OSINT_EVENT = (
+    "SELECT " + OSINT_EVENT_COLUMNS + ", " + OSINT_PROVENANCE_COLUMNS + ", " + OSINT_CONTEXT_MEMBERS_SQL
+    + " FROM osint.resolved_events r " + OSINT_PROVENANCE_LATERAL
+    + " WHERE r.osint_event_id = $1::uuid AND " + OSINT_SURFACED_SQL
+)
+
+#: Surfaced situations reported at a place (its lower-cased name) — the
+#: situation's own toponym or one of its member signals' geocodes.
+_SQL_DOSSIER_PLACE_EVENTS = (
+    "SELECT " + OSINT_EVENT_COLUMNS + ", " + OSINT_PROVENANCE_COLUMNS
+    + " FROM osint.resolved_events r " + OSINT_PROVENANCE_LATERAL
+    + " WHERE " + OSINT_SURFACED_SQL
+    + " AND (lower(r.toponym) = $1 OR EXISTS (SELECT 1 FROM osint.event_sources es"
+    + " JOIN osint.geocodes g ON g.signal_id = es.signal_id"
+    + " WHERE es.osint_event_id = r.osint_event_id AND lower(g.toponym) = $1))"
+    + " ORDER BY r.credibility DESC, COALESCE(r.window_end, r.created_at) DESC,"
+    + " r.osint_event_id LIMIT $2"
+)
+
+#: One gazetteer place by id; and every place's name (a bare-slug lookup).
+_SQL_DOSSIER_PLACE = "SELECT z.gaz_id, z.canonical_name, z.feature_type, z.surface_forms, z.segment_id, z.junction_id, ST_X(ST_PointOnSurface(z.geom)) AS lon, ST_Y(ST_PointOnSurface(z.geom)) AS lat FROM osint.gazetteer z WHERE z.gaz_id = $1"  # noqa: E501
+_SQL_DOSSIER_PLACE_NAMES = "SELECT z.gaz_id, z.canonical_name FROM osint.gazetteer z ORDER BY z.gaz_id LIMIT 20000"  # noqa: E501
+
 #: How much of a segment's latest hot-cache row a dossier shows.
 _LATEST_OBSERVATION_KEYS = ("speed_kmh", "congestion_idx", "data_quality", "source")
 
@@ -249,6 +307,46 @@ def _rel(relation: str, entities: Iterable[dict]) -> list[dict]:
     return [{"relation": relation, "entity": e} for e in entities]
 
 
+def osint_source_rows(refs: list[Any]) -> list[dict]:
+    """The city dossier's ``sources[]`` / ``context_sources[]`` rows (FIX-E
+    R2): one per source signal — ``{signal_id, publisher, tier, title,
+    fetch_mode, url}`` — with the url kept on the OFFICIAL tiers only (the
+    store has already withheld the rest) and the title as the store
+    redacted it.  The tier comes from the source's own prior, matching the
+    ``source_notes`` rows beside them."""
+    notes = {n["signal_id"]: n for n in osint_store.source_notes(refs)}
+    out: list[dict] = []
+    for r in refs:
+        note = notes.get(r.signal_id) or {}
+        tier = note.get("source_tier")
+        out.append(
+            {
+                "signal_id": r.signal_id,
+                "publisher": r.publisher,
+                "tier": tier,
+                "title": r.title,
+                "fetch_mode": r.fetch_mode,
+                "url": r.url if tier == osint_store.OFFICIAL_TIER else None,
+            }
+        )
+    return out
+
+
+async def _osint_dossier_sources(conn: Any, oid: str, ent: dict) -> None:
+    """Attach the situation's per-signal sources to its dossier entity's
+    props (FIX-E R2): ``sources[]`` (the reports it stands on, a url on the
+    official tiers only), ``source_notes`` beside them (the tier and the
+    honest withheld-link note, keyed by signal_id) and ``context_sources``
+    (the district alerts in effect there — context, never corroboration).
+    The ``context_members`` count rides the dossier SQL itself."""
+    refs = await osint_store.get_sources(conn, oid)
+    reporting = [r for r in refs if r.role != osint_store.CONTEXT_ROLE]
+    context = [r for r in refs if r.role == osint_store.CONTEXT_ROLE]
+    ent["props"]["sources"] = osint_source_rows(reporting)
+    ent["props"]["source_notes"] = osint_store.source_notes(reporting)
+    ent["props"]["context_sources"] = osint_source_rows(context)
+
+
 class _Dossier:
     """Per-request dossier builder over one connection."""
 
@@ -268,7 +366,12 @@ class _Dossier:
         ids = list(dict.fromkeys(str(u) for u in map(as_uuid, ids) if u is not None))
         if not ids:
             return []
-        rows = await self.conn.fetch(_SQL_DOSSIER_EVENTS, ids)
+        sql = (
+            _SQL_DOSSIER_EVENTS_PROVENANCE
+            if await event_provenance_supported(self.conn)
+            else _SQL_DOSSIER_EVENTS
+        )
+        rows = await self.conn.fetch(sql, ids)
         if not rows:
             return []
         for r in rows:
@@ -296,7 +399,48 @@ class _Dossier:
                     route_history=history_doc(history.get(eid, [])),
                 )
             )
+        # additive (C-T): the event's latest decision support (022 guarded)
+        dss = await load_dss(self.conn, [e["urn"] for e in out], self.now)
+        for e in out:
+            if e["urn"] in dss:
+                e["props"]["dss"] = dss[e["urn"]]
         return out
+
+    async def osint_entities(self, rows: list[Any]) -> list[dict]:
+        """osint_event entities for surfaced rows that pass the registered
+        model check (+ places, + dss)."""
+        rows = [r for r in rows if osint_row_ok(r)]
+        if not rows:
+            return []
+        by_event, _ = await link_places(self.conn, rows)
+        dss = await load_dss(
+            self.conn, [urn("osint_event", str(r["osint_event_id"])) for r in rows], self.now
+        )
+        return [
+            osint_event_entity(
+                r,
+                self.now,
+                dss=dss.get(urn("osint_event", str(r["osint_event_id"]))),
+                place_urns=by_event.get(str(r["osint_event_id"]), []),
+            )
+            for r in rows
+        ]
+
+    async def place_row(self, slug: str) -> Any | None:
+        """The gazetteer place of a ``place`` id: ``<name slug>_<gaz_id>``,
+        else the one place whose bare name slug it is."""
+        gaz_id = place_gaz_id(slug)
+        if gaz_id is not None:
+            row = await self.conn.fetchrow(_SQL_DOSSIER_PLACE, gaz_id)
+            if row is not None and place_slug(row["canonical_name"], row["gaz_id"]) == slug:
+                return row
+        matches = [
+            r for r in await self.conn.fetch(_SQL_DOSSIER_PLACE_NAMES)
+            if name_slug(r["canonical_name"]) == slug
+        ]
+        if len(matches) != 1:
+            return None
+        return await self.conn.fetchrow(_SQL_DOSSIER_PLACE, int(matches[0]["gaz_id"]))
 
     async def vehicles(self, ids: list[str]) -> list[tuple[Any, dict, list[Any]]]:
         """(row, entity, recent sightings) per vehicle — the trail only for
@@ -802,6 +946,74 @@ class _Dossier:
         anomalies = await self.conn.fetch(anomalies_sql, sid)
         related += _rel("anomaly", [anomaly_entity(r, self.now) for r in anomalies])
         return ent, related, None
+
+    async def osint_event(self, oid: str) -> tuple[dict, list[dict], FeedScope] | None:
+        """A SURFACED situation (C-T) — places, the live event it
+        corroborates or the corridor event it became, its road and junction;
+        its entity's props carry the per-signal sources (FIX-E R2): the
+        ``sources[]`` it stands on (a url on the official tiers only),
+        ``source_notes`` beside them, the ``context_sources`` listed apart
+        and the ``context_members`` count the dossier SQL selected."""
+        if not await osint_store_present(self.conn):
+            return None
+        row = await self.conn.fetchrow(_SQL_DOSSIER_OSINT_EVENT, oid)
+        if row is None or not osint_row_ok(row):
+            return None  # unknown, held, superseded or not a valid row: never an entity
+        by_event, places = await link_places(self.conn, [row])
+        dss = await load_dss(self.conn, [urn("osint_event", oid)], self.now)
+        ent = osint_event_entity(
+            row,
+            self.now,
+            dss=dss.get(urn("osint_event", oid)),
+            place_urns=by_event.get(oid, []),
+        )
+        await _osint_dossier_sources(self.conn, oid, ent)
+        related: list[dict] = []
+        related += _rel(
+            "reported_at", [place_entity(p, self.now, osint_event_ids=e) for p, e in places]
+        )
+        live = str(ent["props"]["attach"]["corroborates_live_urn"] or "")
+        promoted = ent["props"]["promoted_event_id"]
+        if live.startswith("event:") and live != urn("event", str(promoted)):
+            # a different live event it independently reports — never the one promoted from it
+            related += _rel("corroborates", await self.events([live.split(":", 1)[1]]))
+        if promoted:
+            related += _rel("promoted_to", await self.events([promoted]))
+        if ent["props"]["segment_id"] is not None:
+            related += _rel("on_road", await self.segments([ent["props"]["segment_id"]]))
+        if ent["props"]["junction_id"] is not None:
+            related += _rel("at_junction", await self.junctions([ent["props"]["junction_id"]]))
+        ent["links"] = list(dict.fromkeys(ent["links"] + [r["entity"]["urn"] for r in related]))
+        scope = FeedScope(osint_event_ids=[oid], event_ids=[promoted] if promoted else [])
+        return ent, related, scope
+
+    async def place(self, slug: str) -> tuple[dict, list[dict], FeedScope | None] | None:
+        """A gazetteer PLACE and the surfaced situations reported at it."""
+        if not await osint_store_present(self.conn):
+            return None
+        row = await self.place_row(slug)
+        if row is None:
+            return None
+        name = str(row["canonical_name"]).strip().lower()
+        events = await self.osint_entities(
+            list(await self.conn.fetch(_SQL_DOSSIER_PLACE_EVENTS, name, MAX_RELATED))
+        )
+        times = [t for t in (parse_ts(e["t"]) for e in events) if t is not None]
+        ent = place_entity(
+            row,
+            self.now,
+            osint_event_ids=[e["id"] for e in events],
+            t=max(times) if times else None,
+        )
+        related = _rel("reported_at", events)
+        segment_id = ent["props"]["segment_id"]
+        if segment_id is not None:
+            related += _rel("on_road", await self.segments([segment_id]))
+        junction_id = ent["props"]["junction_id"]
+        if junction_id is not None:
+            related += _rel("at_junction", await self.junctions([junction_id]))
+        scope = FeedScope(osint_event_ids=[e["id"] for e in events]) if events else None
+        return ent, related, scope
 
 
 async def build_dossier(

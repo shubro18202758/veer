@@ -76,6 +76,7 @@ from traffic_oracle.data.vector_store import TrafficVectorStore
 from traffic_oracle.evaluate.scenario_sim import ScenarioInputError, ScenarioSimulator
 from traffic_oracle.ingest.cache_writer import emulated_latest_key
 from traffic_oracle.ingest.service import IngestService, disabled_health
+from traffic_oracle.logfilters import install_access_log_filter
 from traffic_oracle.metrics import (
     get_metrics_response,
     record_api_request,
@@ -686,6 +687,11 @@ async def _compute_eta_band(
 
 def create_app() -> FastAPI:
     """Build the FastAPI application with all traffic-oracle endpoints."""
+    # C6 log hygiene (FIX-AUDIT-A): uvicorn's access log records each
+    # request's query string — a lookup's ``?plate=`` included — so its
+    # logger masks registration marks before any handler writes a line
+    # (logfilters.py; uvicorn.run's dictConfig keeps logger filters).
+    install_access_log_filter()
     app = FastAPI(
         title="Traffic Oracle",
         version="0.2.0",
@@ -1585,8 +1591,15 @@ def create_app() -> FastAPI:
 # Main
 # ---------------------------------------------------------------------------
 
+#: The bind address when ``HOST`` is unset (F-CONN-09): loopback.  The oracle trusts the deck's
+#: ``x-veer-officer`` header only because it is reachable from this host alone (units/router.py), so a
+#: hand-run oracle never listens on every interface by default; a container on a bridge network that
+#: must publish its port sets ``HOST=0.0.0.0`` explicitly.
+DEFAULT_HOST = "127.0.0.1"
+
+
 def main() -> None:
-    host = os.environ.get("HOST", "0.0.0.0")
+    host = os.environ.get("HOST") or DEFAULT_HOST
     port = int(os.environ.get("PORT", "8081"))
 
     structlog.configure(

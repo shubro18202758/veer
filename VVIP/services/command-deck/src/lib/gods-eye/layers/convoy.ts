@@ -33,7 +33,12 @@ import { escortFollower } from '$lib/ops/components/template/escort.svelte';
 import { godsEye } from '../store.svelte';
 import type { CityEntity } from '../city-api';
 import type { GodsEyeLayer, GodsEyeLayerContext, GodsEyeLayerInstance } from '../registry';
-import { cssColor, cssVar, withAlpha } from '../theme';
+import { canvasFont, cssColor, cssVar, withAlpha } from '../theme';
+import { ops } from '$lib/ops/store.svelte';
+import { kindIcon } from '$lib/design/icons';
+import type { EscortApproval } from '../city-api';
+import { chromeOf, kindShown, kindsSignature, viewOf } from '../hud/map/view';
+import { inkAlpha, mapInk, markerBillboard, tagMarker, type MarkerMeta } from '../hud/map/symbols';
 import { DRAPE_Z, clampedDot, clampedLabel, drapeAudit, drapedPolyline, drapedRing, ground, groundPath } from './draping';
 
 export const CONVOY_PICK_PREFIX = 'cvy:';
@@ -69,11 +74,17 @@ function createConvoyLayer(): GodsEyeLayerInstance {
 		const convoys = cityRegistry.byKind('convoy').filter((c) => c.lon != null && c.lat != null);
 		// The followed escort's approvals awaiting an officer: their detours preview dashed.
 		const followedId = escortFollower.movementId;
-		const approvals = followedId ? (escortFollower.status?.pendingApprovals ?? []).filter((a) => a.detourSegmentIds.length) : [];
+		const pending = followedId ? (escortFollower.status?.pendingApprovals ?? []) : [];
+		const approvals = pending.filter((a) => a.detourSegmentIds.length);
+		const v2 = chromeOf(ctx) === 'v2';
+		// v2: a kind filter that leaves the convoy out hides its route and detours (the pass hides its markers)
+		const lines = !v2 || kindShown(viewOf(ctx), 'convoy');
 		const sig = JSON.stringify([
 			convoys.map((c) => [c.id, c.lon, c.lat, c.props.speed_kmh, c.props.heading, c.props.progress, c.source, c.t]),
 			approvals.map((a) => [a.approvalId, a.detourSegmentIds.join('.')]),
 			godsEye.segments.length,
+			// v2 also draws a hold point without a detour, on the movement's route
+			v2 ? [pending.map((a) => [a.approvalId, a.action, a.segmentIds.join('.')]), ops.events.map((e) => [e.eventId, e.routeSegmentIds.join('.')]), kindsSignature(viewOf(ctx))] : null,
 		]);
 		if (sig === lastSignature) return;
 		lastSignature = sig;
@@ -81,6 +92,10 @@ function createConvoyLayer(): GodsEyeLayerInstance {
 		for (const id of entityIds) viewer.entities.removeById(id);
 		entityIds.length = 0;
 		urns.clear();
+		if (v2) {
+			drawV2(cesium, viewer, convoys, followedId, pending, lines);
+			return;
+		}
 		const act = cssColor(cesium, '--v-act', cesium.Color.ORANGE);
 		const ink = cssColor(cesium, '--v-ink-1', cesium.Color.WHITE);
 		const canvasInk = cssColor(cesium, '--v-canvas', cesium.Color.BLACK);
@@ -113,7 +128,7 @@ function createConvoyLayer(): GodsEyeLayerInstance {
 				}),
 				label: clampedLabel(cesium, {
 					text: convoyLine(c),
-					font: '600 13px monospace',
+					font: canvasFont('600 13px var(--v-font-ui)'),
 					fillColor: ink,
 					outlineColor: canvasInk,
 					outlineWidth: 3,
@@ -177,6 +192,137 @@ function createConvoyLayer(): GodsEyeLayerInstance {
 		}
 	}
 
+	function add(viewer: CesiumViewer, urn: string, entity: Record<string, unknown>, meta?: MarkerMeta): string {
+		const created = viewer.entities.add(entity);
+		if (meta) tagMarker(created, meta);
+		entityIds.push(created.id);
+		urns.set(created.id, urn);
+		return created.id;
+	}
+
+	/**
+	 * Chrome v2 (SPEC §5.3 "Convoy"): the convoy is the map's one TURQUOISE
+	 * object (--v-map-route) — a marker labelled "Convoy · 38 km/h", the
+	 * route ahead turquoise over a casing, the route travelled dimmed. An
+	 * escort HOLD proposal waiting for a named officer is an orange ring with
+	 * a pause glyph at the hold point, "Hold proposed"; it selects the convoy
+	 * (the Movement tab is the proposal's home, SPEC §5.4). A proposed detour
+	 * previews DASHED in the route's turquoise — a candidate route, never the
+	 * decision orange, which SPEC §2.4 keeps off lines and tracks (the hold
+	 * ring alone wears it). Nothing here applies anything. Without `lines`
+	 * (a kind filter that leaves the convoy out) only the markers are drawn,
+	 * and the canvas's pass hides them.
+	 */
+	function drawV2(
+		cesium: CesiumGlobal,
+		viewer: CesiumViewer,
+		convoys: CityEntity[],
+		followedId: string | null,
+		approvals: EscortApproval[],
+		lines = true,
+	) {
+		const routeInk = mapInk('route');
+		const casing = cesium.Color.fromCssColorString(inkAlpha(mapInk('casing'), 0.85));
+		for (const c of convoys) {
+			const lon = c.lon as number;
+			const lat = c.lat as number;
+			const urn = `convoy:${c.id}`;
+			const speed = num(c.props.speed_kmh);
+			const progress = num(c.props.progress);
+			const emulated = c.source === 'emulated';
+			const ageSec = c.t != null ? Math.max(0, Math.round((Date.now() - c.t) / 1000)) : null;
+			const description = `Convoy of movement ${c.id}${speed != null ? `: ${Math.round(speed)} km/h` : ''}${
+				progress != null ? `, ${Math.round(progress * 100)} % along the route` : ''
+			}. ${emulated ? 'Emulated GPS' : 'GPS'} fix ${ageSec != null ? `${ageSec} s ago` : 'time unknown'}.`;
+			// the route: ahead (from the convoy's segment on) and travelled
+			const ev = typeof c.props.event_id === 'string' ? ops.events.find((e) => e.eventId === c.props.event_id) : undefined;
+			const route = ev && lines ? ev.routeSegmentIds : [];
+			const at = num(c.props.segment_id);
+			const split = at != null ? route.indexOf(at) : -1;
+			route.forEach((segId, i) => {
+				const seg = godsEye.segmentById.get(segId);
+				if (!seg || seg.coordinates.length < 2) return;
+				const ahead = split < 0 || i >= split;
+				add(viewer, urn, {
+					id: `${CONVOY_PICK_PREFIX}${ahead ? 'ahead' : 'done'}-${c.id}-${segId}`,
+					polyline: drapedPolyline(cesium, {
+						positions: groundPath(cesium, seg.coordinates),
+						width: ahead ? 7 : 2,
+						material:
+							ahead && cesium.PolylineOutlineMaterialProperty
+								? new cesium.PolylineOutlineMaterialProperty({ color: cesium.Color.fromCssColorString(routeInk), outlineColor: casing, outlineWidth: 3.5 })
+								: cesium.Color.fromCssColorString(inkAlpha(routeInk, ahead ? 1 : 0.45)),
+						z: DRAPE_Z.convoy,
+					}),
+					description: `${ahead ? 'The route ahead' : 'The route travelled'}: segment ${segId}${seg.roadName ? ` (${seg.roadName})` : ''}.`,
+				});
+			});
+			const meta: MarkerMeta = {
+				urn,
+				kind: 'convoy',
+				glyph: kindIcon('convoy'),
+				shape: 'disc',
+				size: 26,
+				role: 'route',
+				t: c.t,
+				label: [{ text: speed != null ? `Convoy · ${Math.round(speed)} km/h` : 'Convoy' }],
+				labelWhen: 'always',
+				labelPrefer: ['b', 'bl', 'br', 'r', 'l', 't'],
+				labelPriority: 90,
+				radius: 15,
+			};
+			add(viewer, urn, { id: `${CONVOY_PICK_PREFIX}${c.id}`, position: ground(cesium, lon, lat), billboard: markerBillboard(cesium, meta), description }, meta);
+		}
+		if (!followedId) return;
+		const urn = `convoy:${followedId}`;
+		const candidate = cesium.Color.fromCssColorString(inkAlpha(routeInk, 0.85));
+		for (const a of approvals) {
+			// the hold point: short of the first segment the proposal names
+			const first = a.segmentIds.length ? godsEye.segmentById.get(a.segmentIds[0]) : undefined;
+			const hold = /hold/i.test(a.action) ? (first?.coordinates[0] ?? null) : null;
+			if (hold) {
+				const meta: MarkerMeta = {
+					urn,
+					kind: 'convoy',
+					glyph: 'pause',
+					shape: 'disc',
+					size: 18,
+					role: 'decision',
+					label: [{ text: 'Hold proposed' }],
+					labelWhen: 'always',
+					labelPrefer: ['t', 'tr', 'tl', 'b'],
+					labelPriority: 85,
+					radius: 11,
+				};
+				add(
+					viewer,
+					urn,
+					{
+						id: `${CONVOY_PICK_PREFIX}hold-${followedId}-${a.approvalId}`,
+						position: ground(cesium, hold[0], hold[1]),
+						billboard: markerBillboard(cesium, meta),
+						description: `Escort proposal: hold the convoy here${a.reason ? ` (${a.reason})` : ''}. Waiting for a named officer in the Movement tab.`,
+					},
+					meta,
+				);
+			}
+			for (const segId of lines ? a.detourSegmentIds : []) {
+				const seg = godsEye.segmentById.get(segId);
+				if (!seg || seg.coordinates.length < 2) continue;
+				add(viewer, urn, {
+					id: `${CONVOY_PICK_PREFIX}detour-${followedId}-${a.approvalId}-${segId}`,
+					polyline: drapedPolyline(cesium, {
+						positions: groundPath(cesium, seg.coordinates),
+						width: 3,
+						material: new cesium.PolylineDashMaterialProperty({ color: candidate, dashLength: 14 }),
+						z: DRAPE_Z.detour,
+					}),
+					description: `Proposed detour (${a.action.replace(/_/g, ' ')}), segment ${segId}: waiting for a named officer.`,
+				});
+			}
+		}
+	}
+
 	return {
 		async status() {
 			return { configured: true };
@@ -203,6 +349,9 @@ function createConvoyLayer(): GodsEyeLayerInstance {
 			void cityRegistry.refresh();
 			draw();
 		},
+		restyle() {
+			draw();
+		},
 		handlePick(pickId) {
 			return pickId.startsWith(CONVOY_PICK_PREFIX);
 		},
@@ -222,7 +371,12 @@ function createConvoyLayer(): GodsEyeLayerInstance {
 						? `${n} escort${n === 1 ? '' : 's'} on GPS (C-B mirror, 30 s TTL — no interpolation)`
 						: 'no escort reporting GPS (start one from the VVIP corridor module)',
 				error: down ? (cityRegistry.note ?? 'convoy source not ok') : null,
-				detail: ctx && entityIds.length ? { convoys: n, ...drapeAudit(ctx.viewer, entityIds) } : { convoys: n },
+				detail: {
+					convoys: n,
+					// v2: the LayerTree row's provenance glyph (SPEC §5.3, §9.2): escorts on emulated GPS
+					...(chromeOf(ctx) === 'v2' ? { emulated: cityRegistry.byKind('convoy').filter((c) => c.source === 'emulated').length } : {}),
+					...(ctx && entityIds.length ? drapeAudit(ctx.viewer, entityIds) : {}),
+				},
 				via: 'city-api',
 			};
 		},
@@ -239,5 +393,6 @@ export const convoyLayer: GodsEyeLayer = {
 	requiresKeyId: null,
 	pickPrefix: CONVOY_PICK_PREFIX,
 	defaultOn: true,
+	group: 'corridors',
 	create: createConvoyLayer,
 };

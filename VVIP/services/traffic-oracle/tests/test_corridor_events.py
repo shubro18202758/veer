@@ -250,11 +250,270 @@ class TestCorridorEventRequest:
                     officer=bad,
                 )
 
-    def test_eight_archetypes(self):
-        # 010 (C3 lockstep): + crime_incident + vehicle_pursuit
-        assert len(EVENT_KINDS) == 10
+    def test_event_kinds(self):
+        # 010 (C3 lockstep): + crime_incident + vehicle_pursuit;
+        # 021 (C3 lockstep): + the six OSINT reported-situation kinds
+        assert len(EVENT_KINDS) == 16
         assert "crime_incident" in EVENT_KINDS and "vehicle_pursuit" in EVENT_KINDS
+        assert set(OSINT_NEW_KINDS) <= set(EVENT_KINDS)
+        assert EVENT_KINDS[-6:] == OSINT_NEW_KINDS
         assert set(USE_CASE_KINDS.values()) <= set(EVENT_KINDS)
+
+
+# ── OSINT provenance fields on the request (021, contract C-T) ──────────────
+
+OSINT_NEW_KINDS = (
+    "reported_crime", "public_disorder", "road_accident", "hazard", "flooding", "infra_failure",
+)
+
+
+def _osint_req(**over):
+    body = {
+        "event_kind": "road_accident",
+        "title": "Road accident · Karnavati Club (SG Highway)",
+        "route_spines": [{"label": "primary", "segment_ids": [1045]}],
+        "metadata": {"source": "osint", "osint_event_id": "4f7a9c1e-0b5d-4c33-9e21-7d8a6b5c4e3f"},
+        "officer": "Sandbox Officer",
+        "source_kind": "osint",
+        "credibility": 0.65,
+        "verification_state": "NEWS-REPORTED",
+        "provenance": {
+            "source_feeds": ["google_news_rss"],
+            "publishers": ["news-a.example", "news-b.example"],
+            "geocoder": "gazetteer_exact",
+            "geocode_confidence": 0.719,
+            "osint_event_id": "4f7a9c1e-0b5d-4c33-9e21-7d8a6b5c4e3f",
+            "dss_id": None,
+        },
+        "geotag": {"lon": 72.503, "lat": 23.009},
+    }
+    body.update(over)
+    return body
+
+
+class TestOsintRequestFields:
+    def test_defaults_are_null_no_inference(self):
+        req = CorridorEventRequest(
+            event_kind="race", title="x", route_spines=[{"segment_ids": [1]}]
+        )
+        assert (
+            req.source_kind, req.credibility, req.verification_state, req.provenance, req.geotag
+        ) == (None, None, None, None, None)
+
+    def test_a_full_osint_request_validates(self):
+        req = CorridorEventRequest(**_osint_req())
+        assert req.source_kind == "osint" and req.verification_state == "NEWS-REPORTED"
+        assert req.geotag is not None and (req.geotag.lon, req.geotag.lat) == (72.503, 23.009)
+
+    @pytest.mark.parametrize("kind", ["operator", "brain", "emulator"])
+    def test_other_source_kinds_need_no_label(self, kind):
+        CorridorEventRequest(
+            **_osint_req(source_kind=kind, credibility=None, verification_state=None)
+        )
+
+    @pytest.mark.parametrize(
+        "over",
+        [
+            {"source_kind": "twitter"},
+            {"verification_state": "LIVE"},
+            {"credibility": 1.2},
+            {"credibility": -0.1},
+            {"credibility": float("nan")},
+            {"credibility": None},  # osint needs its credibility
+            {"verification_state": None},  # osint needs its honest label
+            {"geotag": {"lon": 72.0, "lat": 23.0}},  # outside the city bbox
+            {"geotag": {"lon": 72.5, "lat": 23.5}},
+            {"geotag": {"lon": 72.5}},
+            {"geotag": {"lon": 72.5, "lat": 23.0, "alt": 3}},
+            {"provenance": {"publishers": ["news-a.example"], "author": "x"}},
+            {"provenance": {"sources": [{"title": "t", "post_author": "x"}]}},
+            {"provenance": {"meta": {"deep": {"faces": []}}}},
+            # compound keys the denylist matches as a substring (fail closed)
+            {"provenance": {"personid": "x"}},
+            {"provenance": {"sources": [{"reportername": "x"}]}},
+            {"provenance": {"meta": {"userName": "x"}}},
+            # an exempt key carries only its contract type
+            {"provenance": {"touches_persons": "x"}},
+            {"provenance": {"note": "x" * 5000}},  # over 4 KB
+            {"provenance": {"note": "nul\x00"}},
+            # CONFIRMED records an officer's confirmation (plan R29): never on create
+            {"verification_state": "CONFIRMED"},
+        ],
+    )
+    def test_invalid_osint_fields_are_refused(self, over):
+        with pytest.raises(ValueError):
+            CorridorEventRequest(**_osint_req(**over))
+
+    @pytest.mark.parametrize("kind", ["operator", "brain", "emulator", "osint"])
+    def test_confirmed_is_refused_on_create_for_every_source_kind(self, kind):
+        with pytest.raises(ValueError, match="officer's confirmation"):
+            CorridorEventRequest(**_osint_req(source_kind=kind, verification_state="CONFIRMED"))
+        with pytest.raises(ValueError, match="officer's confirmation"):
+            CorridorEventRequest(
+                event_kind="race",
+                title="x",
+                route_spines=[{"segment_ids": [1]}],
+                verification_state="CONFIRMED",
+            )
+
+    def test_person_key_rule_matches_the_ethics_denylist(self):
+        from traffic_oracle.events import is_person_key
+
+        for key in (
+            "author", "authorName", "post_author", "faces", "individual_id", "individualId",
+            "driver_name", "driverName", "victims", "authorname", "personid", "personname",
+            "postauthor", "reportername", "victimname", "suspectname", "ownername", "userName",
+            "faceprint", "authority", "interface", "handler", "ownership", "suspected_cause",
+        ):
+            assert is_person_key(key), key
+        for key in (
+            "surface_forms", "surfaced", "touches_persons", "publishers", "source_feeds",
+            "geocoder", "geocode_confidence", "osint_event_id", "dss_id",
+        ):
+            assert not is_person_key(key), key
+
+    def test_a_provenance_keyed_by_opaque_ids_is_accepted(self):
+        """A map keyed by signal id or uuid never fails at random: about 1 sha1 in 2,000
+        spells "face"."""
+        import hashlib
+
+        from traffic_oracle.events import is_person_key
+
+        sid = hashlib.sha1(b"google_news_rss:synthetic:559").hexdigest()
+        oid = "0b7e3c2a-face-4d1e-9a8b-5c6d7e8f9a0b"
+        assert "face" in sid and not is_person_key(sid) and not is_person_key(oid)
+        prov = {
+            **_osint_req()["provenance"],
+            "signals": {sid: {"role": "primary"}},
+            "events": {oid: "x"},
+        }
+        assert CorridorEventRequest(**_osint_req(provenance=prov)).provenance == prov
+        # the terms, and ids that are not whole and canonical, are still refused
+        for key in ("faceprint", "face_id", sid.upper(), f"event:{oid}"):
+            assert is_person_key(key), key
+            bad = {"signals": {key: {"role": "primary"}}}
+            with pytest.raises(ValueError):
+                CorridorEventRequest(**_osint_req(provenance=bad))
+
+
+class _Tx:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _CreateConn:
+    """Answers create_event's reads and writes (ledger probe, event INSERT, spine/ledger rows)."""
+
+    def __init__(self) -> None:
+        import uuid as _uuid
+        from datetime import timezone as _tz
+
+        self.event_id = _uuid.UUID("9d0c6a52-41a4-4c0e-8f6b-2f4b1d1e7a10")
+        self.created_at = datetime(2026, 10, 20, 15, 30, tzinfo=_tz.utc)
+        self.inserts: list[tuple[str, tuple]] = []
+        self.executes: list[tuple[str, tuple]] = []
+
+    async def fetchval(self, sql, *args):
+        return True  # the 013 ledger exists
+
+    def transaction(self):
+        return _Tx()
+
+    async def fetchrow(self, sql, *args):
+        if sql.startswith("INSERT INTO events.corridor_events"):
+            self.inserts.append((sql, args))
+            return {"event_id": self.event_id, "created_at": self.created_at}
+        raise AssertionError("unexpected fetchrow: " + sql[:60])
+
+    async def execute(self, sql, *args):
+        self.executes.append((sql, args))
+        return "INSERT 0 1"
+
+
+def _post_event(body, *, promotion: bool):
+    from httpx import ASGITransport, AsyncClient
+
+    from traffic_oracle.__main__ import create_app
+    from traffic_oracle.city.common import reset_relation_cache
+
+    conn = _CreateConn()
+    app = create_app()
+    app.state.pool = _FakePool(conn)
+    if promotion:
+
+        @app.middleware("http")
+        async def _osint_promotion(request, call_next):  # what OS-5's promote sets
+            request.state.osint_promotion = True
+            return await call_next(request)
+
+    async def run():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+            return await c.post("/api/v1/events", json=body)
+
+    reset_relation_cache()
+    try:
+        return asyncio.run(run()), conn
+    finally:
+        reset_relation_cache()
+
+
+class TestOsintPromotionGate:
+    def test_osint_without_promotion_is_refused(self):
+        r, conn = _post_event(_osint_req(), promotion=False)
+        assert r.status_code == 422, r.text
+        assert r.json() == {"detail": "osint events are created by promotion only"}
+        assert conn.inserts == []  # nothing written
+
+    def test_osint_with_promotion_writes_the_five_columns(self):
+        body = _osint_req()
+        r, conn = _post_event(body, promotion=True)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "planning" and r.json()["event_kind"] == "road_accident"
+        (sql, args), = conn.inserts
+        assert "source_kind, credibility, verification_state, provenance, geotag)" in sql
+        assert "ST_SetSRID(ST_MakePoint($15::float8, $16::float8), 4326)" in sql
+        import json as _json
+
+        assert args[10:13] == ("osint", 0.65, "NEWS-REPORTED")
+        assert _json.loads(args[13]) == body["provenance"]
+        assert args[14:16] == (72.503, 23.009)
+
+    @pytest.mark.parametrize("promotion", [False, True])
+    def test_confirmed_is_a_422_even_through_promotion(self, promotion):
+        """Plan R29: nothing sets CONFIRMED (an officer's confirmation); a direct POST or a
+        promotion asking for it is refused before anything is written."""
+        r, conn = _post_event(_osint_req(verification_state="CONFIRMED"), promotion=promotion)
+        assert r.status_code == 422, r.text
+        assert "officer's confirmation" in r.text
+        assert conn.inserts == []
+
+    def test_other_source_kinds_post_directly(self):
+        r, conn = _post_event(
+            _osint_req(
+                source_kind="operator", credibility=None, verification_state=None,
+                provenance=None, geotag=None,
+            ),
+            promotion=False,
+        )
+        assert r.status_code == 200, r.text
+        (_, args), = conn.inserts
+        assert args[10:16] == ("operator", None, None, None, None, None)
+
+    def test_a_plain_event_writes_nulls(self):
+        r, conn = _post_event(
+            {
+                "event_kind": "procession",
+                "title": "Rath Yatra",
+                "route_spines": [{"segment_ids": [1012]}],
+            },
+            promotion=False,
+        )
+        assert r.status_code == 200, r.text
+        (_, args), = conn.inserts
+        assert args[10:16] == (None, None, None, None, None, None)
 
 
 # ── /events/active row shape (lifecycle fields, batched spines/phases) ──────
@@ -317,6 +576,50 @@ class TestActiveEventsShape:
         assert ev["actual_start"].startswith("2026-10-22T12:00") and ev["actual_end"] is None
         assert ev["updated_at"] is not None and ev["metadata"] == {"vehicle_id": "v"}
         assert len(conn.calls) == 3   # events + ONE spines read + ONE phases read
+        # 021 (C-T): the five provenance keys, read tolerantly — a row without
+        # the columns reads null, never a KeyError
+        for key in ("source_kind", "credibility", "verification_state", "provenance", "geotag"):
+            assert key in ev and ev[key] is None, key
+
+    def test_rows_carry_the_five_osint_provenance_keys(self):
+        from httpx import ASGITransport, AsyncClient
+
+        from traffic_oracle import events as ev_mod
+        from traffic_oracle.__main__ import create_app
+
+        conn = _ActiveConn()
+        conn.row.update(
+            {
+                "event_kind": "road_accident",
+                "source_kind": "osint",
+                "credibility": 0.6499999761581421,  # REAL → float8 on the wire
+                "verification_state": "NEWS-REPORTED",
+                "provenance": (
+                    '{"source_feeds": ["google_news_rss"], "geocoder": "gazetteer_exact"}'
+                ),
+                "geotag_lon": 72.503,
+                "geotag_lat": 23.009,
+            }
+        )
+        assert "ST_X(e.geotag) AS geotag_lon" in ev_mod._ACTIVE_EVENTS_SQL
+        five = "e.source_kind, e.credibility, e.verification_state, e.provenance"
+        assert five in ev_mod._SQL_EVENTS_HISTORY
+        app = create_app()
+        app.state.pool = _FakePool(conn)
+
+        async def run():
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+                return await c.get("/api/v1/events/active")
+
+        r = asyncio.run(run())
+        assert r.status_code == 200, r.text
+        ev = r.json()["events"][0]
+        assert ev["source_kind"] == "osint" and ev["verification_state"] == "NEWS-REPORTED"
+        assert ev["credibility"] == 0.65
+        assert ev["provenance"] == {
+            "source_feeds": ["google_news_rss"], "geocoder": "gazetteer_exact",
+        }
+        assert ev["geotag"] == {"lon": 72.503, "lat": 23.009}
 
 
 # ── EMERGENCY_VEHICLE scheduling ────────────────────────────────────────────

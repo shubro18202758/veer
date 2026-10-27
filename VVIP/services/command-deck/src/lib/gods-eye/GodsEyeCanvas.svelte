@@ -67,10 +67,10 @@
 	 *     their rank).
 	 *   - 3D CITY (layers/draping.ts): on the ion key the overlays stand ON
 	 *     Google's photoreal mesh — the selection halo is a draped ring, an
-	 *     agent note a clamped label; City Command's home is a judge-grade
+	 *     agent note a clamped label; City Command's home is a presentation-grade
 	 *     oblique over the old city and the Sabarmati (HOME_VIEW_3D, the
 	 *     live action framed at ACTION_VIEW_3D); the chip names what is on
-	 *     screen (basemap.ts imageryChip — PHOTOREAL 3D · GOOGLE) and the
+	 *     screen (basemap.ts imageryChip — 'Photoreal 3D · Google') and the
 	 *     data credits ride a glass plate in the region the host's panels
 	 *     leave clear (City Command's fusion rail would cover them).
 	 *
@@ -82,7 +82,24 @@
 	 *
 	 * Degradation contract: if WebGL or the prebuilt bundle is unavailable
 	 * this panel degrades ALONE. If OSM tiles cannot load, the canvas switches
-	 * to OFFLINE SCHEMATIC MODE (entities over a dark globe, labelled).
+	 * to 'Offline schematic mode' (entities over a dark globe, labelled).
+	 *
+	 * CHROME (SPEC §5.3, plan X11): `chrome="legacy"` (the default) is the
+	 * chip row above, unchanged — every page keeps it until its owner opts
+	 * in. `chrome="v2"` is the redesign's map chrome: the toolbar (Select,
+	 * Select within shape, Search around, Measure · Layers, Legend · Follow,
+	 * Live/Replay, Guided tour, Thermal-style view, Exit map mode), zoom and
+	 * north at the bottom right above Cesium's credits, the readout at the
+	 * bottom left, the LayerTree, the legend, MapProposals and the replay
+	 * banner (hud/map/*); and the symbology in which colour means only state
+	 * (hud/map/symbols.ts): neutral glyph discs, clusters under 22 px with a
+	 * count chip (a click spiderfies them), the offset vehicle pin, one
+	 * decision dot per object, greedy labels (hud/map/labels.ts), the
+	 * selection's hierarchy and the time window's fading with protected
+	 * objects (hud/map/view.ts). The v2 pass (decorate) restyles markers in
+	 * place on camera-move end and on data change, never per frame. The
+	 * omnibar mount (CommandPalette, hud 'full' | 'wall') is the same under
+	 * both chromes, and the __GODS_EYE__ contract is unchanged.
 	 */
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { replaceState } from '$app/navigation';
@@ -108,14 +125,15 @@
 		type Basemap,
 	} from './layers/basemap';
 	import { DRAPE_Z, clampedLabel, drapedPolyline, ground, groundPath, ringCoords } from './layers/draping';
-	import { createPursuitOverlay, type PursuitOverlay } from './pursuit';
-	import { createReplayOverlay, type ReplayOverlay } from './replay';
+	import type { PursuitOverlay } from './pursuit';
+	import type { ReplayOverlay } from './replay';
 	import { fetchVehicleTrace } from './data';
 	import { FLIR_SHADER } from './shaders/flir';
 	import { buildShareUrl, parseShareHash, type ShareViewState } from './share-link';
 	import { cssColor, cssVar } from './theme';
 	import { displayPlate, displayText } from './plates';
 	import { parseUrn } from './city-api';
+	import { ACTOR_ICON, kindIcon } from '$lib/design/icons';
 	import { cityRegistry } from './entities/registry.svelte';
 	import { selection } from './entities/selection.svelte';
 	import { dossier } from './entities/dossier.svelte';
@@ -125,15 +143,67 @@
 	import { canvasBus } from './canvas-bus.svelte';
 	import type { CanvasDirective, DirectiveWorld } from './directives';
 	import '$lib/i18n/packs.agent';
+	import '$lib/i18n/packs.map';
 	import type { GodsEyeLayerInstance, LayerCoverageStats } from './registry';
+	import { canvasFont } from './theme';
+	import { DARK_REGRADE, STREETS_GRADE, applyGrade, createOsmImageryLayer } from './layers/basemap';
+	import { stolenVehicles } from './layers/enforcement';
+	import { cityDecisionUrns, markShowsDecision } from './layers/osint';
+	import { MAP_OPACITY, emptyView, kindShown, kindsSignature, markerStyle, type MapView } from './hud/map/view';
+	import { CLUSTER_RADIUS_PX, clusterAround, spiderOffsets } from './hud/map/cluster';
+	import { discBox, placeLabels, type Box, type LabelItem } from './hud/map/labels';
+	import {
+		LABEL,
+		MARKER,
+		TRACK_ARROW,
+		clearMapImages,
+		ensureMapFonts,
+		imageBillboard,
+		imageFor,
+		labelImage,
+		labelText,
+		mapInk,
+		markerBillboard,
+		markerMeta,
+		tagMarker,
+		trackArrows,
+		trackMeta,
+		type MapImage,
+		type MarkerMeta,
+		type TrackArrow,
+	} from './hud/map/symbols';
+	import { mapChrome, type BasemapStyle, type LayerRow, type MapAct } from './hud/map/map-state.svelte';
+	import MapToolbar, { type MapTool, type ShapeMode } from './hud/map/MapToolbar.svelte';
+	// the Layers and Legend panels are closed at first paint: they load on first open (V3-P4, the FIX-E-PERF2 pattern)
+	const loadLayerTree = () => import('./hud/map/LayerTree.svelte');
+	const loadLegend = () => import('./hud/map/MapLegend.svelte');
+	import LazyMount from '$lib/workspace/components/lazy/LazyMount.svelte';
+	import ReplayBanner from './hud/map/ReplayBanner.svelte';
+	import MapNav from './hud/map/MapNav.svelte';
+	import MapReadout from './hud/map/MapReadout.svelte';
+	import { shareHashExtras } from './share-link';
 
 	type SensorMode = GodsEyeSensorMode;
+
+	const NO_URNS: ReadonlySet<string> = new Set();
+	/** chrome v3's night grade of the OSM raster (V3-SPEC §4.6: the map is ground, the objects are the figure). */
+	const V3_NIGHT = { brightness: 0.3, contrast: 1.3, saturation: 0.32, gamma: 1.0 } as const;
 
 	let {
 		hud = 'full',
 		onexit,
 		pickCard = hud !== 'full',
 		clearInsets = null,
+		chrome: chromeProp = 'legacy',
+		defaultLayers = null,
+		timeWindow = null,
+		protected: protectedUrns = NO_URNS,
+		kindFilter = null,
+		selectionItems = null,
+		idleOrbit = false,
+		onLayers,
+		onTimeline,
+		onlasso,
 	}: {
 		hud?: 'full' | 'mini' | 'wall';
 		/** 'full' only: the EXIT chip and Esc (no tour running) call this. */
@@ -150,7 +220,41 @@
 		 * the canvas centre, so a selected entity never lands under a panel.
 		 */
 		clearInsets?: { left: number; right: number; top: number; bottom: number } | null;
+		/**
+		 * 'legacy' (default): today's chips, exactly as before. 'v2': the
+		 * redesign's map chrome and symbology (SPEC §5.3). 'v3': the v2
+		 * symbology and tools with NO canvas-drawn toolbar, layer panel,
+		 * legend, navigation or readout — the V3 map page (/map) draws its own
+		 * around the canvas and drives the tools through mapChrome.act
+		 * (map-state.svelte.ts). Read at mount.
+		 */
+		chrome?: 'legacy' | 'v2' | 'v3';
+		/**
+		 * The layers that start on when no share link names them (null: every
+		 * layer's own defaultOn). Read at mount. The V3 map's clean default.
+		 */
+		defaultLayers?: readonly string[] | null;
+		/** v2: the time window [from, to] (epoch ms); null when live. */
+		timeWindow?: readonly [number, number] | null;
+		/** v2: objects that never fade or dim (SPEC §7.3, computed by the page). */
+		protected?: ReadonlySet<string>;
+		/** v2: the kinds shown (null: every kind). */
+		kindFilter?: ReadonlySet<string> | null;
+		/** v2: the multi-selection (the primary is selection.current). */
+		selectionItems?: readonly string[] | null;
+		/** v2: orbit after 30 s idle, only while nothing is selected. */
+		idleOrbit?: boolean;
+		/** v2: the Layers button opens the page's own layer dock instead of the canvas's panel. */
+		onLayers?: () => void;
+		/** v2: the Live/Replay indicator opens the page's timeline. */
+		onTimeline?: () => void;
+		/** v2: a shape or Search around selected these URNs (the page calls selection.selectMany). */
+		onlasso?: (urns: string[]) => void;
 	} = $props();
+
+	/** The page's chrome (read at mount): v3 draws with the v2 symbology; its tools live on the page. */
+	const v3 = untrack(() => chromeProp) === 'v3';
+	const chrome: 'legacy' | 'v2' = v3 ? 'v2' : untrack(() => chromeProp) === 'v2' ? 'v2' : 'legacy';
 
 	let container: HTMLDivElement | null = $state(null);
 	/** The HUD chip row — measured for the clear region (it wraps when a host panel narrows it). */
@@ -161,7 +265,7 @@
 	let offlineDetected = $state(false);
 	/** COMMAND (raw) by default on every route; FLIR looks are opt-in. */
 	let sensorMode = $state<SensorMode>('raw');
-	let activeLayers = $state<Set<string>>(new Set(GODS_EYE_LAYERS.map((l) => l.id)));
+	let activeLayers = $state<Set<string>>(new Set(untrack(() => defaultLayers) ?? GODS_EYE_LAYERS.map((l) => l.id)));
 	let stats = $state<Record<string, LayerCoverageStats>>({});
 	let picked = $state<{
 		id: string;
@@ -185,8 +289,27 @@
 	/** 1 Hz wall clock — the AMA chip age ticks between band polls. */
 	let nowMs = $state(Date.now());
 
+	// chrome v2: the map chrome's tools and panels (SPEC §5.3)
+	let tool = $state<MapTool>('select');
+	let shapeMode = $state<ShapeMode>('select');
+	let layersOpen = $state(false);
+	let followUrn = $state<string | null>(null);
+	let basemapStyle = $state<BasemapStyle>('dark');
+	let cursorAt = $state<{ lon: number; lat: number } | null>(null);
+	let scaleBar = $state<{ px: number; label: string } | null>(null);
+	let cameraHeadingDeg = $state(0);
+	let hoverList = $state<{ x: number; y: number; title: string; items: string[] } | null>(null);
+	let toolHint = $state<string | null>(null);
+	/** v2: the credit bar's height (the navigation stacks above it, never over it). */
+	let creditsH = $state(26);
+	let creditsObserver: ResizeObserver | null = null;
+	/** Bumped when the map's fonts land: every marker repaints once. */
+	let imageEpoch = 0;
+
 	// controller state (non-reactive)
 	let viewer: CesiumViewer | null = null;
+	/** The Cesium namespace this viewer was built with (the lazy overlays build with it). */
+	let cesiumRef: CesiumGlobal | null = null;
 	/** This canvas's own test hook (window.__GODS_EYE__ points at the newest canvas's). */
 	let snapHook: NonNullable<Window['__GODS_EYE__']> | null = null;
 	/**
@@ -257,6 +380,45 @@
 	let preTourSensor: SensorMode = 'raw';
 	/** REPLAY overlay (tape tracks on the viewer clock). */
 	let replayOverlay: ReplayOverlay | null = null;
+	/** Bumped when a lazily-built overlay lands, so the pursuit and replay effects re-run at once. */
+	let overlaysLanded = $state(0);
+	let pursuitFlight: Promise<void> | null = null;
+	let replayFlight: Promise<void> | null = null;
+
+	/**
+	 * The pursuit and replay overlays load with their modules (FIX-E-PERF2):
+	 * neither draws anything before its data exists — an open pursuit's plan,
+	 * a replay tape — so each module loads when that data first arrives
+	 * instead of on every cold load (a board with an open pursuit fetches it
+	 * at once, and tests/route-coldload.mjs counts it). Every other use site
+	 * is already null-safe. A failed fetch clears the flight: the next poll
+	 * retries.
+	 */
+	function ensurePursuitOverlay(cesium: CesiumGlobal, viewer: CesiumViewer): void {
+		if (pursuit || pursuitFlight) return;
+		pursuitFlight = import('./pursuit')
+			.then((m) => {
+				if (destroyed) return;
+				pursuit = m.createPursuitOverlay(cesium, viewer, { chrome });
+				overlaysLanded++;
+			})
+			.catch(() => {
+				pursuitFlight = null;
+			});
+	}
+
+	function ensureReplayOverlay(cesium: CesiumGlobal, viewer: CesiumViewer): void {
+		if (replayOverlay || replayFlight) return;
+		replayFlight = import('./replay')
+			.then((m) => {
+				if (destroyed) return;
+				replayOverlay = m.createReplayOverlay(cesium, viewer);
+				overlaysLanded++;
+			})
+			.catch(() => {
+				replayFlight = null;
+			});
+	}
 	let replayShownSig = '';
 	/** Layers stood down while a replay plays (restored on LIVE; the chips show them paused). */
 	let replaySuspended = $state<string[]>([]);
@@ -315,7 +477,7 @@
 	let actionHomeAt = 0;
 
 	/**
-	 * The judge-grade home on the photoreal 3D city (City Command, ion key,
+	 * The presentation-grade home on the photoreal 3D city (City Command, ion key,
 	 * nothing in action): an oblique look NNE over the old city and the
 	 * Sabarmati — camera ≈2.06 km up, SSW of Teen Darwaza — where the real
 	 * buildings AND the draped overlays read at 1920×1080. The 2D homes
@@ -371,11 +533,13 @@
 	const HASH_THROTTLE_MS = 1000;
 
 	const SENSOR_ORDER: SensorMode[] = ['raw', 'flir-whot', 'flir-bhot', 'flir-iron'];
+	// honest labels (fix round 2, item 9): the look is a VISUAL FILTER, never a sensor —
+	// the internal ids keep their flir-* names, the chip copy reads thermal-style
 	const SENSOR_LABEL: Record<SensorMode, string> = {
 		raw: 'COMMAND',
-		'flir-whot': 'FLIR·WHOT',
-		'flir-bhot': 'FLIR·BHOT',
-		'flir-iron': 'FLIR·IRON',
+		'flir-whot': 'Thermal-style·WHOT',
+		'flir-bhot': 'Thermal-style·BHOT',
+		'flir-iron': 'Thermal-style·IRON',
 	};
 
 	/**
@@ -537,7 +701,7 @@
 			target: () => {
 				const pts = godsEye.signals.map((s) => [s.lon, s.lat] as [number, number]);
 				const f = frameOf(pts);
-				return f && { ...f, label: `signal network — ${pts.length} junction programs at the phase clock (FLIR·IRON beat)` };
+				return f && { ...f, label: `signal network — ${pts.length} junction programs at the phase clock — thermal-style view (visual filter)` };
 			},
 		},
 		{
@@ -731,6 +895,9 @@
 		const next: Record<string, LayerCoverageStats> = {};
 		for (const [id, inst] of instances) next[id] = inst.coverageStats();
 		stats = next;
+		if (chrome === 'v2') publishChrome();
+		// chrome v3: the OSM night map stays under the 3D city until its first tiles are in
+		if (v3 && basemapStyle === 'photoreal' && osmOverlay && photorealReady(next['photoreal-3d'])) applyBasemap('photoreal');
 		publishSnapshot();
 	}
 
@@ -789,6 +956,8 @@
 			layers: [...activeLayers],
 			// City Command hands the selected entity over with the view.
 			selected: hud === 'full' ? selection.current : null,
+			// the workspace's keys (UI-S2) ride along unchanged (share-link pass-through, R24)
+			extra: shareHashExtras(window.location.hash),
 		};
 	}
 
@@ -850,6 +1019,9 @@
 		};
 		for (const e of v.entities.values) {
 			if (!e.id.startsWith(prefix)) continue;
+			// chrome v2: a marker hidden in a cluster cannot be clicked; a pin is clicked at its head
+			const v2meta = chrome === 'v2' ? markerMeta(e) : null;
+			if (v2meta && readProp(e.billboard?.show, time) === false) continue;
 			const positions = readProp(e.polyline?.positions, time);
 			let win: { x: number; y: number } | null = null;
 			if (Array.isArray(positions) && positions.length >= 2) {
@@ -859,6 +1031,7 @@
 				win = a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : null;
 			} else {
 				win = toWindow(readProp(e.position, time));
+				if (win && v2meta?.click) win = { x: win.x + v2meta.click.x, y: win.y + v2meta.click.y };
 			}
 			if (!win || win.x < 0 || win.y < 0 || win.x > rect.width || win.y > rect.height) continue;
 			const x = rect.left + win.x;
@@ -1337,6 +1510,7 @@
 	 * flight on input, its tween would keep overriding the gesture.
 	 */
 	function takeCamera() {
+		followUrn = null;
 		if (godsEye.subjectLockId || lockFlight) releaseSubject({ why: 'the operator took the camera' });
 		if (viewer && performance.now() < flightUntil) {
 			try {
@@ -1370,6 +1544,12 @@
 		lastInteraction = performance.now();
 	}
 
+	/** v2: the pointer left the map — the readout returns to the view's centre. */
+	function onPointerLeave() {
+		cursorAt = null;
+		hoverList = null;
+	}
+
 	function onWheel() {
 		markInteraction();
 		takeCamera();
@@ -1400,7 +1580,14 @@
 		const dt = orbitLastTick ? Math.min(0.25, (now - orbitLastTick) / 1000) : 0;
 		orbitLastTick = now;
 		const C = window.Cesium;
-		if (!viewer || !C || hud !== 'wall') return;
+		if (!viewer || !C) return;
+		if (chrome === 'v2') {
+			// SPEC §6.1–6.2: idle orbit only where the page allows it, and never while anything is selected
+			if (!idleOrbit || selection.current || (selectionItems?.length ?? 0) > 0 || followUrn) {
+				resetFrame();
+				return;
+			}
+		} else if (hud !== 'wall') return;
 		const idle = now - lastInteraction >= ORBIT_RESUME_MS;
 		if (!idle || tourIndex != null) {
 			resetFrame();
@@ -1420,6 +1607,8 @@
 				orbitFrameActive = true;
 			}
 			viewer.camera.rotateRight(C.Math.toRadians(ORBIT_DEG_PER_SEC * dt));
+			// an orbit never ends a move: the v2 pass keeps up at a slow cadence (coalesced)
+			if (chrome === 'v2') scheduleDecorate(ORBIT_DECORATE_MS);
 		} catch {
 			// camera mid-teardown — the next frame retries
 		}
@@ -1617,7 +1806,7 @@
 		for (const inst of instances.values()) {
 			if (inst.handlePick(id)) return inst.urnOf?.(id) ?? null;
 		}
-		if (id === HALO_ID) return selection.current;
+		if (id === HALO_ID || id === V2_SEL) return selection.current;
 		if (id.startsWith('pursuit:')) {
 			const choke = /^pursuit:choke-(\d+)$/.exec(id);
 			if (choke) return `junction:${choke[1]}`;
@@ -1708,7 +1897,7 @@
 		const lines: Array<{ e: CesiumEntity; rank: number }> = [];
 		for (const hit of hits) {
 			const e = asEntity(hit);
-			if (!e || e.id === HALO_ID || e.id.startsWith(AGENT_NOTE_PREFIX)) continue;
+			if (!e || e.id === HALO_ID || e.id.startsWith(AGENT_NOTE_PREFIX) || e.id.startsWith(V2_PREFIX)) continue;
 			const layer = layerOf(e.id).layer;
 			// Draped lines share the road's pixels: a pursuit LINE (trace,
 			// onward fan, arc, rim) lies on the very road an event's spine
@@ -1861,7 +2050,7 @@
 	function declutterLabels() {
 		const C = window.Cesium;
 		const v = viewer;
-		if (!v || !C || phase !== 'ready') return;
+		if (!v || !C || phase !== 'ready' || chrome === 'v2') return;
 		const time = v.clock.currentTime;
 		const eye = v.camera.positionWC;
 		const placed: ScreenBox[] = [];
@@ -1890,7 +2079,7 @@
 			if (rank == null) continue;
 			const world = readProp(e.position, time);
 			if (!world) continue;
-			// judge its OWN visibility (the show we forced off does not count)
+			// check its OWN visibility (the show we forced off does not count)
 			const own: LabelBits = declutterHidden.has(e) ? { distanceDisplayCondition: label.distanceDisplayCondition } : label;
 			const distance = cartesianDistance(eye, world);
 			if (!emphasis.has(e) && !labelVisibleAt(own, distance, time)) continue;
@@ -1922,7 +2111,22 @@
 	 * board); the wall views show the layer's pick card as well.
 	 */
 	function onPick(position: { x: number; y: number }) {
+		if (chrome === 'v2' && toolClick(position)) return;
 		const entity = pickedEntity(position);
+		if (chrome === 'v2') {
+			// a cluster's first click spreads it out; the next click picks a member
+			const cluster = entity ? clusterOf.get(entity.id) : undefined;
+			if (cluster && spider?.lead !== cluster.lead) {
+				spider = cluster;
+				hoverList = null;
+				scheduleDecorate(0);
+				return;
+			}
+			if (spider && (!entity || clusterMember.get(entity.id) !== spider.lead)) {
+				spider = null;
+				scheduleDecorate(0);
+			}
+		}
 		if (!entity) {
 			picked = null;
 			publishSnapshot();
@@ -2028,6 +2232,7 @@
 		hoverTimer = null;
 		if (!viewer || !container || !hoverAt || pressing) return;
 		const entity = pickedEntity(hoverAt, 4); // hover: a lighter drill (≤12 picks/s)
+		if (chrome === 'v2') hoverV2(hoverAt, entity);
 		if (entity === (hovered?.entity ?? null)) return;
 		hovered?.restore();
 		hovered = null;
@@ -2037,9 +2242,11 @@
 		// the selection's own primitives already wear the selection highlight.
 		if (entity && viewer.entities.getById(entity.id) === entity) {
 			const selected = selectedHighlights.some((h) => h.entity === entity);
-			hovered = { entity, restore: selected ? () => {} : highlight(entity) };
+			// a v2 marker shows its hover ring through the v2 pass instead of growing
+			const ringed = chrome === 'v2' && !!markerMeta(entity);
+			hovered = { entity, restore: selected || ringed ? () => {} : highlight(entity) };
 		}
-		container.style.cursor = hovered ? 'pointer' : '';
+		container.style.cursor = chrome === 'v2' && tool !== 'select' ? 'crosshair' : hovered ? 'pointer' : '';
 	}
 
 	function onHover(position: { x: number; y: number }) {
@@ -2098,11 +2305,16 @@
 		const matches: CesiumEntity[] = [];
 		if (urn) {
 			for (const e of viewer.entities.values) {
-				if (e.id === HALO_ID || e.id.startsWith('rpl:')) continue;
+				if (e.id === HALO_ID || e.id.startsWith('rpl:') || e.id.startsWith(V2_PREFIX)) continue;
 				if (urnOfPick(e.id) === urn) matches.push(e);
 			}
 		}
-		const sig = matches.map((e) => e.id).join('|');
+		// v2: a selection no layer draws (a decided row, a sighting on file —
+		// the v2 map shows waiting decisions only) still reads as selected:
+		// the canvas wears it with the neutral marker + selection ring, and it
+		// counts as the selection's own primitive.
+		const selMarker = applySelectionMarker(urn, chrome === 'v2' && matches.length === 0);
+		const sig = `${urn ?? ''}|${matches.map((e) => e.id).join('|')}`;
 		const v = viewer;
 		if (sig === selectedHighlightSig && selectedHighlights.every((h) => v.entities.getById(h.entity.id) === h.entity)) return;
 		for (const h of selectedHighlights) h.restore();
@@ -2112,9 +2324,65 @@
 				hovered.restore();
 				hovered = { entity: e, restore: () => {} };
 			}
-			return { entity: e, restore: highlight(e) };
+			return { entity: e, restore: chrome === 'v2' && markerMeta(e) ? () => {} : highlight(e) };
 		});
+		if (selMarker) selectedHighlights.push({ entity: selMarker, restore: () => {} });
 		selectedHighlightSig = sig;
+	}
+
+	/**
+	 * The canvas's own v2 selection marker (`map2:sel`): a selection no layer
+	 * primitive carries — the neutral marker of its kind wearing the
+	 * selection ring, at the subject's position (SPEC §7: one selection
+	 * drives every view, so a rail, inspector, table, graph or omnibar pick
+	 * marks the entity on the map even when the v2 symbology gives it no
+	 * marker of its own). Removed when a layer draws the selection or it
+	 * clears; the 1 Hz tick re-runs this, so a moving subject is followed.
+	 */
+	function applySelectionMarker(urn: string | null, needed: boolean): CesiumEntity | null {
+		const C = window.Cesium;
+		if (chrome !== 'v2' || !C || !viewer || !urn || !needed || !parseUrn(urn)) {
+			dropSelectionMarker();
+			return null;
+		}
+		const at = knownPosition(urn);
+		if (!at) {
+			dropSelectionMarker();
+			return null;
+		}
+		const kind = cityRegistry.get(urn)?.kind ?? parseUrn(urn)?.kind ?? 'marker';
+		const meta: MarkerMeta = { urn, kind, glyph: kindIcon(kind), shape: 'disc', cluster: false };
+		const existing = viewer.entities.getById(V2_SEL);
+		if (!existing) {
+			const entity = viewer.entities.add({
+				id: V2_SEL,
+				position: ground(C, at.lon, at.lat),
+				billboard: markerBillboard(C, meta, { selected: true }),
+				description: 'the selected entity',
+			});
+			tagMarker(entity, meta);
+			scheduleDecorate(0);
+			return entity;
+		}
+		// the selection moved on: the marker follows its subject and wears the
+		// new kind's glyph (the pass drops its stale applied state)
+		tagMarker(existing, meta);
+		appliedMark.delete(existing);
+		(existing as { position?: unknown }).position = ground(C, at.lon, at.lat);
+		const bb = existing.billboard;
+		const img = imageFor(meta, { selected: true });
+		if (bb && img) {
+			bb.image = img.url;
+			bb.width = img.w;
+			bb.height = img.h;
+			bb.pixelOffset = new C.Cartesian2(img.offset.x, img.offset.y);
+		}
+		return existing;
+	}
+
+	/** The canvas's v2 selection marker, when it is up. */
+	function dropSelectionMarker() {
+		if (viewer && viewer.entities.getById(V2_SEL)) viewer.entities.removeById(V2_SEL);
 	}
 
 	/** Move the halo onto the selection (or hide it). */
@@ -2135,7 +2403,7 @@
 		const halo = haloEntity;
 		if (!C || !halo) return;
 		const at = haloAt;
-		if (!at) {
+		if (!at || (chrome === 'v2' && selectionIsMarker())) {
 			halo.show = false;
 			return;
 		}
@@ -2158,6 +2426,24 @@
 	 * subject moves (drawHalo); reduced motion holds it steady.
 	 */
 	function addHalo(cesium: CesiumGlobal, v: CesiumViewer) {
+		if (chrome === 'v2') {
+			// v2: a thin selection-blue ring on the ground, no glow (SPEC §1.1, §2.4)
+			const blue = cssColor(cesium, '--v-map-select', cesium.Color.CYAN) as { withAlpha?: (a: number) => unknown };
+			haloEntity = v.entities.add({
+				id: HALO_ID,
+				show: false,
+				polyline: drapedPolyline(cesium, {
+					positions: [],
+					width: 2,
+					material: new cesium.ColorMaterialProperty(blue.withAlpha?.(0.85) ?? blue),
+					z: DRAPE_Z.pursuit + 1,
+				}),
+				description: 'the selected entity',
+			}) as CesiumEntity & { show: boolean };
+			haloDrawnAt = null;
+			drawHalo();
+			return;
+		}
 		const ring = cssColor(cesium, '--v-data', cesium.Color.CYAN) as { withAlpha?: (a: number) => unknown };
 		const t0 = performance.now();
 		const glow = () => {
@@ -2178,6 +2464,17 @@
 		}) as CesiumEntity & { show: boolean };
 		haloDrawnAt = null;
 		drawHalo();
+	}
+
+	/** v2: the selection is drawn as a marker (its own selected ring marks it). */
+	function selectionIsMarker(): boolean {
+		const urn = selection.current;
+		if (!urn || !viewer) return false;
+		for (const e of viewer.entities.values) {
+			const meta = markerMeta(e);
+			if (meta?.urn === urn && meta.shape !== 'dot') return true;
+		}
+		return false;
 	}
 
 	function reducedMotionPref(): boolean {
@@ -2237,7 +2534,7 @@
 	/**
 	 * Every live layer pauses while a tape plays — the roads' live colours,
 	 * the board's events, signals and cameras included — so the replayed
-	 * frames are the only data on the canvas (the judge saw live layers
+	 * frames are the only data on the canvas (the viewer saw live layers
 	 * drawing over the replay). Basemap-like layers (3D tiles) stay.
 	 */
 	const REPLAY_KEEPS = new Set(['photoreal-3d']);
@@ -2325,14 +2622,23 @@
 		if (!at) return;
 		const id = `${AGENT_NOTE_PREFIX}${d.id}`;
 		viewer.entities.removeById(id);
-		const tone = d.args.severity === 'critical' ? '--v-band-red' : d.args.severity === 'warn' ? '--v-band-amber' : '--v-tool';
+		const tone =
+			chrome === 'v2'
+				? d.args.severity === 'critical'
+					? '--v-map-alert'
+					: '--v-ai-text'
+				: d.args.severity === 'critical'
+					? '--v-band-red'
+					: d.args.severity === 'warn'
+						? '--v-band-amber'
+						: '--v-tool';
 		viewer.entities.add({
 			id,
 			// On the ground beside its entity (a fixed 30 m sat inside the 3D city), never hidden by a building.
 			position: ground(C, at.lon, at.lat),
 			label: clampedLabel(C, {
 				text: `${t(ops.lang, 'agent_note_label')} · ${displayText(d.args.text, ops.officerOn)}`,
-				font: '600 13px monospace',
+				font: canvasFont('600 13px var(--v-font-ui)'),
 				fillColor: cssColor(C, tone, C.Color.WHITE),
 				outlineColor: cssColor(C, '--v-canvas', C.Color.BLACK),
 				outlineWidth: 4,
@@ -2435,6 +2741,24 @@
 		const t = e.target as HTMLElement | null;
 		const typing = !!t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
 		if (typing || modalOpen()) return;
+		if (chrome === 'v2') {
+			if (tourIndex != null) stopTour();
+			else if (tool !== 'select') setTool('select');
+			else if (spider) {
+				spider = null;
+				scheduleDecorate(0);
+			} else if (legendOpen) {
+				legendOpen = false;
+				publishChrome();
+			} else if (layersOpen) layersOpen = false;
+			else if (hud === 'full' && selection.current) {
+				selection.clear();
+				picked = null;
+				publishSnapshot();
+			} else return; // SPEC §6.2: Esc never navigates
+			e.preventDefault();
+			return;
+		}
 		if (tourIndex != null) {
 			stopTour();
 		} else if (legendOpen) {
@@ -2467,6 +2791,7 @@
 			if (worldReady()) canvasBus.resolve(directiveWorld());
 			else canvasBus.expire();
 			serveSelectionRequest();
+			if (chrome === 'v2') followTick();
 		}
 		publishSnapshot();
 	}
@@ -2476,6 +2801,824 @@
 		if (hud !== 'full' || !canvasBus.selectionRequest || cityRegistry.status !== 'ok') return;
 		const req = canvasBus.takeSelection();
 		if (req && parseUrn(req.urn)) selection.select(req.urn, { fly: true, source: req.source });
+	}
+
+	// ─── CHROME V2: the view, the decoration pass, the tools ──────────────────
+
+	/** Entities the v2 pass owns (labels, arrows, measure and shape drawings): never picked. */
+	const V2_PREFIX = 'map2:';
+	/** The canvas's own v2 selection marker (no layer primitive wears the selection). */
+	const V2_SEL = `${V2_PREFIX}sel`;
+	const V2_LABEL = `${V2_PREFIX}label:`;
+	const V2_ARROW = `${V2_PREFIX}arrow:`;
+	const V2_MEASURE = `${V2_PREFIX}measure:`;
+	const V2_SHAPE = `${V2_PREFIX}shape:`;
+	/** The pursuit overlay's choke squares: the pass makes them cluster anchors. */
+	const CHOKE_PREFIX = 'pursuit:choke-';
+	/** The pass's cadence while the idle orbit turns the camera (an orbit never ends a move). */
+	const ORBIT_DECORATE_MS = 1000;
+	/** Search around: objects within this of the selection (m). */
+	const SEARCH_AROUND_M = 450;
+	/** A followed object re-centres once it has moved this far (m). */
+	const FOLLOW_RELAY_M = 40;
+
+	/** The view the layers and the pass read (ctx.view()); rebuilt when its inputs change. */
+	// chrome v3 draws a district-level report as a chip on the page, never a ring on the map (V3-SPEC §5.6)
+	let mapView: MapView = { ...emptyView('v2'), noAreas: v3, focus: v3 };
+	let mapViewSig = '';
+	let mapViewVersion = 0;
+	let decorateTimer: ReturnType<typeof setTimeout> | null = null;
+	let decorateDue = 0;
+	/** The marker under the pointer (v2 repaints it with the hover ring). */
+	let hoverMarkId: string | null = null;
+	/** Cluster bookkeeping from the last pass: lead → members, member → lead. */
+	let clusterOf = new Map<string, { lead: string; members: string[] }>();
+	let clusterMember = new Map<string, string>();
+	/** The cluster a click spread out (its members fanned around the lead). */
+	let spider: { lead: string; members: string[] } | null = null;
+	/** What the pass last applied per marker (skip unchanged markers). */
+	const appliedMark = new WeakMap<object, string>();
+	const v2Labels = new Map<string, string>();
+	const v2Arrows = new Set<string>();
+	/** Measure and shape drawing state (lon/lat vertices). */
+	let measurePts: Array<[number, number]> = [];
+	let shapePts: Array<[number, number]> = [];
+	/** Filter to shape: markers outside this polygon are hidden until cleared. */
+	let shapeFilter = $state<Array<[number, number]> | null>(null);
+	/** The OSM imagery layer laid over the ion aerial for Streets / Dark (keyed canvas). */
+	let osmOverlay: unknown = null;
+	let followAt: { lon: number; lat: number } | null = null;
+	let removeMoveEnd: (() => void) | null = null;
+	let removeCollection: (() => void) | null = null;
+	let detachChrome: (() => void) | null = null;
+
+	/** URNs linked to `urn` on the canvas: its registry links, a sighting's camera, a pursuit's chokes. */
+	function relatedUrns(urn: string): Set<string> {
+		const out = new Set<string>();
+		const own = cityRegistry.get(urn);
+		for (const l of own?.links ?? []) out.add(l);
+		for (const e of cityRegistry.related(urn)) {
+			out.add(e.urn);
+			if (e.kind === 'sighting' || e.kind === 'recommendation') for (const l of e.links) out.add(l);
+		}
+		const plan = ops.interception;
+		if (plan && (urn === `vehicle:${plan.vehicleId}` || urn === `event:${plan.eventId}`)) {
+			for (const c of plan.chokes) out.add(`junction:${c.junctionId}`);
+			out.add(`event:${plan.eventId}`);
+			if (plan.vehicleId) out.add(`vehicle:${plan.vehicleId}`);
+		}
+		out.delete(urn);
+		return out;
+	}
+
+	/** The objects that wear a decision dot (SPEC §5.4 units; one per object). A reported
+	 * situation whose decision-support proposal is proposed AND unexpired waits too (R3):
+	 * the set is the layers' PURE builder (layers/osint.ts cityDecisionUrns) over the live
+	 * registry — the unit test asserts the waiting OSINT URN rides the view.decisions it
+	 * feeds, which is what keeps the dot on a selected or clustered marker. */
+	function decisionSet(enforcementOn: boolean): Set<string> {
+		return cityDecisionUrns({
+			recommendations: cityRegistry.byKind('recommendation'),
+			stolen: stolenVehicles(),
+			dispatches: cityRegistry.byKind('dispatch'),
+			osint: cityRegistry.byKind('osint_event'),
+			enforcementOn,
+			now: Date.now(),
+		});
+	}
+
+	/** Rebuild the view from its inputs; true when it changed (layers restyle, the pass reruns). */
+	function rebuildView(input: {
+		primary: string | null;
+		items: readonly string[] | null;
+		window: readonly [number, number] | null;
+		protectedSet: ReadonlySet<string>;
+		kinds: ReadonlySet<string> | null;
+		enforcementOn: boolean;
+	}): boolean {
+		const items = input.items?.length ? [...input.items] : input.primary ? [input.primary] : [];
+		const related = new Set<string>();
+		for (const urn of items) for (const r of relatedUrns(urn)) related.add(r);
+		for (const urn of items) related.delete(urn);
+		const decisions = decisionSet(input.enforcementOn);
+		const window = input.window && Number.isFinite(input.window[0]) && Number.isFinite(input.window[1]) ? ([input.window[0], input.window[1]] as const) : null;
+		const sig = JSON.stringify([
+			input.primary,
+			items,
+			[...related].sort(),
+			window,
+			[...input.protectedSet].sort(),
+			input.kinds ? [...input.kinds].sort() : null,
+			[...decisions].sort(),
+		]);
+		if (sig === mapViewSig) return false;
+		mapViewSig = sig;
+		mapView = {
+			chrome: 'v2',
+			noAreas: v3,
+			focus: v3,
+			selection: input.primary ?? items[0] ?? null,
+			items,
+			related,
+			window,
+			protected: input.protectedSet,
+			kinds: input.kinds,
+			decisions,
+			version: ++mapViewVersion,
+		};
+		return true;
+	}
+
+	/** Run the decoration pass soon (coalesced). */
+	function scheduleDecorate(delay = 60) {
+		if (chrome !== 'v2' || destroyed) return;
+		const due = performance.now() + delay;
+		if (decorateTimer && due >= decorateDue) return;
+		if (decorateTimer) clearTimeout(decorateTimer);
+		decorateDue = due;
+		decorateTimer = setTimeout(() => {
+			decorateTimer = null;
+			decorate();
+		}, delay);
+	}
+
+	/** Ray-cast a canvas point onto the ground (lon/lat), or null (sky). */
+	function groundAt(x: number, y: number): { lon: number; lat: number } | null {
+		const C = window.Cesium;
+		if (!viewer || !C) return null;
+		try {
+			const hit = viewer.camera.pickEllipsoid(new C.Cartesian2(x, y));
+			const c = hit ? C.Cartographic.fromCartesian(hit) : undefined;
+			return c ? { lon: radToDeg(c.longitude), lat: radToDeg(c.latitude) } : null;
+		} catch {
+			return null;
+		}
+	}
+
+	function metresBetween(a: { lon: number; lat: number }, b: { lon: number; lat: number }): number {
+		const k = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+		return Math.hypot((b.lon - a.lon) * 111_320 * k, (b.lat - a.lat) * 110_540);
+	}
+
+	/** The scale bar: a round distance that spans ≤ 110 px at the bottom of the view. */
+	function updateScale() {
+		const canvas = viewer?.scene.canvas;
+		if (!canvas) return;
+		const w = canvas.clientWidth;
+		const h = canvas.clientHeight;
+		const y = Math.max(0, h - 48);
+		const a = groundAt(w / 2 - 50, y);
+		const b = groundAt(w / 2 + 50, y);
+		if (!a || !b) {
+			scaleBar = null;
+			return;
+		}
+		const mPerPx = metresBetween(a, b) / 100;
+		if (!(mPerPx > 0)) {
+			scaleBar = null;
+			return;
+		}
+		const nice = [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10_000, 20_000, 50_000, 100_000];
+		const d = [...nice].reverse().find((m) => m / mPerPx <= 110) ?? nice[0];
+		scaleBar = { px: d / mPerPx, label: d >= 1000 ? `${d / 1000} km` : `${d} m` };
+		try {
+			cameraHeadingDeg = radToDeg(viewer!.camera.heading);
+		} catch {
+			// camera mid-teardown
+		}
+		if (!cursorAt) cursorCentre();
+	}
+
+	/** The readout's position when the pointer is off the map: the view's centre. */
+	function cursorCentre() {
+		const canvas = viewer?.scene.canvas;
+		if (!canvas) return;
+		const c = groundAt(canvas.clientWidth / 2, canvas.clientHeight / 2);
+		centreAt = c;
+	}
+	let centreAt = $state<{ lon: number; lat: number } | null>(null);
+
+	/** Point-in-polygon over lon/lat (ray casting). */
+	function insidePolygon(p: readonly [number, number], poly: ReadonlyArray<readonly [number, number]>): boolean {
+		let inside = false;
+		for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+			const [xi, yi] = poly[i];
+			const [xj, yj] = poly[j];
+			if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+		}
+		return inside;
+	}
+
+	/** An entity's ground lon/lat now (markers), or null. */
+	function lonLatOf(e: CesiumEntity): [number, number] | null {
+		const C = window.Cesium;
+		if (!C || !viewer) return null;
+		const world = readProp(e.position, viewer.clock.currentTime);
+		const c = world ? C.Cartographic.fromCartesian(world) : undefined;
+		return c ? [radToDeg(c.longitude), radToDeg(c.latitude)] : null;
+	}
+
+	/**
+	 * Restyle one v2 marker in place: visibility, image (selected, decision
+	 * dot, count chip, hover ring), tint alpha and the spider offset — only
+	 * when something changed since the last pass.
+	 */
+	function applyMark(
+		e: CesiumEntity,
+		meta: MarkerMeta,
+		s: { show: boolean; selected: boolean; decision: boolean; count: number; hover: boolean; alpha: number; spread: { x: number; y: number } | null },
+	) {
+		const C = window.Cesium;
+		const bb = e.billboard;
+		if (!C || !bb) return;
+		const key = `${imageEpoch}|${s.show ? 1 : 0}|${s.selected ? 1 : 0}|${s.decision ? 1 : 0}|${s.count}|${s.hover ? 1 : 0}|${s.alpha.toFixed(2)}|${s.spread ? `${s.spread.x},${s.spread.y}` : ''}`;
+		if (appliedMark.get(e) === key) return;
+		appliedMark.set(e, key);
+		bb.show = s.show;
+		if (!s.show) return;
+		const img = imageFor(meta, { selected: s.selected, decision: s.decision, count: s.count, hover: s.hover });
+		if (img) {
+			bb.image = img.url;
+			bb.width = img.w;
+			bb.height = img.h;
+			bb.pixelOffset = new C.Cartesian2(img.offset.x + (s.spread?.x ?? 0), img.offset.y + (s.spread?.y ?? 0));
+		}
+		const white = C.Color.WHITE as { withAlpha?: (a: number) => unknown } | undefined;
+		if (white?.withAlpha) bb.color = white.withAlpha(Math.max(0.05, Math.min(1, s.alpha)));
+	}
+
+	type V2Mark = {
+		e: CesiumEntity;
+		meta: MarkerMeta;
+		st: ReturnType<typeof markerStyle>;
+		/** The projected ground position, and where the mark is drawn (pin head, spider). */
+		win: { x: number; y: number } | null;
+		at: { x: number; y: number } | null;
+		shown: boolean;
+		alpha: number;
+	};
+
+	/**
+	 * THE V2 PASS — on camera-move end, data change, view change and hover,
+	 * never per frame (SPEC §13.5): reads every tagged marker, fades and dims
+	 * it by the view, clusters the 21 px discs closer than 22 px (the lead
+	 * wears the count chip; a spread cluster fans its members out), marks the
+	 * selection and the waiting decisions, places the labels greedily against
+	 * the drawn discs, and lays direction arrows on the selected track's spans
+	 * longer than 60 px.
+	 */
+	function decorate() {
+		const C = window.Cesium;
+		const v = viewer;
+		if (!C || !v || chrome !== 'v2' || phase !== 'ready') return;
+		const time = v.clock.currentTime;
+		const W = v.scene.canvas.clientWidth;
+		const H = v.scene.canvas.clientHeight;
+		const view = mapView;
+		const toWin = (world: unknown) => {
+			const w = world ? C.SceneTransforms.worldToWindowCoordinates(v.scene, world) : undefined;
+			return w && Number.isFinite(w.x) && Number.isFinite(w.y) ? { x: w.x, y: w.y } : null;
+		};
+		const onScreen = (p: { x: number; y: number } | null) => !!p && p.x >= -24 && p.y >= -24 && p.x <= W + 24 && p.y <= H + 24;
+		const marks: V2Mark[] = [];
+		const chokes = new Set<string>();
+		for (const e of v.entities.values) {
+			const meta = markerMeta(e);
+			if (meta?.urn && e.id.startsWith(CHOKE_PREFIX)) chokes.add(meta.urn);
+		}
+		for (const e of v.entities.values) {
+			const meta = markerMeta(e);
+			if (!meta) continue;
+			const st = markerStyle({ urn: meta.urn, kind: meta.kind, t: meta.t ?? null }, view);
+			// a junction dot under a choke square steps aside; filter to shape hides the outside
+			if (meta.shape === 'dot' && meta.kind === 'junction' && meta.urn && chokes.has(meta.urn)) st.show = false;
+			if (shapeFilter && st.show) {
+				const at = lonLatOf(e);
+				if (at && !insidePolygon(at, shapeFilter)) st.show = false;
+			}
+			const win = toWin(readProp(e.position, time));
+			const at = win && meta.click ? { x: win.x + meta.click.x, y: win.y + meta.click.y } : win;
+			marks.push({ e, meta, st, win, at, shown: false, alpha: st.alpha * (meta.passed ? MAP_OPACITY.passed : 1) });
+		}
+
+		// clusters: the 21 px discs closer than 22 px merge (the selection's own lead);
+		// a pursuit's choke square leads whatever plain marker sits at its junction
+		// (a camera there wears the square's count chip and spreads out on a click),
+		// so the square is never drawn under it
+		const isChoke = (m: V2Mark) => m.e.id.startsWith(CHOKE_PREFIX);
+		const anchors = marks.filter((m) => isChoke(m) && m.st.show && onScreen(m.at)).map((m) => ({ id: m.e.id, x: m.at!.x, y: m.at!.y }));
+		const pts = marks
+			.filter((m) => m.meta.cluster && !isChoke(m) && m.st.show && onScreen(m.at))
+			.map((m) => ({ id: m.e.id, x: m.at!.x, y: m.at!.y, lead: m.st.selected || m.st.related, weight: (m.st.decision ? 2 : 0) + (m.meta.kind === 'camera' ? 0 : 1) }));
+		clusterOf = new Map();
+		clusterMember = new Map();
+		for (const c of clusterAround(anchors, pts, CLUSTER_RADIUS_PX, (p) => !!p.lead || (p.weight ?? 0) >= 2)) {
+			if (c.members.length < 2) continue;
+			clusterOf.set(c.lead, { lead: c.lead, members: c.members });
+			for (const id of c.members) clusterMember.set(id, c.lead);
+		}
+		if (spider && !clusterOf.has(spider.lead)) spider = null;
+		const spread = spider ? spiderOffsets(spider.members.length - 1) : [];
+		// a waiting member absorbed under another lead keeps its dot: the LEAD carries the
+		// decision mark when any of its members waits (fix round 2, review note on the
+		// clustering) — the members' URNs ride the view's decision set
+		const urnById = new Map(marks.map((m) => [m.e.id, m.meta.urn] as const));
+		const memberWaits = (id: string) => view.decisions.has(urnById.get(id) ?? '');
+
+		const occupied: Box[] = [];
+		for (const m of marks) {
+			const lead = clusterMember.get(m.e.id);
+			const spreadOut = !!spider && lead === spider.lead;
+			const isLead = lead === m.e.id;
+			let show = m.st.show;
+			let count = 0;
+			let off: { x: number; y: number } | null = null;
+			if (lead && !isLead && !spreadOut) show = false;
+			if (lead && isLead && !spreadOut) count = clusterOf.get(m.e.id)?.members.length ?? 0;
+			if (spreadOut && !isLead) off = spread[spider!.members.indexOf(m.e.id) - 1] ?? null;
+			applyMark(m.e, m.meta, {
+				show,
+				selected: m.st.selected,
+				decision: markShowsDecision(m.st.decision, isLead, spreadOut, clusterOf.get(m.e.id)?.members, memberWaits),
+				count,
+				hover: hoverMarkId === m.e.id,
+				alpha: m.alpha,
+				spread: off,
+			});
+			m.shown = show;
+			if (show && m.at && onScreen(m.at)) {
+				if (off) m.at = { x: m.at.x + off.x, y: m.at.y + off.y };
+				const r = m.meta.radius ?? (m.meta.shape === 'dot' ? (m.meta.r ?? 4.5) + 2 : MARKER.radius);
+				occupied.push(discBox(m.at.x, m.at.y, r));
+			}
+		}
+		occupied.push(...chromeBoxes());
+		placeV2Labels(marks, occupied, W, H, view);
+		placeV2Arrows(W, H);
+	}
+
+	/** The chrome floating over the map (toolbar, panels, readout, navigation, credits) as keep-out boxes. */
+	function chromeBoxes(): Box[] {
+		const canvas = viewer?.scene.canvas;
+		const wrap = container?.parentElement;
+		if (!canvas || !wrap) return [];
+		const origin = canvas.getBoundingClientRect();
+		const out: Box[] = [];
+		const els = [...wrap.querySelectorAll('.ge-hud.v2 .toolbar, .ge-hud.v2 .flash, .ge-hud.v2 .tool-hint, .v2-top > *, .v2-panel, .v2-legend, .v2-nav, .v2-readout, .cesium-viewer-bottom')];
+		// chrome v3: the page's own panels over the canvas (the Now panel, the chips, the card, the tools)
+		if (v3) els.push(...document.querySelectorAll('[data-ge-keepout]'));
+		for (const el of els) {
+			const r = el.getBoundingClientRect();
+			if (r.width > 0 && r.height > 0) out.push({ x: r.left - origin.left - 4, y: r.top - origin.top - 4, w: r.width + 8, h: r.height + 8 });
+		}
+		return out;
+	}
+
+	/** Labels: what the policy shows, placed greedily; a hovered label always shows. */
+	function placeV2Labels(marks: V2Mark[], occupied: Box[], W: number, H: number, view: MapView) {
+		const C = window.Cesium;
+		const v = viewer;
+		if (!C || !v) return;
+		const items: LabelItem[] = [];
+		const byId = new Map<string, { m: V2Mark; img: MapImage | null }>();
+		for (const m of marks) {
+			const parts = m.meta.label;
+			if (!m.shown || !m.at || !parts?.length) continue;
+			const hovered = hoverMarkId === m.e.id;
+			const when = m.meta.labelWhen ?? 'hover';
+			const want =
+				hovered ||
+				when === 'always' ||
+				(when === 'selected' && (m.st.selected || (!!m.meta.labelWith && view.items.includes(m.meta.labelWith))));
+			if (!want) continue;
+			const img = labelImage(parts, { lock: m.meta.labelLock });
+			if (!img) continue;
+			items.push({
+				id: m.e.id,
+				x: m.at.x,
+				y: m.at.y,
+				w: img.w,
+				h: img.h,
+				r: m.meta.radius ?? MARKER.radius,
+				prefer: m.meta.labelPrefer,
+				priority: hovered ? 1000 : (m.meta.labelPriority ?? 0),
+			});
+			byId.set(m.e.id, { m, img });
+		}
+		const { placed, dropped } = placeLabels(items, occupied, { width: W, height: H });
+		// a hovered label that fits nowhere still shows (to its right): the pointer asked for it
+		if (hoverMarkId && dropped.includes(hoverMarkId)) {
+			const it = items.find((i) => i.id === hoverMarkId);
+			if (it) placed.set(it.id, { id: it.id, pos: 'r', box: { x: it.x + (it.r ?? 0) + 4, y: it.y - it.h / 2, w: it.w, h: it.h } });
+		}
+		const keep = new Set<string>();
+		for (const [id, p] of placed) {
+			const hit = byId.get(id);
+			if (!hit?.img || !hit.m.win) continue;
+			const { m, img } = hit;
+			const labelId = `${V2_LABEL}${id}`;
+			keep.add(id);
+			const offset = new C.Cartesian2(p.box.x + p.box.w / 2 - m.win!.x, p.box.y + p.box.h / 2 - m.win!.y);
+			const white = C.Color.WHITE as { withAlpha?: (a: number) => unknown } | undefined;
+			const tint = white?.withAlpha ? white.withAlpha(Math.max(0.3, m.alpha)) : undefined;
+			const existing = v.entities.getById(labelId) as (CesiumEntity & { position?: unknown }) | undefined;
+			if (existing?.billboard) {
+				// a layer's redraw replaces its marker entity: the label follows the new one's position
+				if (existing.position !== m.e.position) existing.position = m.e.position;
+				existing.billboard.image = img.url;
+				existing.billboard.width = img.w;
+				existing.billboard.height = img.h;
+				existing.billboard.pixelOffset = offset;
+				if (tint) existing.billboard.color = tint;
+				existing.billboard.show = true;
+			} else {
+				v.entities.add({
+					id: labelId,
+					position: m.e.position,
+					billboard: imageBillboard(C, img, { w: img.w, h: img.h }, { pixelOffset: offset, ...(tint ? { color: tint } : {}) }),
+				});
+			}
+			v2Labels.set(id, labelId);
+		}
+		for (const [id, labelId] of [...v2Labels]) {
+			if (keep.has(id)) continue;
+			v.entities.removeById(labelId);
+			v2Labels.delete(id);
+		}
+	}
+
+	/**
+	 * Direction arrows on the selected track's spans drawn longer than 60 px
+	 * (SPEC §5.3); none while a kind filter leaves vehicles out. Each arrow
+	 * is a chevron DRAPED on the surface the track drapes on (terrain or the
+	 * 3D tiles), so it sits on the line at every pitch, and is keyed by its
+	 * span's geometry and scale (trackArrows): when the reads change (a read
+	 * in, a read out of the 30-min pass, another window) or a zoom re-sizes
+	 * it, the arrow of a span no longer drawn goes and the new span gets its
+	 * own — none is ever left on a span the track no longer has.
+	 */
+	function placeV2Arrows(W: number, H: number) {
+		const C = window.Cesium;
+		const v = viewer;
+		if (!C || !v) return;
+		const want = new Map<string, TrackArrow>();
+		const project = (lon: number, lat: number) => C.SceneTransforms.worldToWindowCoordinates(v.scene, C.Cartesian3.fromDegrees(lon, lat, 0));
+		for (const e of kindShown(mapView, 'vehicle') ? v.entities.values : []) {
+			const track = trackMeta(e);
+			if (!track) continue;
+			for (const a of trackArrows(track.coords, project, { width: W, height: H })) want.set(`${V2_ARROW}${e.id}:${a.id}`, a);
+		}
+		for (const id of [...v2Arrows]) {
+			if (want.has(id)) continue;
+			v.entities.removeById(id);
+			v2Arrows.delete(id);
+		}
+		if (![...want.keys()].some((id) => !v2Arrows.has(id))) return;
+		const material = C.PolylineOutlineMaterialProperty
+			? new C.PolylineOutlineMaterialProperty({
+					color: C.Color.fromCssColorString(mapInk('alert')),
+					outlineColor: C.Color.fromCssColorString(mapInk('casing')),
+					// Cesium's outline takes both edges together: the core = width − outlineWidth
+					outlineWidth: TRACK_ARROW.width - TRACK_ARROW.core,
+				})
+			: C.Color.fromCssColorString(mapInk('alert'));
+		for (const [id, a] of want) {
+			if (v2Arrows.has(id)) continue;
+			v.entities.add({
+				id,
+				polyline: drapedPolyline(C, {
+					positions: groundPath(C, a.chevron),
+					width: C.PolylineOutlineMaterialProperty ? TRACK_ARROW.width : TRACK_ARROW.core,
+					material,
+					// above the track (and the measure sketch); its own ground batch, so a new arrow never rebuilds the track
+					z: DRAPE_Z.pursuit + 2,
+				}),
+			});
+			v2Arrows.add(id);
+		}
+	}
+
+	// ── v2 tools: measure, shape (select within / filter to), search around ──
+
+	function setTool(next: MapTool, mode?: ShapeMode) {
+		tool = next;
+		if (mode) shapeMode = mode;
+		measurePts = [];
+		shapePts = [];
+		redrawToolSketch();
+		toolHint = next === 'measure' ? t(ops.lang, 'map_tool_measure_hint') : next === 'shape' ? t(ops.lang, 'map_tool_shape_hint') : null;
+		if (container) container.style.cursor = next === 'select' ? '' : 'crosshair';
+	}
+
+	/** The measure line or the shape outline being drawn, on the ground. */
+	function redrawToolSketch() {
+		const C = window.Cesium;
+		const v = viewer;
+		if (!C || !v) return;
+		for (const e of [...v.entities.values]) {
+			if (e.id.startsWith(V2_MEASURE) || (e.id.startsWith(V2_SHAPE) && !(shapeFilter && e.id === `${V2_SHAPE}filter`))) v.entities.removeById(e.id);
+		}
+		const sketch = (prefix: string, pts: Array<[number, number]>, closed: boolean, dashed: boolean, inkRole: 'label-ink' | 'select') => {
+			if (pts.length < 2) return;
+			const path = closed ? [...pts, pts[0]] : pts;
+			const color = C.Color.fromCssColorString(mapInk(inkRole));
+			v.entities.add({
+				id: `${prefix}line`,
+				polyline: drapedPolyline(C, {
+					positions: groundPath(C, path),
+					width: 2,
+					material: dashed ? new C.PolylineDashMaterialProperty({ color, dashLength: 10 }) : color,
+					z: DRAPE_Z.pursuit + 1,
+				}),
+			});
+		};
+		if (tool === 'measure' && measurePts.length) {
+			sketch(V2_MEASURE, measurePts, false, false, 'label-ink');
+			let total = 0;
+			for (let i = 1; i < measurePts.length; i++) {
+				total += metresBetween({ lon: measurePts[i - 1][0], lat: measurePts[i - 1][1] }, { lon: measurePts[i][0], lat: measurePts[i][1] });
+			}
+			const last = measurePts[measurePts.length - 1];
+			const text = t(ops.lang, 'map_measure_total', total >= 1000 ? `${(total / 1000).toFixed(2)} km` : `${Math.round(total)} m`);
+			const img = labelImage([{ text }]);
+			if (img && measurePts.length > 1) {
+				v.entities.add({
+					id: `${V2_MEASURE}label`,
+					position: ground(C, last[0], last[1]),
+					billboard: imageBillboard(C, img, { w: img.w, h: img.h }, { pixelOffset: new C.Cartesian2(img.w / 2 + 8, 0) }),
+				});
+			}
+		}
+		if (tool === 'shape' && shapePts.length) sketch(V2_SHAPE, shapePts, shapePts.length > 2, true, 'select');
+	}
+
+	/** Every tagged marker URN inside the polygon (deduplicated, at most 50). */
+	function urnsInside(poly: ReadonlyArray<readonly [number, number]>): string[] {
+		if (!viewer) return [];
+		const out: string[] = [];
+		for (const e of viewer.entities.values) {
+			const meta = markerMeta(e);
+			if (!meta?.urn || out.includes(meta.urn)) continue;
+			const at = lonLatOf(e);
+			if (at && insidePolygon(at, poly)) out.push(meta.urn);
+			if (out.length >= 50) break;
+		}
+		return out;
+	}
+
+	/** Hand a multi-selection to the page (onlasso); without one, emphasise them on the canvas. */
+	function selectUrns(urns: string[]) {
+		if (!urns.length) return;
+		if (onlasso) onlasso(urns);
+		else highlightUrns(urns);
+	}
+
+	function closeShape() {
+		const poly = shapePts.length >= 3 ? [...shapePts] : null;
+		shapePts = [];
+		if (!poly) {
+			redrawToolSketch();
+			return;
+		}
+		if (shapeMode === 'filter') {
+			shapeFilter = poly;
+			const C = window.Cesium;
+			if (C && viewer) {
+				viewer.entities.removeById(`${V2_SHAPE}filter`);
+				viewer.entities.add({
+					id: `${V2_SHAPE}filter`,
+					polyline: drapedPolyline(C, {
+						positions: groundPath(C, [...poly, poly[0]]),
+						width: 2,
+						material: new C.PolylineDashMaterialProperty({ color: C.Color.fromCssColorString(mapInk('select')), dashLength: 10 }),
+						z: DRAPE_Z.pursuit + 1,
+					}),
+				});
+			}
+			focusFlash(t(ops.lang, 'map_shape_filtered', urnsInside(poly).length));
+		} else {
+			const urns = urnsInside(poly);
+			selectUrns(urns);
+			focusFlash(t(ops.lang, 'map_shape_selected', urns.length));
+		}
+		setTool('select');
+		scheduleDecorate(0);
+	}
+
+	function clearShapeFilter() {
+		shapeFilter = null;
+		viewer?.entities.removeById(`${V2_SHAPE}filter`);
+		scheduleDecorate(0);
+	}
+
+	/** Search around: the objects within SEARCH_AROUND_M of the selection join it. */
+	function searchAround() {
+		const urn = selection.current;
+		const at = urn ? knownPosition(urn) : null;
+		if (!urn || !at || !viewer) return;
+		const out = [urn];
+		for (const e of viewer.entities.values) {
+			const meta = markerMeta(e);
+			if (!meta?.urn || out.includes(meta.urn)) continue;
+			const p = lonLatOf(e);
+			if (p && metresBetween(at, { lon: p[0], lat: p[1] }) <= SEARCH_AROUND_M) out.push(meta.urn);
+			if (out.length >= 50) break;
+		}
+		selectUrns(out);
+	}
+
+	/** A click while a tool is active (true: the tool took it). */
+	function toolClick(position: { x: number; y: number }): boolean {
+		if (tool === 'select') return false;
+		const at = groundAt(position.x, position.y);
+		if (!at) return true;
+		if (tool === 'measure') measurePts = [...measurePts, [at.lon, at.lat]];
+		else shapePts = [...shapePts, [at.lon, at.lat]];
+		redrawToolSketch();
+		return true;
+	}
+
+	function toolDoubleClick() {
+		if (tool === 'shape') closeShape();
+		else if (tool === 'measure') {
+			// the measured line stays until the tool is left
+			toolHint = null;
+		}
+	}
+
+	// ── v2 follow, base map, the chrome state for the LayerTree ─────────────
+
+	/** Follow: hold the camera on the selection (an event's spine locks; anything else is followed as it moves). */
+	function toggleFollow() {
+		if (godsEye.subjectLockId || lockFlight || followUrn) {
+			followUrn = null;
+			followAt = null;
+			releaseSubject({ why: 'the operator released the follow' });
+			return;
+		}
+		const urn = selection.current;
+		if (!urn) return;
+		const parsed = parseUrn(urn);
+		if (parsed?.kind === 'event') {
+			const ev = ops.events.find((e) => e.eventId === parsed.id);
+			const c = ev ? eventCentroid(ev, godsEye.segmentById) : null;
+			if (ev && c) {
+				lockOn(ev.eventId, c);
+				return;
+			}
+		}
+		const at = knownPosition(urn);
+		if (!at) {
+			focusFlash(t(ops.lang, 'map_follow_no_position', objectName(urn)));
+			return;
+		}
+		followUrn = urn;
+		followAt = { lon: at.lon, lat: at.lat };
+		if (tourIndex != null) stopTour();
+		lastInteraction = performance.now();
+		flyFrame(at.lon, at.lat, ENTITY_VIEW.range, 0, ENTITY_VIEW.pitchDeg, ENTITY_VIEW.flightSec);
+	}
+
+	/** An object's name in operator copy: its registry label (marks masked), else null (never a raw URN). */
+	function objectName(urn: string): string | null {
+		const label = cityRegistry.get(urn)?.label;
+		return label ? displayText(label, ops.officerOn) : null;
+	}
+
+	/** 1 Hz: a followed object that moved is re-centred (never per frame). */
+	function followTick() {
+		if (!followUrn) return;
+		if (selection.current !== followUrn) {
+			followUrn = null;
+			followAt = null;
+			return;
+		}
+		const at = knownPosition(followUrn);
+		if (!at || !followAt || performance.now() < flightUntil) return;
+		if (metresBetween(at, followAt) < FOLLOW_RELAY_M) return;
+		followAt = { lon: at.lon, lat: at.lat };
+		const cam = cameraState();
+		flyFrame(at.lon, at.lat, ENTITY_VIEW.range, cam?.heading ?? 0, ENTITY_VIEW.pitchDeg, 0.8);
+	}
+
+	/** The photoreal base map can be shown (the ion key and its layer). */
+	function photorealAvailable(): boolean {
+		return godsEye.imageryMode === 'ion-photoreal' && !!godsEye.imageryToken && instances.has('photoreal-3d');
+	}
+
+	/**
+	 * Base map (v2 LayerTree): Photoreal = the photoreal-3d layer; Streets and
+	 * Dark = the OSM raster, plain or re-graded — the keyless base layer
+	 * itself, or an OSM layer over the ion aerial on the keyed canvas.
+	 */
+	function applyBasemap(style: BasemapStyle) {
+		const C = window.Cesium;
+		const v = viewer;
+		if (!C || !v || chrome !== 'v2') return;
+		const next: BasemapStyle = style === 'photoreal' && !photorealAvailable() ? 'dark' : style;
+		setLayerEnabled('photoreal-3d', next === 'photoreal');
+		// chrome v3: the night city map (deeper and quieter than the Analyst map's dark re-grade)
+		const grade = next === 'streets' ? STREETS_GRADE : v3 ? V3_NIGHT : DARK_REGRADE;
+		try {
+			if (basemapId === 'osm-keyless') {
+				applyGrade(v.scene.imageryLayers.get(0), grade);
+			} else if (next === 'photoreal') {
+				// chrome v3 keeps the OSM night map showing until the photoreal city's first tiles land (never a blank map)
+				if (osmOverlay && !(v3 && !photorealReady(stats['photoreal-3d']))) {
+					v.scene.imageryLayers.remove(osmOverlay, true);
+					osmOverlay = null;
+				}
+			} else if (osmOverlay) {
+				applyGrade(osmOverlay, grade);
+			} else {
+				osmOverlay = createOsmImageryLayer(C, grade);
+				v.scene.imageryLayers.add(osmOverlay);
+			}
+		} catch {
+			// a stumbling imagery layer keeps what it had; the choice still shows
+		}
+		basemapStyle = next;
+		publishChrome();
+	}
+
+	/** chrome v3: the V3 map page's tool buttons (mapChrome.act) run the canvas's own tools. */
+	function v3Act(what: MapAct, arg?: unknown) {
+		if (what === 'zoom') zoomBy(arg === -1 ? -1 : 1);
+		else if (what === 'north') resetNorth();
+		else if (what === 'home') flyHome(1.2);
+		else if (what === 'follow') toggleFollow();
+		else if (what === 'measure') setTool(tool === 'measure' ? 'select' : 'measure');
+		else if (what === 'sensor' && SENSOR_ORDER.includes(arg as SensorMode)) {
+			setSensor(arg as SensorMode);
+			updateHash();
+		} else if (what === '3d') {
+			// the photoreal city, seen at an angle; back to the city map from above (the same ground point)
+			applyBasemap(arg === true ? 'photoreal' : 'dark');
+			const canvas = viewer?.scene.canvas;
+			const cam = cameraState();
+			if (!canvas || !cam) return;
+			const at = groundAt(canvas.clientWidth / 2, canvas.clientHeight / 2) ?? cam;
+			markInteraction();
+			takeCamera();
+			if (basemapStyle === 'photoreal') flyFrame(at.lon, at.lat, HOME_VIEW_3D.range, cam.heading, HOME_VIEW_3D.pitchDeg, 1.2);
+			else flyFrame(at.lon, at.lat, Math.max(2500, Math.min(HOME_VIEW.range, cam.alt * 1.4)), 0, -60, 1);
+		}
+	}
+
+	/** Publish the LayerTree's rows and the base map (map-state.svelte.ts). */
+	function publishChrome() {
+		if (chrome !== 'v2') return;
+		const lang = ops.lang;
+		const rows: LayerRow[] = GODS_EYE_LAYERS.filter((l) => !l.basemap && instances.has(l.id)).map((l) => {
+			const st = stats[l.id];
+			const key = `map_layer_${l.id}`;
+			const label = t(lang, key);
+			const count = st?.count ?? 0;
+			const detail = st?.detail ?? {};
+			return {
+				id: l.id,
+				label: label === key ? l.name : label,
+				group: l.group,
+				count,
+				hint: st?.hint ?? l.name,
+				error: st?.error ?? null,
+				visible: activeLayers.has(l.id),
+				empty: count === 0 && !st?.loading,
+				simulated: (detail.simulated ?? 0) > 0,
+				emulated: (detail.emulated ?? 0) > 0,
+				paused: replaySuspended.includes(l.id),
+			};
+		});
+		mapChrome.rows = rows;
+		mapChrome.basemap = basemapStyle;
+		mapChrome.lang = lang;
+		mapChrome.photoreal = {
+			available: photorealAvailable(),
+			hint: stats['photoreal-3d']?.hint ?? t(lang, 'map_basemap_needs_key'),
+		};
+		mapChrome.legendOpen = legendOpen;
+	}
+
+	/** The v2 hover: repaint the marker, list a cluster's members, follow the readout. */
+	function hoverV2(position: { x: number; y: number }, entity: CesiumEntity | null) {
+		const meta = entity ? markerMeta(entity) : null;
+		const id = meta && entity ? entity.id : null;
+		if (id !== hoverMarkId) {
+			hoverMarkId = id;
+			scheduleDecorate(0);
+		}
+		const cluster = id ? clusterOf.get(id) : null;
+		if (cluster && cluster.members.length > 1 && spider?.lead !== id && viewer) {
+			const names = cluster.members.map((mid) => {
+				const e = viewer!.entities.getById(mid);
+				const m = e ? markerMeta(e) : null;
+				return m?.label?.length ? labelText(m.label) : (m?.urn ?? mid);
+			});
+			hoverList = { x: position.x, y: position.y, title: t(ops.lang, 'map_cluster_list', names.length), items: names.slice(0, 12) };
+		} else if (hoverList) {
+			hoverList = null;
+		}
+		cursorAt = groundAt(position.x, position.y);
 	}
 
 	onMount(() => {
@@ -2512,6 +3655,7 @@
 				}
 			}
 			const cesium = window.Cesium!;
+			cesiumRef = cesium;
 			try {
 				await godsEye.pollImageryMode();
 				if (destroyed) return;
@@ -2542,7 +3686,8 @@
 				let basemap: Basemap | null = null;
 				if (godsEye.imageryMode === 'ion-photoreal' && godsEye.imageryToken) {
 					try {
-						const ion = createIonBasemap(cesium, godsEye.imageryToken);
+						// chrome v3: the natural aerial imagery, ungraded (V3-P4C: no tint on the satellite picture)
+						const ion = createIonBasemap(cesium, godsEye.imageryToken, v3 ? STREETS_GRADE : undefined);
 						viewer = viewerWith(ion);
 						basemap = ion;
 					} catch (err) {
@@ -2582,25 +3727,19 @@
 				// Registry lifecycle.
 				instances = new Map();
 				for (const layer of GODS_EYE_LAYERS) {
-					const inst = layer.create({
-						cesium,
-						viewer,
-						fetchJson,
-						notify: refreshStats,
-					});
+					const ctx = { cesium, viewer, fetchJson, notify: refreshStats, chrome, view: () => mapView };
+					const inst = layer.create(ctx);
 					await inst.status();
 					if (destroyed) return; // onDestroy already tore down the viewer + the layers so far
-					inst.init({ cesium, viewer, fetchJson, notify: refreshStats });
+					inst.init(ctx);
 					instances.set(layer.id, inst);
 				}
 				for (const layer of GODS_EYE_LAYERS) {
 					if (activeLayers.has(layer.id)) instances.get(layer.id)?.activate();
 				}
 
-				// The shared pursuit overlay (wall + cinematic), the replay
-				// overlay (tape tracks on the clock) and the selection halo.
-				pursuit = createPursuitOverlay(cesium, viewer);
-				replayOverlay = createReplayOverlay(cesium, viewer);
+				// The pursuit and replay overlays build on first use instead (see
+				// ensurePursuitOverlay/ensureReplayOverlay); the halo is first paint.
 				addHalo(cesium, viewer);
 
 				// Picking (pick card + board selection) and hover highlight.
@@ -2611,6 +3750,12 @@
 				hh.setInputAction((movement) => {
 					if (movement.endPosition) onHover(movement.endPosition);
 				}, cesium.ScreenSpaceEventType.MOUSE_MOVE);
+				const dbl = cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK;
+				if (chrome === 'v2' && dbl != null) {
+					// v2: a double-click closes a shape (Cesium's own double-click would track the entity)
+					viewer.cesiumWidget?.screenSpaceEventHandler?.removeInputAction(dbl);
+					hh.setInputAction(() => toolDoubleClick(), dbl);
+				}
 				handler = hh;
 
 				// Interaction hands the camera back from the orbit/tour (capture:
@@ -2624,8 +3769,49 @@
 				// 2.8e13 m out until the idle guard flew it home.
 				viewer.scene.screenSpaceCameraController.maximumZoomDistance = MAX_ZOOM_M;
 				viewer.camera.percentageChanged = 0.05;
-				removeCameraListener = viewer.camera.changed.addEventListener(updateHash);
+				// the v2 pass runs on camera-move END (below), never per camera change
+				// (SPEC §13.5); a continuous motion with no end (the idle orbit)
+				// reruns it at ORBIT_DECORATE_MS from orbitTick
+				removeCameraListener = viewer.camera.changed.addEventListener(() => updateHash());
 				removePreUpdate = viewer.scene.preUpdate.addEventListener(orbitTick);
+				if (chrome === 'v2') {
+					// the v2 pass: camera-move end, a layer's redraw (its own drawings excepted)
+					removeMoveEnd =
+						viewer.camera.moveEnd?.addEventListener(() => {
+							spider = null;
+							updateScale();
+							scheduleDecorate(0);
+						}) ?? null;
+					removeCollection =
+						viewer.entities.collectionChanged?.addEventListener((_c, added, removed) => {
+							if ([...added, ...removed].some((e) => !e.id.startsWith(V2_PREFIX))) scheduleDecorate();
+						}) ?? null;
+					container.addEventListener('pointerleave', onPointerLeave, { passive: true });
+					const bar = container.querySelector('.cesium-viewer-bottom');
+					if (bar && typeof ResizeObserver === 'function') {
+						creditsObserver = new ResizeObserver(() => {
+							creditsH = Math.max(18, Math.round(bar.getBoundingClientRect().height));
+						});
+						creditsObserver.observe(bar);
+					}
+					detachChrome = mapChrome.attach({
+						setLayer: (id, on) => setLayerEnabled(id, on),
+						setBasemap: (style) => applyBasemap(style),
+						toggleLegend: (open) => {
+							legendOpen = open ?? !legendOpen;
+							publishChrome();
+						},
+						act: v3 ? v3Act : undefined,
+					});
+					void ensureMapFonts().then((ok) => {
+						if (!ok || destroyed) return;
+						clearMapImages();
+						imageEpoch++;
+						scheduleDecorate(0);
+					});
+					basemapStyle = activeLayers.has('photoreal-3d') && photorealAvailable() ? 'photoreal' : 'dark';
+					applyBasemap(basemapStyle);
+				}
 
 				hudTimer = setInterval(refreshStats, 2000);
 				declutterTimer = setInterval(declutterLabels, DECLUTTER_MS);
@@ -2637,6 +3823,10 @@
 				refreshStats();
 				phase = 'ready';
 				settle(true);
+				if (chrome === 'v2') {
+					updateScale();
+					scheduleDecorate(0);
+				}
 			} catch (err) {
 				if (destroyed) return;
 				unavailableReason = `viewer failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -2708,7 +3898,32 @@
 		});
 	});
 
-	function pursuitSignature(plan: InterceptionPlan, officer: boolean): string {
+	// CHROME V2: the view the layers and the pass read — the selection (one or
+	// many), the time window, the protected objects, the kind filter and the
+	// waiting decisions. A change restyles the layers (no fetch) and reruns
+	// the pass; an unchanged rebuild (a registry poll) costs a signature.
+	$effect(() => {
+		if (chrome !== 'v2') return;
+		const input = {
+			primary: selection.current,
+			items: selectionItems,
+			window: timeWindow,
+			protectedSet: protectedUrns ?? NO_URNS,
+			kinds: kindFilter,
+			enforcementOn: activeLayers.has('enforcement'),
+		};
+		void cityRegistry.version;
+		void ops.interception;
+		void ops.watchlist;
+		const ready = phase === 'ready';
+		untrack(() => {
+			if (!rebuildView(input) || !ready) return;
+			for (const inst of instances.values()) inst.restyle?.();
+			scheduleDecorate(0);
+		});
+	});
+
+	function pursuitSignature(plan: InterceptionPlan, officer: boolean, kinds: ReadonlySet<string> | null): string {
 		const s = plan.latestSighting;
 		return JSON.stringify([
 			plan.eventId,
@@ -2718,6 +3933,7 @@
 			s?.position,
 			plan.chokes.map((c) => [c.junctionId, c.rank]),
 			officer,
+			kindsSignature({ kinds }),
 		]);
 	}
 
@@ -2732,8 +3948,17 @@
 	$effect(() => {
 		const plan = ops.interception;
 		const officer = ops.officerOn;
+		// v2: the kind filter hides the heading arrow (legacy draws no filter)
+		const kinds = chrome === 'v2' ? (kindFilter ?? null) : null;
 		const replaying = replay.mode === 'replay';
-		if (phase !== 'ready' || !pursuit) return;
+		if (phase !== 'ready') return;
+		void overlaysLanded;
+		if (plan?.latestSighting && plan.vehicleId && !replaying && !pursuit) {
+			// the overlay module loads with the first pursuit plan (FIX-E-PERF2);
+			// the bump above re-runs this effect once it has landed
+			ensurePursuitOverlay(cesiumRef!, viewer!);
+		}
+		if (!pursuit) return;
 		if (!plan?.latestSighting || !plan.vehicleId || replaying) {
 			pursuitToken++;
 			pursuitShownSig = pursuitPendingSig = '';
@@ -2742,7 +3967,7 @@
 			publishSnapshot();
 			return;
 		}
-		const sig = pursuitSignature(plan, officer);
+		const sig = pursuitSignature(plan, officer, kinds);
 		if (sig === pursuitShownSig || sig === pursuitPendingSig) return;
 		const token = ++pursuitToken;
 		pursuitPendingSig = sig;
@@ -2757,7 +3982,7 @@
 			if (t) trace = t.coordinates;
 			if (token !== pursuitToken || !pursuit) return;
 			pursuitPendingSig = '';
-			pursuit.show({ plan, trace, detail: detail ?? godsEye.interception, segments: godsEye.segmentById, officer });
+			pursuit.show({ plan, trace, detail: detail ?? godsEye.interception, segments: godsEye.segmentById, officer, kinds });
 			pursuitShownSig = sig;
 			publishSnapshot();
 		})();
@@ -2800,7 +4025,14 @@
 		const tape = replay.tape;
 		const cursor = replay.cursorSec;
 		const officer = ops.officerOn;
-		if (phase !== 'ready' || !replayOverlay) return;
+		if (phase !== 'ready') return;
+		void overlaysLanded;
+		if (mode === 'replay' && tape && !replayOverlay) {
+			// the overlay module loads on the first replay (FIX-E-PERF2); the
+			// bump above re-runs this effect once it has landed
+			ensureReplayOverlay(cesiumRef!, viewer!);
+		}
+		if (!replayOverlay) return;
 		untrack(() => {
 			if (mode !== 'replay' || !tape) {
 				if (replayShownSig) {
@@ -2846,6 +4078,18 @@
 		if (hashTimer) clearTimeout(hashTimer);
 		if (ionTimer) clearTimeout(ionTimer);
 		if (hoverTimer) clearTimeout(hoverTimer);
+		if (decorateTimer) clearTimeout(decorateTimer);
+		decorateTimer = null;
+		removeMoveEnd?.();
+		removeMoveEnd = null;
+		removeCollection?.();
+		removeCollection = null;
+		detachChrome?.();
+		detachChrome = null;
+		creditsObserver?.disconnect();
+		creditsObserver = null;
+		osmOverlay = null;
+		spider = null;
 		hudTimer = clockTimer = timeTimer = null;
 		hashTimer = ionTimer = hoverTimer = null;
 		pursuitToken++;
@@ -2856,6 +4100,7 @@
 			container.removeEventListener('pointermove', onPointerMove, { capture: true });
 			container.removeEventListener('pointerup', onPointerUp, { capture: true });
 			container.removeEventListener('wheel', onWheel, { capture: true });
+			container.removeEventListener('pointerleave', onPointerLeave);
 		}
 		removeCameraListener?.();
 		removeCameraListener = null;
@@ -2915,6 +4160,23 @@
 	/** The layer's own pick card: wall views always; City Command only for picks with no entity URN. */
 	let showPickCard = $derived(pickCard || (picked != null && !picked.urn));
 	let replaying = $derived(replay.mode === 'replay');
+	/**
+	 * The replay's own provenance (SPEC §9: honest labels, read from the
+	 * replay state — never guessed): the tape is an emulated recording when
+	 * every ANPR read it carries wears the emulator's EM series marker
+	 * (event-emulator tape.py `is_emulated_plate`); a capture of live reads
+	 * is never labelled so. A tape with no reads to contradict it keeps the
+	 * ledger's own provenance — parseTape loads emulator runs only.
+	 */
+	let replayEmulated = $derived(tapeIsEmulated(replay.tape));
+
+	/** Pure: `GJ27EM9001` → true (the EM series after the RTO code); a live capture's marks are not. */
+	function tapeIsEmulated(tape: { anpr: ReadonlyArray<{ plate: string }> } | null): boolean {
+		if (!tape) return false;
+		const plates = tape.anpr.map((r) => r.plate);
+		if (!plates.length) return true;
+		return plates.every((p) => p.length > 6 && p.slice(4, 6).toUpperCase() === 'EM');
+	}
 	/** The locked subject's name as this console may show it (C6: masked unless an officer is named). */
 	let lockedEventName = $derived(godsEye.subjectLockId ? eventLabel(godsEye.subjectLockId, ops.officerOn) : null);
 	// Chip text only (basemap.ts imageryChip, EN/HI/GU) — the snapshot's
@@ -2939,11 +4201,70 @@
 	);
 	/** AI suggestions waiting on a human (the chips) — the bus's queue. */
 	let agentPending = $derived(canvasBus.pending);
+
+	// ─── chrome v2: template state ─────────────────────────────────────────
+	let isV2 = $derived(chrome === 'v2');
+	/** What Follow holds, in operator copy: the locked event's name, the followed object's label (marks masked), never a raw URN. */
+	let followName = $derived.by(() => {
+		if (godsEye.subjectLockId) return lockedEventName;
+		return followUrn ? objectName(followUrn) : null;
+	});
+	let followState = $derived({
+		pressed: !!godsEye.subjectLockId || !!followUrn,
+		disabled: !selection.current,
+		// a followed object the registry cannot name reads "Following the selection"
+		title:
+			godsEye.subjectLockId || followUrn
+				? t(ops.lang, 'map_tool_following', followName)
+				: selection.current
+				? t(ops.lang, 'map_tool_follow')
+				: t(ops.lang, 'map_tool_follow_none'),
+	});
+	let modeState = $derived<{ kind: 'live' | 'window' | 'replay'; runId?: number | string | null }>(
+		replaying ? { kind: 'replay', runId: replay.runId } : timeWindow ? { kind: 'window' } : { kind: 'live' },
+	);
+	let readoutAt = $derived(cursorAt ?? centreAt);
+	let flowSimulated = $derived((stats['flow']?.detail?.simulated ?? 0) > 0);
+
+	// chrome v3: the page's tool buttons read what the canvas's tools hold
+	$effect(() => {
+		if (!v3 || phase !== 'ready') return;
+		mapChrome.tools = { heading: cameraHeadingDeg, follow: followState, sensor: sensorMode, tool, photorealReady: photorealOn };
+	});
+
+	/** v2 zoom buttons: a step toward or away from the ground (a camera gesture). */
+	function zoomBy(sign: 1 | -1) {
+		if (!viewer) return;
+		markInteraction();
+		takeCamera();
+		const h = Math.max(60, cameraGround()?.alt ?? 1000);
+		try {
+			if (sign > 0) viewer.camera.zoomIn?.(h * 0.4);
+			else viewer.camera.zoomOut?.(h * 0.6);
+		} catch {
+			// camera mid-teardown
+		}
+		scheduleDecorate(200);
+	}
+
+	/** v2 compass: the same ground point under the centre, north up. */
+	function resetNorth() {
+		const canvas = viewer?.scene.canvas;
+		const cam = cameraState();
+		if (!viewer || !canvas || !cam) return;
+		const centre = groundAt(canvas.clientWidth / 2, canvas.clientHeight / 2);
+		if (!centre) return;
+		markInteraction();
+		takeCamera();
+		const pitch = Math.min(-10, cam.pitch);
+		const range = cam.alt / Math.max(0.2, Math.sin(Math.abs((pitch * Math.PI) / 180)));
+		flyFrame(centre.lon, centre.lat, range, 0, pitch, 0.8);
+	}
 </script>
 
 <svelte:window onkeydown={onKey} />
 
-<div class="ge-wrap" class:mini={hud === 'mini'} data-hud={hud}>
+<div class="ge-wrap" class:mini={hud === 'mini'} data-hud={hud} data-chrome={chrome}>
 	{#if phase === 'loading'}
 		<div class="ge-status"><span class="pulse"></span> initialising God's-eye canvas…</div>
 	{/if}
@@ -2963,6 +4284,102 @@
 	<div class="ge-canvas" bind:this={container} style={creditStyle}></div>
 
 	{#if phase === 'ready'}
+		{#if isV2}
+			<!-- chrome v2 (SPEC §5.3): toolbar top left, proposals and the replay banner top centre,
+			     navigation bottom right above Cesium's credits, readout bottom left -->
+			<div class="ge-hud v2" class:v3>
+				{#if !v3}
+				<MapToolbar
+					lang={ops.lang}
+					{tool}
+					{shapeMode}
+					shapeFiltered={!!shapeFilter}
+					canSearchAround={!!selection.current}
+					layersOpen={onLayers ? false : layersOpen}
+					{legendOpen}
+					layersRail={!onLayers}
+					follow={followState}
+					mode={modeState}
+					imagery={{ label: modeLabel, title: `${modeTitle} · ${t(ops.lang, 'map_imagery_not_live')}` }}
+					showExit={hud === 'full' && !!onexit}
+					touring={tourIndex != null}
+					sensor={sensorMode}
+					ontool={(next, mode) => setTool(next, mode)}
+					onclearshape={clearShapeFilter}
+					onsearcharound={searchAround}
+					onlayers={() => (onLayers ? onLayers() : (layersOpen = !layersOpen))}
+					onlegend={() => {
+						legendOpen = !legendOpen;
+						publishChrome();
+					}}
+					onfollow={toggleFollow}
+					onmode={() => onTimeline?.()}
+					onexit={() => onexit?.()}
+					ontour={() => (tourIndex == null ? startTour() : stopTour())}
+					onsensor={(mode) => {
+						setSensor(mode);
+						updateHash();
+					}}
+				/>
+				{/if}
+				{#if shareFlash}<span class="flash">{displayText(shareFlash, ops.officerOn)}</span>{/if}
+				{#if tourIndex != null && tourLabel}
+					<span class="tour-label">{displayText(tourLabel, ops.officerOn)}</span>
+				{/if}
+				{#if toolHint}<span class="tool-hint">{toolHint}</span>{/if}
+			</div>
+			<div class="v2-top">
+				{#if replaying}<ReplayBanner runId={replay.runId} emulated={replayEmulated} lang={ops.lang} />{/if}
+				{#if agentPending.length}
+					<!-- the proposal cards load with the first canvas directive (FIX-E-PERF2):
+					     with none pending they render nothing, so nothing loads at first paint -->
+					<LazyMount
+						load={() => import('./hud/map/MapProposals.svelte')}
+						spinner={false}
+						glyphs={[ACTOR_ICON.ai]}
+						proposals={agentPending}
+						textOf={chipText}
+						onapply={applyDirective}
+						ondismiss={dismissDirective}
+						lang={ops.lang}
+						max={AGENT_CHIPS_SHOWN}
+					/>
+				{/if}
+			</div>
+			{#if !v3}
+			{#if layersOpen && !onLayers}
+				<div class="v2-panel"><LazyMount load={loadLayerTree} spinner={false} lang={ops.lang} onclose={() => (layersOpen = false)} /></div>
+			{/if}
+			{#if legendOpen}
+				<!-- beside the canvas's own LayerTree panel when it is open (never over its rows or its base-map control) -->
+				<div class="v2-legend" class:beside={layersOpen && !onLayers}>
+					<LazyMount
+						load={loadLegend}
+						spinner={false}
+						lang={ops.lang}
+						simulated={flowSimulated}
+						onclose={() => {
+							legendOpen = false;
+							publishChrome();
+						}}
+					/>
+				</div>
+			{/if}
+			<div class="v2-nav" style:bottom={`${creditsH + 16}px`}>
+				<MapNav lang={ops.lang} heading={cameraHeadingDeg} onzoomin={() => zoomBy(1)} onzoomout={() => zoomBy(-1)} onnorth={resetNorth} />
+			</div>
+			<div class="v2-readout">
+				<MapReadout lang={ops.lang} lat={readoutAt?.lat ?? null} lon={readoutAt?.lon ?? null} scale={scaleBar} />
+			</div>
+			{/if}
+			{#if hoverList}
+				<div class="v2-hover" style:left={`${hoverList.x + 16}px`} style:top={`${hoverList.y + 12}px`} role="tooltip">
+					<div class="v2-hover-title">{hoverList.title}</div>
+					{#each hoverList.items as item, i (i)}<div class="v2-hover-item">{item}</div>{/each}
+					<div class="v2-hover-hint">{t(ops.lang, 'map_cluster_spread')}</div>
+				</div>
+			{/if}
+		{:else}
 		<div class="ge-hud" class:mini={hud === 'mini'}>
 			{#if hud === 'full' || hud === 'wall'}
 				<!-- one wrapping chip row: controls · layers · AMA · basemap · legend -->
@@ -2976,7 +4393,7 @@
 						class="chip sensor"
 						class:flir={sensorMode !== 'raw'}
 						onclick={cycleSensor}
-						title="Sensor: COMMAND (true colours, default) → FLIR White-Hot → Black-Hot → Ironbow"
+						title="Visual filter: COMMAND (true colours, default) → thermal-style White-Hot → Black-Hot → Ironbow"
 					>
 						▙ {SENSOR_LABEL[sensorMode]}
 					</button>
@@ -3138,6 +4555,7 @@
 				<a class="chip layer" href="/gods-eye">FULLSCREEN ⤢</a>
 			{/if}
 		</div>
+		{/if}
 		{#if hud === 'full' || hud === 'wall'}
 			<CommandPalette
 				layerIds={GODS_EYE_LAYER_IDS}
@@ -3185,7 +4603,7 @@
 	 * (the cockpit's tool dock) caps the bar's width (--ge-credit-max-w):
 	 * the credits wrap onto another line instead of running under it.
 	 */
-	.ge-canvas :global(.cesium-viewer-bottom) {
+	.ge-wrap:not([data-chrome='v2']) .ge-canvas :global(.cesium-viewer-bottom) {
 		transform: translate(var(--ge-credit-left, 0px), calc(-1 * var(--ge-credit-bottom, 0px)));
 		width: fit-content;
 		max-width: var(--ge-credit-max-w, none);
@@ -3202,7 +4620,7 @@
 		justify-content: center;
 		gap: var(--v-space-3);
 		color: var(--v-ink-2);
-		font-family: var(--v-font-mono);
+		font-family: var(--v-font-ui);
 		font-size: var(--v-text-xs);
 		z-index: 3;
 	}
@@ -3239,7 +4657,7 @@
 	.ge-degrade h3 {
 		margin: 0;
 		font-size: var(--v-text-base);
-		letter-spacing: 0.04em;
+		letter-spacing: 0;
 		color: var(--v-ink-1);
 	}
 
@@ -3289,9 +4707,10 @@
 	}
 
 	.chip {
-		font-family: var(--v-font-mono);
+		font-family: var(--v-font-ui);
+		font-variant-numeric: tabular-nums;
 		font-size: var(--v-text-2xs);
-		letter-spacing: 0.05em;
+		letter-spacing: 0;
 		color: var(--v-ink-1);
 		background: color-mix(in srgb, var(--v-canvas) 82%, transparent);
 		border: 1px solid var(--v-line-2);
@@ -3371,7 +4790,7 @@
 		border-color: var(--v-tool);
 		color: var(--v-tool);
 		border-style: dashed;
-		letter-spacing: 0.08em;
+		letter-spacing: 0;
 	}
 
 	.chip.layer.warn {
@@ -3387,7 +4806,7 @@
 		margin-left: 2px;
 		padding: 0 4px;
 		font-size: 9px;
-		letter-spacing: 0.08em;
+		letter-spacing: 0;
 		color: var(--v-tool);
 		border: 1px dashed var(--v-tool);
 		border-radius: var(--v-radius-pill);
@@ -3414,7 +4833,7 @@
 
 	.stale-tag {
 		color: var(--v-band-amber);
-		letter-spacing: 0.08em;
+		letter-spacing: 0;
 	}
 
 	.chip.legend.warn {
@@ -3440,7 +4859,7 @@
 	}
 
 	.flash {
-		font-family: var(--v-font-mono);
+		font-family: var(--v-font-ui);
 		font-size: var(--v-text-2xs);
 		color: var(--v-band-green);
 		background: color-mix(in srgb, var(--v-canvas) 85%, transparent);
@@ -3454,7 +4873,7 @@
 
 	.ge-legend,
 	.ge-pick {
-		font-family: var(--v-font-mono);
+		font-family: var(--v-font-ui);
 		font-size: var(--v-text-2xs);
 		color: var(--v-ink-2);
 		background: color-mix(in srgb, var(--v-canvas) 90%, transparent);
@@ -3539,7 +4958,7 @@
 
 	.feed-warn {
 		display: block;
-		font-family: var(--v-font-mono);
+		font-family: var(--v-font-ui);
 		font-size: var(--v-text-2xs);
 		color: var(--v-band-red);
 	}
@@ -3557,12 +4976,12 @@
 
 	.pick-layer {
 		color: var(--v-data);
-		letter-spacing: 0.08em;
+		letter-spacing: 0;
 	}
 
 	.pick-sel {
 		color: var(--v-act-text);
-		letter-spacing: 0.08em;
+		letter-spacing: 0;
 	}
 
 	.pick-x {
@@ -3619,7 +5038,7 @@
 		align-items: center;
 		gap: var(--v-space-2);
 		padding: 3px var(--v-space-2);
-		font-family: var(--v-font-mono);
+		font-family: var(--v-font-ui);
 		font-size: var(--v-text-xs);
 		color: var(--v-ink-1);
 		background: color-mix(in srgb, var(--v-canvas) 88%, transparent);
@@ -3632,7 +5051,7 @@
 
 	.agent-kicker {
 		color: var(--v-tool);
-		letter-spacing: 0.08em;
+		letter-spacing: 0;
 		white-space: nowrap;
 	}
 
@@ -3645,7 +5064,7 @@
 
 	.agent-tier {
 		font-size: 9px;
-		letter-spacing: 0.08em;
+		letter-spacing: 0;
 		color: var(--v-ink-3);
 		border: 1px dashed var(--v-line-2);
 		border-radius: var(--v-radius-pill);
@@ -3689,9 +5108,169 @@
 	}
 
 	.agent-more {
-		font-family: var(--v-font-mono);
+		font-family: var(--v-font-ui);
 		font-size: var(--v-text-2xs);
 		color: var(--v-ink-3);
+	}
+
+
+	/* ── chrome v2 (SPEC §5.3) ─────────────────────────────────────────── */
+
+	/*
+	 * Cesium's own credits (Google's logo, Cesium ion, '© OpenStreetMap
+	 * contributors', the per-tile copyrights) restyled as a quiet plate at
+	 * the BOTTOM RIGHT of the map pane, never covered: the navigation sits
+	 * above it and the readout stays at the bottom left, clear of it.
+	 * !important: Cesium writes the bar's left/bottom inline on every resize.
+	 */
+	.ge-wrap[data-chrome='v2'] .ge-canvas :global(.cesium-viewer-bottom) {
+		left: auto !important;
+		right: 8px !important;
+		bottom: 8px !important;
+		max-width: calc(46% - 16px);
+		padding: 2px 6px;
+		border-radius: var(--v-radius-chip);
+		background: var(--v-map-label-bg);
+		font-family: var(--v-font-ui);
+		font-size: var(--v-text-xs);
+		line-height: 18px;
+		color: var(--v-ink-2);
+		z-index: 4;
+	}
+
+	.ge-wrap[data-chrome='v2'] .ge-canvas :global(.cesium-widget-credits) {
+		font-size: var(--v-text-xs);
+		color: var(--v-ink-2);
+		text-shadow: none;
+	}
+
+	.ge-wrap[data-chrome='v2'] .ge-canvas :global(.cesium-credit-expand-link),
+	.ge-wrap[data-chrome='v2'] .ge-canvas :global(.cesium-widget-credits a) {
+		color: var(--v-ink-2);
+	}
+
+	.ge-hud.v2 {
+		left: var(--ge-hud-left, 8px);
+		top: var(--ge-hud-top, 8px);
+		gap: 6px;
+	}
+
+	.ge-hud.v2 .flash,
+	.ge-hud.v2 .tour-label,
+	.ge-hud.v2 .tool-hint {
+		font-family: var(--v-font-ui);
+		font-size: var(--v-text-xs);
+		line-height: 16px;
+		padding: 3px 8px;
+		border: 0;
+		border-radius: var(--v-radius-chip);
+		background: var(--v-map-label-bg);
+		box-shadow: var(--v-elev-1);
+		max-width: min(64ch, 100%);
+		pointer-events: auto;
+	}
+
+	.ge-hud.v2 .flash {
+		color: var(--v-ink-1);
+	}
+
+	.ge-hud.v2 .tour-label,
+	.ge-hud.v2 .tool-hint {
+		color: var(--v-ink-2);
+	}
+
+	.v2-top {
+		position: absolute;
+		top: 8px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: min(440px, calc(100% - 16px));
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		z-index: 5;
+		pointer-events: none;
+	}
+
+	.v2-top > :global(*) {
+		pointer-events: auto;
+	}
+
+	.v2-panel {
+		position: absolute;
+		top: 48px;
+		left: var(--ge-hud-left, 8px);
+		width: 300px;
+		max-height: calc(100% - 104px);
+		display: flex;
+		flex-direction: column;
+		border-radius: var(--v-radius-panel);
+		overflow: hidden;
+		box-shadow: var(--v-elev-2);
+		z-index: 5;
+	}
+
+	.v2-panel > :global(*) {
+		min-height: 0;
+		flex: 1 1 auto;
+	}
+
+	.v2-legend {
+		position: absolute;
+		left: var(--ge-hud-left, 8px);
+		bottom: 38px;
+		z-index: 5;
+	}
+
+	/* the LayerTree panel is 300 px wide at the same left edge: the legend stands to its right */
+	.v2-legend.beside {
+		left: calc(var(--ge-hud-left, 8px) + 308px);
+	}
+
+	.v2-nav {
+		position: absolute;
+		right: 8px;
+		bottom: 44px;
+		z-index: 4;
+	}
+
+	.v2-readout {
+		position: absolute;
+		left: 8px;
+		bottom: 8px;
+		max-width: calc(54% - 16px);
+		z-index: 4;
+	}
+
+	.v2-hover {
+		position: absolute;
+		z-index: 6;
+		max-width: 280px;
+		padding: 6px 8px;
+		border-radius: var(--v-radius-panel);
+		background: var(--v-surface-2);
+		box-shadow: var(--v-elev-2);
+		font-family: var(--v-font-ui);
+		font-size: var(--v-text-xs);
+		line-height: 18px;
+		color: var(--v-ink-1);
+		pointer-events: none;
+	}
+
+	.v2-hover-title {
+		font-weight: 600;
+	}
+
+	.v2-hover-item {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.v2-hover-hint {
+		margin-top: 2px;
+		color: var(--v-ink-2);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

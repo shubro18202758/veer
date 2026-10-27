@@ -22,6 +22,19 @@
  *     board open — the pick prefix says WHICH layer, the URN says WHAT.
  */
 
+import type { MapChrome, MapView } from './hud/map/view';
+
+/** The LayerTree groups, in display order (plan contract X7; SPEC §5.3 LayerTree). */
+export const LAYER_GROUPS = ['traffic', 'enforcement', 'response', 'corridors', 'intelligence'] as const;
+export type LayerGroup = (typeof LAYER_GROUPS)[number];
+
+/**
+ * Ids and pick prefixes reserved for the OSINT deck layers (OS-DECK-A, plan
+ * contract X7): only the layer with that id may use the prefix, and no other
+ * layer may take either.
+ */
+export const RESERVED_LAYERS: Readonly<Record<string, string>> = Object.freeze({ osint: 'osint:', places: 'place:' });
+
 /** Handed to `create()` once by the canvas controller. */
 export interface GodsEyeLayerContext {
 	/** The global Cesium loaded from /cesium/Cesium.js. */
@@ -35,6 +48,14 @@ export interface GodsEyeLayerContext {
 	fetchJson: (path: string, signal?: AbortSignal) => Promise<unknown>;
 	/** Ask the controller to publish a new UI snapshot (HUD chip counts). */
 	notify: () => void;
+	/**
+	 * The page's chrome (GodsEyeCanvas `chrome`): 'legacy' draws exactly as
+	 * before the redesign; 'v2' draws the redesign's symbology from the
+	 * --v-map-* and --v-flow-* tokens only (SPEC §5.3). Absent = 'legacy'.
+	 */
+	chrome?: MapChrome;
+	/** The current map view (selection, time window, protected objects, filters); v2 only. */
+	view?: () => MapView;
 }
 
 /** Per-layer stats surfaced in the HUD (coverageStats in gev terms). */
@@ -71,6 +92,11 @@ export interface GodsEyeLayerInstance {
 	urnOf?(pickId: string): string | null;
 	coverageStats(): LayerCoverageStats;
 	destroy(): void;
+	/**
+	 * Re-apply view-dependent drawing now (chrome v2: the selection, the time
+	 * window, the filters changed) without fetching anything. Optional.
+	 */
+	restyle?(): void;
 }
 
 /** A registered layer (the provider object; gev StreetLevelProvider). */
@@ -87,10 +113,14 @@ export interface GodsEyeLayer {
 	pickPrefix: string;
 	/** Layers start on (share links can turn them off). */
 	defaultOn: boolean;
+	/** The LayerTree group the layer is listed under (plan contract X7). */
+	group: LayerGroup;
+	/** The layer is the base map itself (photoreal 3D): the LayerTree's base-map control, not a row. */
+	basemap?: boolean;
 	create(ctx: GodsEyeLayerContext): GodsEyeLayerInstance;
 }
 
-const REQUIRED = Object.freeze(['id', 'name', 'label', 'pickPrefix', 'create'] as const);
+const REQUIRED = Object.freeze(['id', 'name', 'label', 'pickPrefix', 'group', 'create'] as const);
 
 const ID_GRAMMAR = /^[a-z][a-z0-9-]*$/;
 
@@ -118,6 +148,16 @@ export function validateLayers(layers: GodsEyeLayer[]): ReadonlyArray<GodsEyeLay
 		}
 		if (typeof layer.pickPrefix !== 'string' || !layer.pickPrefix) {
 			throw new TypeError(`Gods-eye layer ${label} needs a pick prefix`);
+		}
+		if (!(LAYER_GROUPS as readonly string[]).includes(layer.group)) {
+			throw new TypeError(`Gods-eye layer ${label}: group ${String(layer.group)} is not one of ${LAYER_GROUPS.join(', ')}`);
+		}
+		for (const [reservedId, reservedPrefix] of Object.entries(RESERVED_LAYERS)) {
+			const ownsId = layer.id === reservedId;
+			const usesPrefix = layer.pickPrefix.startsWith(reservedPrefix) || reservedPrefix.startsWith(layer.pickPrefix);
+			if (ownsId !== usesPrefix || (ownsId && layer.pickPrefix !== reservedPrefix)) {
+				throw new TypeError(`Gods-eye layer ${label}: the id ${reservedId} and the pick prefix ${reservedPrefix} are reserved for each other`);
+			}
 		}
 		for (const other of prefixes) {
 			if (other.startsWith(layer.pickPrefix) || layer.pickPrefix.startsWith(other)) {

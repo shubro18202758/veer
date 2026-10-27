@@ -1,0 +1,31 @@
+{
+	"urn": "place:karnavati_club_sg_highway_106",
+	"kind": "place",
+	"id": "karnavati_club_sg_highway_106",
+	"label": "Karnavati Club (SG Highway)",
+	"lon": 72.503,
+	"lat": 23.009,
+	"state": "landmark",
+	"band": null,
+	"source": "osint",
+	"verification_state": null,
+	"credibility": null,
+	"t": "2026-10-20T13:59:00.000Z",
+	"age_sec": 387601.4,
+	"links": ["osint_event:8ec6f567-9366-47ae-8fde-38aa421a3219"],
+	"props": {
+		"feature_type": "landmark",
+		"canonical_name": "Karnavati Club (SG Highway)",
+		"surface_forms": [
+			"karnavati",
+			"karnavati 4 roads",
+			"karnavati circle",
+			"karnavati club",
+			"કર્ણાવતી ક્લબ",
+			"કર્ણાવતી ચાર રસ્તા"
+		],
+		"segment_id": null,
+		"junction_id": null,
+		"osint_event_count": 1
+	}
+}

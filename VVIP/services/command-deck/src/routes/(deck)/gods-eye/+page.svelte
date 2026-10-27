@@ -1,174 +1,243 @@
 <script lang="ts">
 	/**
-	 * /gods-eye — VEER CITY COMMAND: one live, fused, explainable picture of
-	 * Ahmedabad on the God's-eye canvas.
+	 * `/gods-eye` — CITY, MAP MODE (SPEC §6.2): the workspace frame in map
+	 * mode — the full-bleed God's-eye canvas (chrome v2) below the navbar and
+	 * the LiveStrip, the docks collapsed (the bottom dock to its 36 px
+	 * header), the City vitals CARD floating at the top right (publishing
+	 * `__GODS_EYE__.vitals`), and the left dock's Info tab with the full
+	 * vitals when opened. `[`, `]`, `\` or the rail open the docks; `Esc`
+	 * never navigates; "Exit map mode" (`.chip.exit`) restores the docks on
+	 * this route. Idle orbit after 30 s is allowed when nothing is selected.
 	 *
-	 *   full-bleed canvas      every layer of the fused city registry
-	 *                          (GET /api/v1/city/entities, contract C-C)
-	 *   CITY VITALS  (left)    posture, decisions waiting on a human, units,
-	 *                          ANPR, signals, feed freshness, AI tiers, ethics
-	 *   ENTITY DOSSIER (right) whatever is selected — map pick, rail row,
-	 *                          vital — with its 1-hop neighbours and audit
-	 *   FUSION RAIL  (bottom)  the city narrative on human / machine rails,
-	 *                          LIVE ◉ / REPLAY (an emulator tape on the clock)
+	 * Replay is allowed here (SPEC §7.3): live layers stand down as the
+	 * canvas does today, the banner names the run, and the LiveStrip and the
+	 * inbox stay live — a live interrupt shows in the strip with its Review.
+	 * The omnibar is the canvas-mounted one (hud="full", plan X25).
 	 *
-	 * The route is a fixed overlay above the app shell, so it carries its own
-	 * way out: the bar's nav, the canvas's EXIT chip and Esc (Esc first closes
-	 * the dossier, then leaves for the situation wall). The share link
-	 * (#v=2&…&sel=<urn>) restores camera, sensor, layers and the selected
-	 * entity — a control room opens exactly what the sender saw.
+	 * One Share, in the pane header (`data-share`). The canvas's own camera
+	 * and layers hash carries the view.
 	 *
-	 * The overlay covers the shell's command bar, so it carries its own
-	 * operator identity too: the on-duty chip (or the sign-in control) sits
-	 * in its bar, and with the operator gate on and nobody signed in the
-	 * canvas is not mounted at all — one 'Operator sign-in required' panel
-	 * with the sign-in form stands in (no 403 storm, no preview fixtures
-	 * passed off as the city). Signing in reloads the page with the hash,
-	 * so a shared view opens as sent. The mode pill says LIVE only while the
-	 * fused registry and the city feed answer — NO DATA otherwise.
+	 * Operator gate on and nobody signed in: the canvas is not mounted — one
+	 * sign-in panel stands in (no pollers behind it).
 	 */
-	import { onMount, onDestroy } from 'svelte';
-	import { goto } from '$app/navigation';
-	import GodsEyeCanvas from '$lib/gods-eye/GodsEyeCanvas.svelte';
-	import CityVitals from '$lib/gods-eye/hud/CityVitals.svelte';
-	import EntityDossier from '$lib/gods-eye/hud/EntityDossier.svelte';
-	import FusionRail from '$lib/gods-eye/hud/FusionRail.svelte';
-	import { godsEye } from '$lib/gods-eye/store.svelte';
-	import { selection } from '$lib/gods-eye/entities/selection.svelte';
-	import { replay } from '$lib/gods-eye/hud/replay.svelte';
-	import { cityRegistry } from '$lib/gods-eye/entities/registry.svelte';
-	import { fusionFeed } from '$lib/gods-eye/hud/feed.svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { ops } from '$lib/ops/store.svelte';
 	import OperatorSignIn from '$lib/shell/OperatorSignIn.svelte';
-	import { operatorSession } from '$lib/shell/session.svelte';
 	import { commandBar } from '$lib/shell/command-bar.svelte';
-	import { SUPPORTED, t } from '$lib/i18n/strings';
+	import { godsEye } from '$lib/gods-eye/store.svelte';
+	import { selection } from '$lib/gods-eye/entities/selection.svelte';
+	import { cityRegistry } from '$lib/gods-eye/entities/registry.svelte';
+	import { fusionFeed } from '$lib/gods-eye/hud/feed.svelte';
+	import { replay } from '$lib/gods-eye/hud/replay.svelte';
+	import GodsEyeCanvas from '$lib/gods-eye/GodsEyeCanvas.svelte';
+	import CityVitals from '$lib/gods-eye/hud/CityVitals.svelte';
+	import WorkspaceFrame from '$lib/workspace/components/WorkspaceFrame.svelte';
+	import { registerProviders } from '$lib/workspace/providers';
+	import { liveWorld, selectors } from '$lib/workspace/world.svelte';
+	import { workspace } from '$lib/workspace/workspace.svelte';
+	import { Button, provideUiLang } from '$lib/ui';
+	import { t } from '$lib/i18n/strings';
 	import '$lib/i18n/packs';
+	import '$lib/i18n/packs.wall';
+	import { parseUnitKey } from '$lib/decisions/homes';
+	import { liveStripFeed, openPursuits } from '$lib/decisions/live';
+	import { corridor } from '$lib/ops/components/template/corridor.svelte';
+	import { dataFeeds, feedRows, worstStatus } from '$lib/decisions/wall/feeds';
 
-	let clock = $state('--:--:--');
-	let clockTimer: ReturnType<typeof setInterval> | null = null;
+	provideUiLang(() => ops.lang);
+	const lang = $derived(ops.lang);
+	const L = (key: string, ...args: unknown[]) => t(lang, key, ...args);
 
-	function tickClock() {
-		clock = new Intl.DateTimeFormat('en-GB', {
-			timeZone: 'Asia/Kolkata',
-			hour: '2-digit',
-			minute: '2-digit',
-			second: '2-digit',
-			hour12: false,
-		}).format(new Date());
-	}
-
-	/**
-	 * The glass panels' footprint over the canvas (CSS px). The canvas lands
-	 * every flight's subject in the region they leave clear — a selected
-	 * entity never hides under the dossier, the vitals or the rail. Measured
-	 * from the live layout (ResizeObserver); the dossier's width comes from
-	 * its token (--dossier-w) so the inset is right in the same update that
-	 * opens it, before the drawer has laid out.
-	 */
-	let stageEl: HTMLElement | null = $state(null);
-	let vitalsEl: HTMLElement | null = $state(null);
-	let railEl: HTMLElement | null = $state(null);
-	let panels = $state({ left: 0, bottom: 0, gap: 12, dossierW: 392 });
-	let observer: ResizeObserver | null = null;
-
-	/**
-	 * The canvas HUD chip row (EXIT … PURSUIT) above the clear region — a
-	 * floor: the canvas measures the row as it lays out (two lines once the
-	 * dossier narrows it) and keeps the lower edge.
-	 */
-	const HUD_ROW_PX = 52;
-
-	function measurePanels() {
-		if (!stageEl) return;
-		const stage = stageEl.getBoundingClientRect();
-		const vitals = vitalsEl?.getBoundingClientRect();
-		const rail = railEl?.getBoundingClientRect();
-		const gap = vitals ? Math.max(0, vitals.left - stage.left) : 12;
-		const dossierW = parseFloat(getComputedStyle(stageEl).getPropertyValue('--dossier-w'));
-		panels = {
-			left: vitals ? vitals.right - stage.left + gap : 0,
-			bottom: rail ? stage.bottom - rail.top + gap : 0,
-			gap,
-			dossierW: Number.isFinite(dossierW) && dossierW > 0 ? dossierW : 392,
-		};
-	}
-
-	/**
-	 * The stage mounts once the operator gate's state is known (or after a
-	 * short wait if the session read never answers — the deck then behaves
-	 * as before): an anonymous console under the gate gets the sign-in panel
-	 * instead, and the canvas never starts its pollers.
-	 */
+	/** The operator gate's state is known (or the read gave up): mount the map, or the sign-in. */
 	let sessionWaitOver = $state(false);
-	const sessionKnown = $derived(operatorSession.gate !== null || sessionWaitOver);
-	const signInNeeded = $derived(operatorSession.gate === true && !operatorSession.officer);
-	const stageReady = $derived(sessionKnown && !signInNeeded);
+	const sessionKnown = $derived(ops.sessionGate !== null || sessionWaitOver);
+
+	// ── the canvas props (the workspace's state) ────────────────────────────
+	const protectedSet = $derived(selectors.protectedUrns());
+	const selectionItems = $derived(selection.items);
+	/** Idle orbit after 30 s, allowed only while nothing is selected (the canvas enforces the selection rule). */
+	const idleOrbit = $derived(true);
+
+	/** "Exit map mode": restore the docks on THIS route (never navigate). */
+	function exitMapMode() {
+		workspace.docks = { left: true, right: true, bottom: 'compact' };
+	}
+
+	/** The map-mode dock collapse on ENTRY: docks closed; the bottom dock compact (replay reachable). */
+	function collapseForMapMode() {
+		workspace.docks = { left: false, right: false, bottom: 'compact' };
+	}
+
+	// ── map mode's collapsed docks (the page's default, SPEC §6.2) ──────────
+	const units = $derived(selectors.decisionUnits());
+	const movementLive = $derived(
+		ops.events.some((e) => e.source !== 'offline-fixture' && e.eventKind === 'protected_movement' && e.state === 'active'),
+	);
+	const pursuitLive = $derived(openPursuits(ops).length > 0);
+
+	/** The vitals CARD stands down while the Info tab shows the full vitals: one variant at a time (§12.1.2). */
+	const leftTab = $derived(workspace.leftTab);
+	const leftOpen = $derived(workspace.docks.left);
+	/* the rail's Info tab is this route's ONLY left tab: the frame resolves an
+	   empty tab id to it (so ` [` opens Info whatever way), and the card must
+	   stand down for it the same — audit C S1's probe counted two city-vitals */
+	const leftTabId = $derived(leftTab || 'info');
+	const cardMounted = $derived(!(leftOpen && leftTabId === 'info'));
 
 	onMount(() => {
-		godsEye.followSelection = false; // City Command: a free camera; selections fly on request
-		const wait = setTimeout(() => (sessionWaitOver = true), 2500);
+		godsEye.followSelection = false; // map mode: a free camera; selections fly on request
+		registerProviders();
 		ops.start();
-		tickClock();
-		clockTimer = setInterval(tickClock, 1000);
-		measurePanels();
-		if (typeof ResizeObserver !== 'undefined') {
-			observer = new ResizeObserver(() => measurePanels());
-			for (const el of [stageEl, vitalsEl, railEl]) if (el) observer.observe(el);
-		}
+		fusionFeed.start();
+		const wait = setTimeout(() => (sessionWaitOver = true), 2500);
+		// the docks collapse on entry (map mode), wherever the operator came from;
+		// the bottom dock keeps its compact timeline — the Live/Replay control and
+		// the tape live there (replay is allowed in map mode, SPEC §7.3)
+		workspace.docks = { left: false, right: false, bottom: 'compact' };
+		openUnitFromHash();
 		return () => clearTimeout(wait);
 	});
 
-	// The stage's glass panels appear once it mounts: measure them then.
-	$effect(() => {
-		if (!stageReady || !observer) return;
-		queueMicrotask(() => {
-			measurePanels();
-			for (const el of [stageEl, vitalsEl, railEl]) if (el) observer?.observe(el);
-		});
-	});
-
-	// <html lang> and the shell's language follow City Command's switch (the
-	// shell bar is covered by this overlay, its state still owns <html lang>).
-	$effect(() => {
-		commandBar.lang = ops.lang;
-		commandBar.onLangChange = (l: string) => (ops.lang = l);
-	});
-
 	onDestroy(() => {
-		if (clockTimer) clearInterval(clockTimer);
-		observer?.disconnect();
+		godsEye.followSelection = false;
+		godsEye.subjectLockId = null;
 		if (replay.mode === 'replay') replay.exit();
 		selection.clear();
 		ops.stop();
+		fusionFeed.stop();
 	});
 
-	function exitToWall() {
-		void goto('/ops');
+	// a selection opens the inspector (the right dock): the operator picked an
+	// object; Esc clears it and the dock stays as they left it
+	let lastSelection = $state<string | null | undefined>(undefined);
+	$effect(() => {
+		const sel = selection.current;
+		const picked = lastSelection !== undefined && sel !== lastSelection && !!sel;
+		lastSelection = sel;
+		if (picked) {
+			workspace.rightTab = 'inspector';
+			workspace.setDock('right', true);
+		}
+	});
+
+	/** Deep links: #inbox=<kind:id> / #movement=<kind:id> (the homes' hrefs) open their tab behind the map. */
+	function openUnitFromHash() {
+		if (typeof location === 'undefined') return;
+		const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+		for (const key of ['inbox', 'movement'] as const) {
+			const parsed = parseUnitKey(params.get(key));
+			if (!parsed) continue;
+			const unit = units.find((u) => u.kind === parsed.kind && u.id === parsed.id);
+			if (!unit) continue;
+			workspace.openDecisionHome(unit, '/gods-eye');
+			return;
+		}
+		workspace.fromHash(location.hash);
 	}
 
-	const lang = $derived(ops.lang);
-	const dossierOpen = $derived(!!selection.current);
-	/**
-	 * What the mode pill may claim: LIVE only while the fused registry and
-	 * the city feed both answer; NO DATA while either is down / refused /
-	 * not deployed (the note says which); CONNECTING before the first answer.
-	 */
-	const dataState = $derived.by(() => {
-		const states = [cityRegistry.status, fusionFeed.status];
-		if (states.some((s) => s === 'down' || s === 'not-deployed')) return 'no-data' as const;
-		if (states.every((s) => s === 'ok')) return 'live' as const;
-		return 'connecting' as const;
+	// ── the command bar (plan R10/X12) ──────────────────────────────────────
+	let now = $state(Date.now());
+	$effect(() => {
+		const id = setInterval(() => (now = Date.now()), 1000);
+		return () => clearInterval(id);
 	});
-	const dataNote = $derived(
-		[cityRegistry.note, fusionFeed.note].filter((n): n is string => !!n).join(' · ') || t(lang, 'cc_live_hint'),
-	);
-	const clearInsets = $derived({
-		left: panels.left,
-		right: dossierOpen ? panels.dossierW + panels.gap * 2 : panels.gap,
-		top: HUD_ROW_PX,
-		bottom: panels.bottom,
+
+	const feeds = $derived.by(() => {
+		void cityRegistry.version;
+		const summary = corridor.row;
+		const cams = cityRegistry.byKind('camera');
+		const ents = cityRegistry.entities();
+		const emulated = ents.length ? ents.filter((e) => e.source === 'emulated').length / ents.length : 0;
+		const camFeed = cityRegistry.feed('camera');
+		return feedRows(
+			{
+				now,
+				registry: { status: cityRegistry.status, note: cityRegistry.note, size: cityRegistry.size, updatedAt: cityRegistry.updatedAt, emulatedShare: emulated },
+				cityFeed: { status: fusionFeed.status, note: fusionFeed.note, rows: fusionFeed.rows.length, updatedAt: fusionFeed.updatedAt },
+				traffic: {
+					label: ops.trafficFeed?.label ?? (summary?.provenance === 'emulated' ? 'simulated' : (summary?.provenance ?? null)),
+					note: ops.trafficFeedNote,
+					segments: ops.trafficFeed?.segments ?? summary?.totalSegments ?? null,
+					dataAgeSec: ops.trafficFeed?.dataAgeSec ?? null,
+				},
+				cameras: {
+					feed: camFeed ? { status: camFeed.status, count: camFeed.count, ageSec: camFeed.ageSec } : null,
+					source: cams.length && cams.every((c) => c.source === 'emulated') ? 'emulated' : cams.length ? 'live' : null,
+				},
+				board: { status: ops.boardStatus, updated: ops.boardUpdated, open: ops.events.filter((e) => e.source !== 'offline-fixture').length },
+				model: { brain: ops.brain, tier: ops.brain?.degradationTier ?? null },
+				emulator: { online: ops.emulator.online, lastChecked: ops.emulator.lastChecked, tapes: ops.emulatorLibrary.length },
+			},
+			lang,
+		);
 	});
+
+	$effect(() => {
+		commandBar.lang = ops.lang;
+		commandBar.onLangChange = (l) => (ops.lang = l);
+		commandBar.onShare = null; // Share lives in the pane header
+		commandBar.onSearch = (q) => workspace.openOmnibar(q);
+		commandBar.onInbox = () => {
+			workspace.rightTab = 'inbox';
+			workspace.setDock('right', true);
+		};
+		commandBar.officer = {
+			value: ops.dutyOfficer,
+			fromSession: ops.dutyOfficerFromSession,
+			set: (v: string) => ops.setDutyOfficer(v),
+		};
+	});
+
+	$effect(() => {
+		const b = ops.brain;
+		const latch = b?.decider.latch ?? null;
+		commandBar.dataStatus = {
+			decider: b ? (b.reachable ? b.decider.state : 'unreachable') : 'unknown',
+			tier: b?.degradationTier ?? '',
+			p95: b?.decider.p95Ms != null ? b.decider.p95Ms / 1000 : null,
+			novelty: latch === 'armed' || latch === 'tripped',
+			feeds: dataFeeds(feeds, lang),
+			worst: worstStatus(feeds),
+		};
+	});
+
+	$effect(() => {
+		const f = ops.trafficFeed;
+		commandBar.exercise =
+			f && (f.label === 'simulated' || f.label === 'mixed') ? { label: f.label, text: L('wall_exercise_simulated', f.segments) } : null;
+	});
+
+	$effect(() => {
+		const city = ops.cityBand;
+		const band = city ? (city.stale ? null : city.band) : ops.bandSourceKind === 'city-band' ? ops.band : null;
+		commandBar.band = band;
+		commandBar.bandSource = band ? ops.bandSource : null;
+	});
+
+	$effect(() => {
+		const at = ops.cityBand?.evaluatedAt ?? (ops.cityBandUpdated || null);
+		commandBar.bandAgeSec = at && commandBar.band ? Math.max(0, (now - at) / 1000) : null;
+	});
+
+	$effect(() => {
+		const n = units.length;
+		commandBar.inboxCount = n;
+		commandBar.inboxIntent = n > 0 ? 'warning' : 'none';
+	});
+
+	$effect(() => {
+		// the strip (and its interrupts) stay live through a replay (SPEC §7.3)
+		commandBar.live = liveStripFeed({ route: '/gods-eye' });
+	});
+
+	async function share() {
+		const url = typeof location !== 'undefined' ? `${location.origin}${location.pathname}${location.hash}` : '';
+		try {
+			await navigator.clipboard.writeText(url);
+		} catch {
+			// clipboard refused: nothing else changes
+		}
+	}
 </script>
 
 <svelte:head>
@@ -176,408 +245,165 @@
 	<meta name="robots" content="noindex" />
 </svelte:head>
 
-<main class="city-command" data-template="city-command" class:dossier-open={dossierOpen} class:replaying={replay.mode === 'replay'}>
-	<div class="sweep" aria-hidden="true"></div>
-	<header class="cc-bar">
-		<div class="brand">
-			<span class="brand-mark" aria-hidden="true">◎</span>
-			<strong>VEER</strong>
-			<span class="brand-sep">·</span>
-			<span class="brand-title">{t(lang, 'cc_title')}</span>
-			<span class="brand-city">{t(lang, 'cc_city')}</span>
+{#if ops.signInRequired}
+	<!-- Gate on, nobody signed in: one sign-in panel, no canvas, no pollers. -->
+	<div class="signin-wall" data-testid="cc-signin-required">
+		<div class="signin-card">
+			<h2>{t(lang, 'cc_signin_title')}</h2>
+			<p>{t(lang, 'cc_signin_body')}</p>
+			<OperatorSignIn lang={ops.lang} inline />
+			<p class="gate-note">{t(lang, 'cc_signin_hash_note')}</p>
 		</div>
-		<nav class="cc-nav" aria-label="operator views">
-			<a href="/gods-eye" aria-current="page" class="on">◎ {t(lang, 'nav_city_command')}</a>
-			<a href="/">◈ {t(lang, 'nav_dashboard')}</a>
-			<a href="/ops">⬢ {t(lang, 'nav_ops')}</a>
-			<a href="/comms">✎ {t(lang, 'nav_comms')}</a>
-		</nav>
-		<span
-			class="mode-state mono"
-			class:replay={replay.mode === 'replay'}
-			class:no-data={replay.mode !== 'replay' && (signInNeeded || dataState === 'no-data')}
-			data-testid="cc-mode"
-			data-state={replay.mode === 'replay' ? 'replay' : signInNeeded ? 'signin' : dataState}
-			title={replay.mode === 'replay' ? t(lang, 'cc_live_hint') : dataNote}
-		>
-			{#if replay.mode === 'replay'}
-				◐ {t(lang, 'cc_replay')} · {t(lang, 'cc_emulated')}
-			{:else if signInNeeded}
-				<i class="off-dot" aria-hidden="true"></i> {t(lang, 'cc_signin_required')}
-			{:else if dataState === 'no-data'}
-				<i class="off-dot" aria-hidden="true"></i> {t(lang, 'cc_no_data')}
-			{:else if dataState === 'connecting'}
-				<i class="off-dot" aria-hidden="true"></i> {t(lang, 'cc_connecting')}
-			{:else}
-				<i class="live-dot" aria-hidden="true"></i> {t(lang, 'cc_live')}
-			{/if}
-		</span>
-		<span class="cc-officer" data-testid="cc-officer"><OperatorSignIn {lang} /></span>
-		<div class="lang" role="group" aria-label="language">
-			{#each SUPPORTED as l (l.code)}
-				<button type="button" class:on={lang === l.code} onclick={() => (ops.lang = l.code)}>{l.label}</button>
-			{/each}
-		</div>
-		<span class="clock mono" title="India Standard Time">{clock} <small>IST</small></span>
-	</header>
-
-	{#if signInNeeded}
-		<!-- Gate on, nobody signed in: no canvas, no pollers — one honest panel. -->
-		<section class="gate-panel" data-testid="cc-signin-required" aria-label={t(lang, 'cc_signin_required')}>
-			<div class="gate-card">
-				<span class="gate-mark" aria-hidden="true">◎</span>
-				<h2>{t(lang, 'cc_signin_title')}</h2>
-				<p>{t(lang, 'cc_signin_body')}</p>
-				<OperatorSignIn {lang} inline />
-				<p class="gate-note mono">{t(lang, 'cc_signin_hash_note')}</p>
-			</div>
-		</section>
-	{:else if stageReady}
-		<section class="stage" bind:this={stageEl}>
-			<GodsEyeCanvas hud="full" onexit={exitToWall} {clearInsets} />
-			<aside class="glass vitals-panel" aria-label={t(lang, 'cc_vitals')} bind:this={vitalsEl}>
-				<CityVitals />
-			</aside>
-			{#if dossierOpen}
-				<aside class="glass dossier-panel" aria-label={t(lang, 'cc_dossier')}>
-					<EntityDossier />
-				</aside>
-			{/if}
-			<section class="glass rail-panel" aria-label={t(lang, 'cc_rail')} bind:this={railEl}>
-				<FusionRail />
-			</section>
-		</section>
-	{:else}
-		<section class="stage pending" aria-busy="true"></section>
-	{/if}
-</main>
+	</div>
+{:else if !sessionKnown}
+	<div class="page" data-template="city-command" data-pending="session" aria-busy="true"></div>
+{:else}
+	<div class="page" data-template="city-command" class:replaying={replay.mode === 'replay'}>
+		<WorkspaceFrame route="/gods-eye" mode="map" live={{ movement: movementLive, pursuit: pursuitLive }}>
+			{#snippet headerRight()}
+				<Button minimal small icon="share" class="share" data-share tooltip={L('shell_share')} aria-label={L('shell_share')} onclick={() => void share()} />
+			{/snippet}
+			{#snippet map()}
+				<GodsEyeCanvas
+					hud="full"
+					chrome="v2"
+					onexit={exitMapMode}
+					protected={protectedSet}
+					selectionItems={selectionItems}
+					{idleOrbit}
+				/>
+			{/snippet}
+			{#snippet overlay()}
+				{#if cardMounted}
+					<CityVitals variant="card" />
+				{/if}
+			{/snippet}
+		</WorkspaceFrame>
+	</div>
+{/if}
 
 <style>
-	.city-command {
-		/* Cinematic: escape the app layout entirely (EXIT / nav / Esc lead back). */
-		position: fixed;
-		inset: 0;
-		z-index: 40;
-		background: var(--v-canvas);
+	.page {
 		display: flex;
 		flex-direction: column;
-		--vitals-w: 300px;
-		--dossier-w: 392px;
-		--rail-h: 214px;
-		--gap: var(--v-space-3);
+		height: 100%;
+		min-height: 0;
+		min-width: 0;
+		overflow: hidden;
+		background: var(--v-canvas);
+		color: var(--v-ink-1);
 	}
 
-	.sweep {
-		height: 2px;
-		flex-shrink: 0;
-		background: linear-gradient(90deg, transparent, var(--v-data) 30%, var(--v-act-2) 50%, var(--v-data) 70%, transparent);
-		background-size: 220% 100%;
-		animation: cc-sweep var(--v-dur-sweep, 3.5s) linear infinite;
+	.page :global(.ws) {
+		flex: 1 1 auto;
+		min-height: 0;
 	}
 
-	@keyframes cc-sweep {
-		from {
-			background-position: 180% 0;
-		}
-		to {
-			background-position: -80% 0;
-		}
+	/* map mode: the bottom dock never grows past its normal sizes — 'full' keeps
+	   its 278 px (the audit tab opens inside it, scrolling), so a tab an audit
+	   check opens can never swallow the full-bleed map (SPEC §6.2) */
+	.page :global(.ws.map-mode .bottom[data-size='full']) {
+		height: 278px;
+		flex: 0 0 278px;
 	}
 
-	.cc-bar {
+	/* map mode: the bottom dock COLLAPSES TO ITS 36 PX HEADER (SPEC §6.2, audit
+	   C S2): the frame's map-mode rule sizes the dock by its content, so the
+	   compact dock is pinned to the header's own 36 px — the Live/Replay control
+	   rides that row (the analysis dock overlays its controls into the header
+	   row) and a tab's body spills past the collapsed section, clipped by the
+	   page. A LIVE replay needs its bar: while one runs the dock takes its
+	   content's height again. */
+	.page :global(.ws.map-mode .bottom[data-size='compact']) {
+		height: 36px;
+		flex: 0 0 36px;
+	}
+
+	.page :global(.ws.map-mode:has([data-testid='fusion-rail'][data-mode='replay']) .bottom[data-size='compact']) {
+		height: auto;
+		flex: 0 0 auto;
+	}
+
+	/* audit E item 3 (round 2): the credits are ONE compact line here too, as
+	   the prototype's full-bleed map shows — logos, the first attribution and
+	   the "Data attribution" lightbox link — clear of the readout at the left */
+	.page :global(.ge-wrap[data-chrome='v2'] .ge-canvas .cesium-viewer-bottom) {
+		max-width: min(46%, 430px);
+	}
+
+	.page :global(.ge-wrap[data-chrome='v2'] .ge-canvas .cesium-viewer-bottom .cesium-widget-credits) {
 		display: flex;
+		flex-wrap: nowrap;
 		align-items: center;
-		gap: var(--v-space-4);
-		padding: var(--v-space-1) var(--v-space-4);
-		min-height: 40px;
-		background: linear-gradient(90deg, var(--v-surface-sink), var(--v-surface-1), var(--v-surface-sink));
-		border-bottom: 1px solid var(--v-line-1);
-		flex-shrink: 0;
+		min-width: 0;
 	}
 
-	.brand {
-		display: flex;
-		align-items: baseline;
-		gap: var(--v-space-2);
+	.page :global(.ge-wrap[data-chrome='v2'] .ge-canvas .cesium-viewer-bottom .cesium-credit-logoContainer) {
+		flex: 0 0 auto;
+	}
+
+	.page :global(.ge-wrap[data-chrome='v2'] .ge-canvas .cesium-viewer-bottom .cesium-credit-logoContainer img) {
+		height: 14px;
+	}
+
+	.page :global(.ge-wrap[data-chrome='v2'] .ge-canvas .cesium-viewer-bottom .cesium-credit-expand-link) {
+		flex: 0 0 auto;
 		white-space: nowrap;
 	}
 
-	.brand-mark {
-		color: var(--v-data);
-		font-size: var(--v-text-md);
-	}
-
-	.brand strong {
-		font-family: var(--v-font-display);
-		font-size: var(--v-text-md);
-		letter-spacing: 0.18em;
-		color: var(--v-ink-1);
-	}
-
-	.brand-sep {
-		color: var(--v-ink-3);
-	}
-
-	.brand-title {
-		font-family: var(--v-font-display);
-		font-size: var(--v-text-sm);
-		font-weight: 700;
-		letter-spacing: 0.14em;
-		text-transform: uppercase;
-		color: var(--v-data);
-	}
-
-	.brand-city {
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-		letter-spacing: 0.06em;
-	}
-
-	.cc-nav {
-		display: flex;
-		gap: var(--v-space-1);
-		margin-left: var(--v-space-3);
-	}
-
-	.cc-nav a {
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-		text-decoration: none;
-		padding: 3px var(--v-space-2);
-		border: 1px solid transparent;
-		border-radius: var(--v-radius-btn);
+	.page :global(.ge-wrap[data-chrome='v2'] .ge-canvas .cesium-viewer-bottom .cesium-credit-textContainer) {
+		flex: 0 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.cc-nav a:hover {
-		color: var(--v-ink-1);
-		border-color: var(--v-line-1);
+	/* map mode: the vitals card rides ABOVE the canvas chrome (never under it) */
+	.page :global(.overlay) {
+		z-index: 6;
+		pointer-events: none;
 	}
 
-	/* active nav: line-select edge, never orange */
-	.cc-nav a.on {
-		color: var(--v-ink-1);
-		border-color: var(--v-line-select);
-		background: var(--v-surface-2);
+	.page :global(.overlay *) {
+		pointer-events: auto;
 	}
 
-	.mode-state {
-		margin-left: auto;
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		font-size: var(--v-text-2xs);
-		letter-spacing: 0.12em;
-		color: var(--v-ink-2);
-	}
-
-	.mode-state.replay {
-		color: var(--v-tool);
-	}
-
-	/* no live claim while the registry / feed is down or the gate wants a sign-in */
-	.mode-state.no-data {
-		color: var(--v-band-amber);
-	}
-
-	.off-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: var(--v-radius-pill);
-		border: 1px solid currentColor;
-	}
-
-	.cc-officer {
-		display: inline-flex;
-		align-items: center;
-	}
-
-	/* ── operator gate: sign-in required (no canvas) ─────────────────────── */
-	.gate-panel {
+	/* ── operator gate: sign-in required (no canvas mounted) ─────────────── */
+	.signin-wall {
 		flex: 1;
 		min-height: 0;
 		display: grid;
 		place-items: center;
-		background: radial-gradient(ellipse at center, var(--v-surface-1), var(--v-canvas) 70%);
+		padding: 16px;
 	}
 
-	.gate-card {
-		width: min(420px, calc(100vw - 32px));
+	.signin-card {
+		width: min(440px, calc(100vw - 32px));
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-3);
-		padding: var(--v-space-5);
+		gap: 12px;
+		padding: 20px;
 		background: var(--v-surface-2);
 		border: 1px solid var(--v-line-2);
 		border-radius: var(--v-radius-panel);
-		box-shadow: 0 10px 32px var(--v-veil);
 	}
 
-	.gate-mark {
-		color: var(--v-data);
-		font-size: var(--v-text-xl);
-	}
-
-	.gate-card h2 {
+	.signin-card h2 {
 		margin: 0;
-		font-family: var(--v-font-display);
-		font-size: var(--v-text-lg);
+		font-size: var(--v-text-md);
+		font-weight: 600;
 		color: var(--v-ink-1);
 	}
 
-	.gate-card p {
+	.signin-card p {
 		margin: 0;
-		font-size: var(--v-text-sm);
+		font-size: var(--v-text-xs);
 		color: var(--v-ink-2);
 	}
 
 	.gate-note {
 		font-size: var(--v-text-xs);
 		color: var(--v-ink-3);
-	}
-
-	.live-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: var(--v-radius-pill);
-		background: var(--v-band-green);
-		box-shadow: 0 0 8px var(--v-band-green);
-		animation: breathe var(--v-dur-breathe) var(--v-ease) infinite;
-	}
-
-	@keyframes breathe {
-		50% {
-			opacity: 0.5;
-		}
-	}
-
-	.lang {
-		display: inline-flex;
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-pill);
-		overflow: hidden;
-	}
-
-	.lang button {
-		padding: 1px var(--v-space-2);
-		background: transparent;
-		border: none;
-		color: var(--v-ink-3);
-		font: inherit;
-		font-size: var(--v-text-2xs);
-		cursor: pointer;
-	}
-
-	.lang button.on {
-		background: var(--v-surface-3);
-		color: var(--v-ink-1);
-	}
-
-	.clock {
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-2);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.clock small {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.stage {
-		position: relative;
-		flex: 1;
-		min-height: 0;
-		overflow: hidden;
-		/* the canvas HUD row sits between the vitals rail and the dossier */
-		--ge-hud-left: calc(var(--gap) * 2 + var(--vitals-w));
-		--ge-hud-right: var(--gap);
-		--ge-hud-top: var(--gap);
-	}
-
-	.city-command.dossier-open .stage {
-		--ge-hud-right: calc(var(--gap) * 2 + var(--dossier-w));
-	}
-
-	.stage :global(.ge-wrap) {
-		position: absolute;
-		inset: 0;
-		border-radius: 0;
-	}
-
-	.stage :global(.ge-hud) {
-		z-index: 6;
-	}
-
-	.glass {
-		position: absolute;
-		z-index: 20;
-		padding: var(--v-space-3);
-		background: var(--v-glass-bg);
-		-webkit-backdrop-filter: blur(var(--v-glass-blur)) saturate(1.3);
-		backdrop-filter: blur(var(--v-glass-blur)) saturate(1.3);
-		border: 1px solid var(--v-glass-border);
-		border-radius: var(--v-radius-panel);
-		box-shadow: 0 10px 32px var(--v-veil);
-	}
-
-	.vitals-panel {
-		top: var(--gap);
-		left: var(--gap);
-		bottom: calc(var(--rail-h) + var(--gap) * 2);
-		width: var(--vitals-w);
-		overflow-y: auto;
-		scrollbar-width: thin;
-	}
-
-	.dossier-panel {
-		top: var(--gap);
-		right: var(--gap);
-		bottom: calc(var(--rail-h) + var(--gap) * 2);
-		width: var(--dossier-w);
-		overflow-y: auto;
-		scrollbar-width: thin;
-		animation: dossier-in var(--v-dur-in) var(--v-ease);
-	}
-
-	@keyframes dossier-in {
-		from {
-			transform: translateX(16px);
-			opacity: 0;
-		}
-	}
-
-	.rail-panel {
-		left: var(--gap);
-		right: var(--gap);
-		bottom: var(--gap);
-		height: var(--rail-h);
-		padding: var(--v-space-2) var(--v-space-3);
-		display: flex;
-		flex-direction: column;
-		min-height: 0;
-	}
-
-	.mono {
-		font-family: var(--v-font-mono);
-	}
-
-	@media (max-width: 1400px) {
-		.city-command {
-			--vitals-w: 260px;
-			--dossier-w: 340px;
-		}
-
-		.cc-nav {
-			display: none;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.sweep,
-		.live-dot,
-		.dossier-panel {
-			animation: none;
-		}
 	}
 </style>

@@ -30,18 +30,25 @@
  * HONEST MODE (the chip and the snapshot's imageryMode): imageryModeOf() /
  * imageryChip() name what the canvas actually shows. Once the photoreal
  * layer's tiles cover the view the city IS Google's 3D mesh (ion asset
- * 2275207) — the chip says PHOTOREAL 3D · GOOGLE and the mode is
+ * 2275207) — the chip says 'Photoreal 3D · Google' and the mode is
  * 'ion-photoreal' even if the imagery under the mesh stumbled or fell back
  * to the keyless raster (the canvas's note still says so): the schematic
  * fallback describes a flat dark globe, which is not what is on screen.
  * Without the tiles the old ladder holds: offline schematic → ion aerial →
  * keyless OSM (+ the fallback note). The chip text is registered EN/HI/GU
- * below (registerPack, the additive i18n contract); operational names (OSM,
- * ION, GOOGLE, 3D) stay Latin in every language, like the deck's other
- * codes.
+ * by $lib/i18n/packs.map.ts (registerPack, the additive i18n contract);
+ * operational names (OSM, Google, ion, 3D) stay Latin in every language,
+ * like the deck's other codes.
+ *
+ * BASE-MAP STYLES (chrome v2, the LayerTree's Photoreal · Streets · Dark
+ * control): Photoreal is the photoreal-3d layer on the ion key; Streets and
+ * Dark are the OSM raster, plain (STREETS_GRADE) or re-graded
+ * (DARK_REGRADE) — the keyless base layer itself, or an OSM layer over the
+ * ion aerial on the keyed canvas (createOsmImageryLayer).
  */
 
-import { registerPack } from '$lib/i18n/strings';
+// the chip's words: registered by the map pack (EN / HI / GU, sentence case)
+import '$lib/i18n/packs.map';
 
 export interface BasemapProvider {
 	id: string;
@@ -116,9 +123,13 @@ export const DARK_REGRADE = { brightness: 0.42, contrast: 1.22, saturation: 0.62
 /** Gentle dim for ion aerial imagery (already dark; keeps entities on top). */
 export const AERIAL_GRADE = { brightness: 0.85, contrast: 1.05, saturation: 0.85, gamma: 1.0 } as const;
 
-type Grade = { brightness: number; contrast: number; saturation: number; gamma: number };
+export type Grade = { brightness: number; contrast: number; saturation: number; gamma: number };
 
-function applyGrade(layer: unknown, grade: Grade): void {
+/** The Streets style: the OSM raster as published (no re-grade). */
+export const STREETS_GRADE = { brightness: 1, contrast: 1, saturation: 1, gamma: 1 } as const;
+
+/** Apply a grade to an imagery layer (null-safe). */
+export function applyGrade(layer: unknown, grade: Grade): void {
 	const l = layer as { brightness?: number; contrast?: number; saturation?: number; gamma?: number } | null;
 	if (!l) return;
 	l.brightness = grade.brightness;
@@ -161,6 +172,18 @@ export function createKeylessBasemap(cesium: CesiumGlobal): Basemap {
 	};
 }
 
+/** An OSM raster imagery layer (Streets / Dark over the ion aerial), graded. */
+export function createOsmImageryLayer(cesium: CesiumGlobal, grade: Grade): unknown {
+	const provider = new cesium.UrlTemplateImageryProvider({
+		url: OSM_TILE_URL,
+		credit: osmScreenCredit(cesium) ?? OSM_CREDIT,
+		maximumLevel: 19,
+	});
+	const layer = new cesium.ImageryLayer(provider);
+	applyGrade(layer, grade);
+	return layer;
+}
+
 /**
  * Imagery + terrain for the ion upgrade. The token is handed to the page by
  * the same-origin mode endpoint (env-only; never in source) — Cesium ion
@@ -171,12 +194,12 @@ export function createKeylessBasemap(cesium: CesiumGlobal): Basemap {
  * failures (a bad or expired token answers 401) arrive on
  * `imageryLayer.errorEvent` / `terrain.errorEvent`.
  */
-export function createIonBasemap(cesium: CesiumGlobal, token: string): Basemap {
+export function createIonBasemap(cesium: CesiumGlobal, token: string, grade: Grade = AERIAL_GRADE): Basemap {
 	cesium.Ion.defaultAccessToken = token;
 	const imageryLayer = cesium.ImageryLayer.fromProviderAsync(
 		cesium.IonImageryProvider.fromAssetId(ION_IMAGERY_ASSET_ID),
 	);
-	applyGrade(imageryLayer, AERIAL_GRADE);
+	applyGrade(imageryLayer, grade);
 	return {
 		id: 'ion-photoreal',
 		baseLayer: imageryLayer,
@@ -223,28 +246,4 @@ export function imageryChip(state: {
 	return state.fallbackNote ? 'ge_imagery_osm_fallback' : 'ge_imagery_osm';
 }
 
-// The chip's words (en + hi + gu, mandatory for every user-facing string).
-registerPack('en', {
-	ge_imagery_photoreal: 'PHOTOREAL 3D · GOOGLE',
-	ge_imagery_photoreal_loading: 'PHOTOREAL 3D · LOADING',
-	ge_imagery_ion: 'ION AERIAL · 3D TERRAIN',
-	ge_imagery_osm: 'OSM · DARK',
-	ge_imagery_osm_fallback: 'OSM · DARK · FALLBACK',
-	ge_imagery_offline: 'OFFLINE SCHEMATIC MODE',
-});
-registerPack('hi', {
-	ge_imagery_photoreal: 'यथार्थ 3D शहर · GOOGLE',
-	ge_imagery_photoreal_loading: 'यथार्थ 3D · लोड हो रहा है',
-	ge_imagery_ion: 'ION हवाई चित्र · 3D भू-भाग',
-	ge_imagery_osm: 'OSM · डार्क',
-	ge_imagery_osm_fallback: 'OSM · डार्क · वैकल्पिक',
-	ge_imagery_offline: 'ऑफ़लाइन योजनाबद्ध मोड',
-});
-registerPack('gu', {
-	ge_imagery_photoreal: 'વાસ્તવિક 3D શહેર · GOOGLE',
-	ge_imagery_photoreal_loading: 'વાસ્તવિક 3D · લોડ થાય છે',
-	ge_imagery_ion: 'ION હવાઈ ચિત્ર · 3D ભૂપ્રદેશ',
-	ge_imagery_osm: 'OSM · ડાર્ક',
-	ge_imagery_osm_fallback: 'OSM · ડાર્ક · વૈકલ્પિક',
-	ge_imagery_offline: 'ઑફલાઇન યોજનાકીય મોડ',
-});
+// The chip's words (en + hi + gu) live in $lib/i18n/packs.map.ts (imported above).

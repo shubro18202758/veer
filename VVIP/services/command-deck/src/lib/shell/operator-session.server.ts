@@ -32,7 +32,7 @@
  *
  * The decision is taken on the CANONICAL path (canonicalGatePath): the
  * upstreams (uvicorn) percent-decode the path once before routing, so the
- * gate must judge that decoded string — never the raw pathname, where
+ * gate must check that decoded string — never the raw pathname, where
  * `/api/v1/%76ehicles` would not look like `/api/v1/vehicles` yet route to
  * it upstream.
  *
@@ -271,7 +271,9 @@ const GATED_PREFIXES = ['/api/v1', '/api/traffic', '/api/convoy', '/api/emulator
  */
 const PUBLIC_READS: readonly RegExp[] = [
 	/^\/api\/v1\/spatial\/segments$/, // road geometry the public maps draw
-	/^\/api\/v1\/health$/, // liveness probes only — no data rows
+	// liveness probes only — no data rows. The oracle has no /api/v1/health
+	// (its probe is /health, outside the proxy): never allow-list a route
+	// that does not exist (F-CONN-11) — it would open the day one ships.
 	/^\/api\/convoy\/health$/,
 	/^\/api\/emulator\/health$/,
 ];
@@ -283,7 +285,7 @@ export const PUBLIC_DISPATCH_RE = /^\/api\/v1\/events\/[0-9a-f]{8}-[0-9a-f]{4}-[
  * The path the upstream will actually route on, or null when an anonymous
  * caller has no business sending it. uvicorn percent-decodes the request
  * path exactly once before Starlette matches a route, so the gate decodes
- * once too and judges THAT string. Refused (null): malformed escapes, a
+ * once too and checks THAT string. Refused (null): malformed escapes, a
  * '%' still present after one decode (double encoding), backslashes,
  * control characters and '.'/'..' segments (WHATWG URL parsing already
  * resolved the literal ones; decoding %2F can mint new ones). Repeated

@@ -17,7 +17,10 @@
 	import { commandBar } from '$lib/shell/command-bar.svelte';
 	import { publicFeed } from '$lib/citizen/public-feed.svelte';
 	import CitizenAdvisory from '$lib/citizen/CitizenAdvisory.svelte';
+	import PublicCredits from '$lib/v3/public/PublicCredits.svelte';
+	import { t } from '$lib/i18n/strings';
 	import '$lib/i18n/strings.citizen';
+	import '$lib/i18n/packs.assistant';
 
 	onMount(() => {
 		// The persisted language (veer_lang) once hydrated — the server render is English.
@@ -35,11 +38,13 @@
 </script>
 
 <svelte:head>
-	<title>Corridor Alerts · Citizen Advisory</title>
+	<!-- F-25: the tab title in the reader's language -->
+	<title>{t(ops.lang, 'citizenTabTitle')} · Veer</title>
 </svelte:head>
 
 <div class="citizen-page">
 	<CitizenAdvisory lang={ops.lang} />
+	<PublicCredits lang={ops.lang} />
 </div>
 
 <style>

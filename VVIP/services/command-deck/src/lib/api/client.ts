@@ -12,20 +12,9 @@
  * All conversion happens in this module — callers always use camelCase.
  */
 
-import type {
-	ConvoyMovement,
-	SegmentTraffic,
-	RoadSegment,
-	TrafficPrediction,
-	TrafficAnomaly,
-	VvipClass,
-	WsEvent,
-	ServiceHealth,
-	GpuStatus,
-} from '$lib/types';
+import type { ConvoyMovement, VvipClass } from '$lib/types';
 
 const CONVOY_API = '/api/convoy';
-const TRAFFIC_API = '/api/traffic';
 
 // ─── Error Handling ─────────────────────────────────────────────────────────
 
@@ -160,6 +149,11 @@ export interface MovementPlanDoc {
 	routing_tier?: string;
 }
 
+/** The plan document's own status word (contract C-I), as the corridor's
+ * Plan tab reads it: approved | conditional (waiver first) | hold (the
+ * decider delayed departure) | no_route. Additive (UI-S6A). */
+export type PlanStatus = NonNullable<MovementPlanDoc['status']>;
+
 export async function planMovement(
 	movementId: string,
 	params: {
@@ -211,94 +205,7 @@ export async function stopEscort(movementId: string, officer?: string | null): P
 	return post(`${CONVOY_API}/movements/${encodeURIComponent(movementId)}/stop`, who ? { officer: who.slice(0, 64) } : {});
 }
 
-export async function clearMovement(movementId: string): Promise<unknown> {
-	return post(`${CONVOY_API}/movements/${movementId}/clear`, {});
-}
-
-// ─── Traffic REST API ───────────────────────────────────────────────────────
-
-/**
- * Fetch live traffic conditions for segments within a bounding box.
- * Backend returns camelCase: [{segmentId, speedKmh, congestionIdx, lastUpdated}]
- */
-export async function getTrafficSnapshot(bbox: {
-	minLon: number;
-	minLat: number;
-	maxLon: number;
-	maxLat: number;
-}): Promise<SegmentTraffic[]> {
-	const params = new URLSearchParams({
-		min_lon: bbox.minLon.toString(),
-		min_lat: bbox.minLat.toString(),
-		max_lon: bbox.maxLon.toString(),
-		max_lat: bbox.maxLat.toString(),
-	});
-	return request(`${TRAFFIC_API}/snapshot?${params}`);
-}
-
-/**
- * Fetch road segment geometries within a bounding box.
- * Backend returns camelCase: [{segmentId, osmWayId, roadName, ...geometry}]
- */
-export async function getRoadSegments(bbox: {
-	minLon: number;
-	minLat: number;
-	maxLon: number;
-	maxLat: number;
-}): Promise<RoadSegment[]> {
-	const params = new URLSearchParams({
-		min_lon: bbox.minLon.toString(),
-		min_lat: bbox.minLat.toString(),
-		max_lon: bbox.maxLon.toString(),
-		max_lat: bbox.maxLat.toString(),
-	});
-	return request(`${TRAFFIC_API}/segments?${params}`);
-}
-
-/**
- * Request DSTGAT flow predictions for given segments.
- * Backend returns camelCase: [{segmentId, horizonMin, predictedSpeedKmh, ...}]
- */
-export async function getTrafficPredictions(
-	segmentIds: number[],
-	horizonsMin: number[] = [5, 10, 15, 30],
-): Promise<TrafficPrediction[]> {
-	return post(`${TRAFFIC_API}/predict`, {
-		segment_ids: segmentIds,
-		horizons_min: horizonsMin,
-	});
-}
-
-/**
- * Fetch recent anomalies detected by the Tier-1/Tier-2 anomaly pipeline.
- */
-export async function getRecentAnomalies(
-	hours = 1,
-	limit = 100,
-): Promise<TrafficAnomaly[]> {
-	const params = new URLSearchParams({
-		hours: hours.toString(),
-		limit: limit.toString(),
-	});
-	const resp = await request<{
-		anomalies: Array<{
-			anomaly_id: number;
-			segment_id: number;
-			timestamp_utc: string;
-			anomaly_type: string;
-			severity: 'low' | 'medium' | 'high';
-			details: Record<string, unknown>;
-		}>;
-	}>(`${TRAFFIC_API.replace('/api/traffic', '/api/v1')}/anomalies/recent?${params}`);
-	return resp.anomalies.map((a) => ({
-		anomalyId: a.anomaly_id,
-		segmentId: a.segment_id,
-		timestampUtc: a.timestamp_utc,
-		anomalyType: a.anomaly_type,
-		severity: a.severity,
-		details: a.details,
-	}));
-}
+// ─── Corridor summary ───────────────────────────────────────────────────────
 
 /**
  * Fetch corridor-wide traffic summary. The additive honesty fields say
@@ -349,36 +256,6 @@ export async function getCorridorSummary(): Promise<{
 	};
 }
 
-/**
- * Fetch 24h observation history for a single segment.
- */
-export async function getSegmentHistory(
-	segmentId: number,
-): Promise<
-	Array<{
-		timestampUtc: string;
-		speedKmh: number;
-		congestionIdx: number;
-		source: string;
-	}>
-> {
-	const resp = await request<{
-		segment_id: number;
-		observations: Array<{
-			timestamp_utc: string;
-			speed_kmh: number;
-			congestion_idx: number;
-			source: string;
-		}>;
-	}>(`/api/v1/traffic/history/${segmentId}`);
-	return resp.observations.map((o) => ({
-		timestampUtc: o.timestamp_utc,
-		speedKmh: o.speed_kmh,
-		congestionIdx: o.congestion_idx,
-		source: o.source,
-	}));
-}
-
 // ─── LLM Chat (Streaming) ──────────────────────────────────────────────────
 
 /** The brain tier that produced a reasoning step (contract C-D). */
@@ -419,12 +296,14 @@ export interface ChatCitation {
 /** done.data (C-D) — every field degrades to empty on older brains. */
 export interface ChatDone {
 	sessionId: string | null;
-	/** e.g. "decider:pplx-decider-v1-27b", "gemma:aditi-ps18-v7h-12b", "heuristic". */
+	/** e.g. "decider:pplx-decider-v1-27b", "gemma:<served model>", "heuristic". */
 	tiersUsed: string[];
 	operatorAlerts: string[];
 	degraded: boolean;
 	/** C-D2 — [] from brains that predate citations. */
 	citations: ChatCitation[];
+	/** How many claims the grounding check removed (done.grounding.removed), null when none were reported. */
+	groundingRemoved?: number | null;
 }
 
 /**
@@ -484,6 +363,12 @@ function asStrings(v: unknown): string[] {
 
 function asNumber(v: unknown): number | null {
 	return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** done.grounding.removed (a list of removed claims) as a count; null when absent or empty. */
+function groundingRemovedOf(v: unknown): number | null {
+	const removed = v && typeof v === 'object' ? (v as { removed?: unknown }).removed : null;
+	return Array.isArray(removed) && removed.length ? removed.length : null;
 }
 
 /** The citations of a done line ([] when absent or malformed). */
@@ -587,6 +472,7 @@ export function dispatchChatEvent(event: unknown, callbacks: ChatStreamCallbacks
 				operatorAlerts: asStrings(d.operator_alerts ?? d.operatorAlerts),
 				degraded: d.degraded === true,
 				citations: asCitations(d.citations),
+				groundingRemoved: groundingRemovedOf(d.grounding),
 			});
 			return 'end';
 		}
@@ -714,123 +600,4 @@ export async function ackDirective(
 	} catch (err) {
 		return { ok: false, status: 0, detail: err instanceof Error ? err.message : String(err) };
 	}
-}
-
-/**
- * Non-streaming chat fallback.
- */
-export async function sendChat(
-	message: string,
-	movementId: string | null,
-	vvipClass: VvipClass | null,
-): Promise<{ sessionId: string; response: string }> {
-	const resp = await post<{ session_id: string; response: string }>(`${CONVOY_API}/chat`, {
-		message,
-		movement_id: movementId,
-		vvip_class: vvipClass,
-	});
-	return { sessionId: resp.session_id, response: resp.response };
-}
-
-// ─── WebSocket Connection ───────────────────────────────────────────────────
-
-export type WsEventHandler = (event: WsEvent) => void;
-
-export interface ConvoySocket {
-	close: () => void;
-	sendPositionUpdate: (pos: {
-		lon: number;
-		lat: number;
-		speedKmh: number;
-		headingDeg: number;
-	}) => void;
-}
-
-/**
- * Managed WebSocket connection with auto-reconnect and position update sender.
- */
-export function createConvoySocket(
-	movementId: string,
-	onEvent: WsEventHandler,
-): ConvoySocket {
-	let ws: WebSocket | null = null;
-	let closed = false;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-	let reconnectDelay = 1000;
-
-	function connect() {
-		if (closed) return;
-
-		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const host = window.location.host;
-		ws = new WebSocket(`${protocol}//${host}/api/convoy/ws/convoy/${movementId}`);
-
-		ws.onopen = () => {
-			reconnectDelay = 1000;
-		};
-
-		ws.onmessage = (event) => {
-			try {
-				const data = JSON.parse(event.data) as WsEvent;
-				onEvent(data);
-			} catch {
-				// Ignore malformed messages
-			}
-		};
-
-		ws.onclose = () => {
-			if (!closed) {
-				reconnectTimer = setTimeout(() => {
-					reconnectDelay = Math.min(reconnectDelay * 2, 30000);
-					connect();
-				}, reconnectDelay);
-			}
-		};
-
-		ws.onerror = () => {
-			ws?.close();
-		};
-	}
-
-	connect();
-
-	return {
-		close() {
-			closed = true;
-			if (reconnectTimer) clearTimeout(reconnectTimer);
-			ws?.close();
-		},
-		sendPositionUpdate(pos) {
-			if (ws?.readyState === WebSocket.OPEN) {
-				ws.send(
-					JSON.stringify({
-						type: 'position.update',
-						payload: {
-							lon: pos.lon,
-							lat: pos.lat,
-							speedKmh: pos.speedKmh,
-							headingDeg: pos.headingDeg,
-						},
-					}),
-				);
-			}
-		},
-	};
-}
-
-// ─── Health Checks ──────────────────────────────────────────────────────────
-
-export async function checkConvoyBrainHealth(): Promise<{
-	status: string;
-	ollama: unknown;
-}> {
-	return request(`${CONVOY_API}/health`);
-}
-
-export async function checkServiceHealth(): Promise<ServiceHealth[]> {
-	return request(`${CONVOY_API}/health/services`);
-}
-
-export async function getGpuStatus(): Promise<GpuStatus> {
-	return request(`${CONVOY_API}/health/gpu`);
 }

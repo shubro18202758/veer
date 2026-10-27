@@ -770,7 +770,7 @@ def heuristic_final_answer(
         "protocol_assessment": {
             "asl_status": "not_assessed",
             "protocol_violations": [],
-            "threat_level": "nominal",
+            "threat_level": "not_assessed",
             "plan_b_ready": False,
         },
     }
@@ -878,9 +878,16 @@ def _summarize_forecast(args: dict, result: Any) -> str:
     horizon = max(r["horizon_min"] for r in rows)
     at_h = [r for r in rows if r["horizon_min"] == horizon]
     mean = sum(r["congestion_idx"] for r in at_h) / len(at_h)
+    # HON-17: which forecaster rung answered, and whether its inputs were the
+    # simulated feed — the forecast card says so like the live card does.
+    provenance = result.get("provenance") if isinstance(result, dict) else None
+    provenance = provenance if isinstance(provenance, dict) else {}
+    rung = provenance.get("rung")
     return (
         f"predict_traffic_flow: {len({r['segment_id'] for r in rows})} segment(s) "
         f"forecast; mean congestion {mean:.2f} at T+{horizon} min"
+        + (f" (rung {rung})" if isinstance(rung, str) and rung else "")
+        + (" (SIMULATED FEED)" if provenance.get("simulated_feed") is True else "")
     )
 
 
@@ -1134,8 +1141,11 @@ def _summarize_units(args: dict, result: Any) -> str:
         return missing
     rows = [u for u in (result.get("units") or []) if isinstance(u, dict)] \
         if isinstance(result, dict) else []
+    agency = args.get("agency") if isinstance(args.get("agency"), str) else None
     if not rows:
-        return "list_units: no units fielded right now (EMULATED feed)"
+        # the roster asked for one agency says which (not "no units" at all)
+        return (f"list_units: no {agency + ' ' if agency else ''}units fielded right now "
+                "(EMULATED feed)")
     by_status: dict[str, int] = {}
     for u in rows:
         by_status[str(u.get("status"))] = by_status.get(str(u.get("status")), 0) + 1

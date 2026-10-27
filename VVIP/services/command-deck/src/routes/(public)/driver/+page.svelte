@@ -18,8 +18,11 @@
 	import { commandBar } from '$lib/shell/command-bar.svelte';
 	import { publicFeed } from '$lib/citizen/public-feed.svelte';
 	import GreenCorridorDriver from '$lib/citizen/GreenCorridorDriver.svelte';
+	import PublicCredits from '$lib/v3/public/PublicCredits.svelte';
 	import { readLangCookie } from '$lib/i18n/lang-cookie';
+	import { t } from '$lib/i18n/strings';
 	import '$lib/i18n/strings.citizen';
+	import '$lib/i18n/packs.assistant';
 
 	let lang = $state('gu');
 
@@ -38,11 +41,13 @@
 </script>
 
 <svelte:head>
-	<title>The Window · Green Corridor</title>
+	<!-- F-25: the tab title in the reader's language -->
+	<title>{t(lang, 'driverTitle')} · Veer</title>
 </svelte:head>
 
 <div class="driver-page">
 	<GreenCorridorDriver {lang} />
+	<PublicCredits {lang} />
 </div>
 
 <style>

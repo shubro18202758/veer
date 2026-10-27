@@ -1,48 +1,43 @@
 <script lang="ts">
 	/**
-	 * EmulatorPanel — the emulator control plane (contract C-G) through the
-	 * deck's same-origin /api/emulator proxy. Every cause it injects is
-	 * EMULATED and labelled as such; the decision stack plans, classifies and
-	 * shadow-evaluates on its own.
+	 * Scenario emulator (contract C-G; ownership UI-S5B), inside the /ops Lab
+	 * and system section, through the deck's same-origin /api/emulator proxy.
+	 * Every cause it injects is emulated and labelled so; the decision stack
+	 * plans, classifies and shadow-evaluates on its own. Behaviour unchanged:
 	 *
-	 *   · the library is the EMULATOR's own (GET /use-cases — all ten tapes,
-	 *     incl. the rath_yatra_monsoon_ambulance and watchlist_anpr_sweep
-	 *     flagships), not the deck's fixture list;
-	 *   · LAUNCH is async: C-G answers 202 {run_id} at once and the run's
-	 *     progress (frame/total, delivered/failed) is followed every 2 s; an
-	 *     older build that holds the POST until the tape ends is never awaited
-	 *     — its run is found in the ledger and followed the same way;
-	 *   · flagship tapes are capped at ×10, and the panel states the engine's
-	 *     effective sampling at the chosen clock (5 s wall tick × clock, e.g.
-	 *     ×60 → 1 decision / 5 sim-min);
-	 *   · STOP (C-G; completes the run's corridor event via C-F) and REPLAY
-	 *     on each run row; LIVING CITY status + start/stop when the build
-	 *     serves it (its /health says so — the route is never probed blind);
-	 *   · a run whose corridor event is still 'planning' mid-run says so
-	 *     ('corridor event not live yet — activation retried every 5 s'); a
-	 *     failed or interrupted run shows the emulator's own reason; the
-	 *     living city lists each slot's event status and its counters;
-	 *   · a stolen-vehicle sweep's scenario premise (C-N,
-	 *     spec.scenario_precondition) shows on its run, labelled EMULATED:
-	 *     the FIR-named plate's stolen-FIR earmark created or already active
-	 *     (its reads file evidence-only sightings), or failed — that plate's
-	 *     camera reads were skipped (the plate masked without an officer).
+	 *   · the library is the emulator's own (GET /use-cases, all ten tapes,
+	 *     `emu-library-count`), not the deck's fixture list;
+	 *   · Launch is async: C-G answers 202 {run_id} and the run's progress is
+	 *     followed (`emu-launch-state` data-phase / data-run-id / data-contract,
+	 *     a determinate progressbar); an older build that holds the POST is
+	 *     never awaited: its run is found in the ledger and followed the same way;
+	 *   · flagship tapes are capped at ×10 (`emu-clock` marks the faster clock
+	 *     disabled) and the engine's effective sampling is stated (`emu-sampling`);
+	 *   · Stop and Replay on each run row (`emu-run` data-run-id / data-status);
+	 *     a run whose corridor event is still planning says so
+	 *     (`emu-event-pending`); a failed run shows the emulator's own reason;
+	 *   · the living city's status, slots and counters, with Start / Stop
+	 *     (`living-city` data-supported / data-status, `living-city-toggle`),
+	 *     only when the build's /health says it serves it;
+	 *   · a stolen-vehicle sweep's scenario premise (C-N) shows on its run,
+	 *     the FIR-named mark masked without an officer.
 	 */
-	import Panel from '$lib/primitives/Panel.svelte';
-	import Badge from '$lib/primitives/Badge.svelte';
-	import Button from '$lib/primitives/Button.svelte';
-	import { ops } from '$lib/ops/store.svelte';
-	import { EMULATOR_CLOCKS, EMULATOR_HERO_CLOCK_CAP, POLL_MS } from '$lib/ops/endpoints';
-	import { fmtAgeSince, istClock, istHm, samplingOf } from '$lib/ops/format';
+	import { Button, HTMLSelect, Id, ProgressBar, ProvenanceTag, Tag } from '$lib/ui';
+	import { fmtTime } from '$lib/ui/format/format';
 	import { t } from '$lib/i18n/strings';
+	import '$lib/i18n/packs.wall';
 	import { tOps } from '$lib/i18n/strings.ops';
+	import { ops } from '$lib/ops/store.svelte';
+	import { EMULATOR_CLOCKS, EMULATOR_HERO_CLOCK_CAP } from '$lib/ops/endpoints';
+	import { fmtAgeSince, samplingOf } from '$lib/ops/format';
 	import type { EmulatorRunPremise, EmulatorRunRow } from '$lib/ops/types';
 
 	const lang = $derived(ops.lang);
+	const L = (key: string, ...args: unknown[]) => t(lang, key, ...args);
 
-	let selectedUseCase = $state('rath_yatra_monsoon_ambulance');
-	let selectedClock = $state(10);
-	let replayClock = $state(10);
+	let useCase = $state('rath_yatra_monsoon_ambulance');
+	let clockChoice = $state('10');
+	let replayClock = $state('10');
 
 	let clock = $state(Date.now());
 	$effect(() => {
@@ -51,44 +46,48 @@
 	});
 
 	const library = $derived(ops.emulatorLibrary);
-	const info = $derived(ops.useCaseInfo(selectedUseCase));
+	const info = $derived(ops.useCaseInfo(useCase));
 	const hero = $derived(info?.hero === true);
-	const effectiveClock = $derived(ops.launchClock(selectedUseCase, selectedClock));
+	const chosenClock = $derived(Number(clockChoice) || 10);
+	const effectiveClock = $derived(ops.launchClock(useCase, chosenClock));
 	const sampling = $derived(samplingOf(effectiveClock));
-	const inLibrary = $derived(library.some((u) => u.id === selectedUseCase));
+	const inLibrary = $derived(library.some((u) => u.id === useCase));
 	const launch = $derived(ops.emulatorLaunch);
 
-	// The library answered and the chosen tape is not in it: pick its first tape.
+	// the library answered and the chosen tape is not in it: pick its first tape
 	$effect(() => {
-		if (library.length && !library.some((u) => u.id === selectedUseCase)) selectedUseCase = library[0].id;
+		if (library.length && !library.some((u) => u.id === useCase)) useCase = library[0].id;
 	});
 
-	// A hero tape never offers more than ×10.
+	// a flagship tape never offers more than ×10
 	$effect(() => {
-		if (hero && selectedClock > EMULATOR_HERO_CLOCK_CAP) selectedClock = EMULATOR_HERO_CLOCK_CAP;
+		if (hero && chosenClock > EMULATOR_HERO_CLOCK_CAP) clockChoice = String(EMULATOR_HERO_CLOCK_CAP);
 	});
 
-	function phaseVariant(phase: string): 'live' | 'pending' | 'neutral' | 'rejected' | 'approved' {
-		if (phase === 'running' || phase === 'posting') return 'pending';
-		if (phase === 'completed') return 'approved';
-		if (phase === 'failed' || phase === 'refused' || phase === 'interrupted') return 'rejected';
-		return 'neutral';
+	const useCaseOptions = $derived(
+		library.length
+			? library.map((u) => ({ value: u.id, label: `${u.name}${u.hero ? ` (${L('wall_emu_flagship')})` : ''}` }))
+			: [{ value: useCase, label: L('wall_emu_library_waiting', useCase) }],
+	);
+	const clockOptions = $derived(
+		EMULATOR_CLOCKS.map((c) => ({ value: String(c), label: `×${c}`, disabled: hero && c > EMULATOR_HERO_CLOCK_CAP })),
+	);
+	const replayOptions = EMULATOR_CLOCKS.map((c) => ({ value: String(c), label: `×${c}` }));
+
+	function phaseIntent(phase: string): 'none' | 'success' {
+		return phase === 'completed' ? 'success' : 'none';
 	}
 
-	function progressPct(r: EmulatorRunRow): number | null {
-		const p = r.progress;
+	function progress(r: EmulatorRunRow | null | undefined): number | null {
+		const p = r?.progress;
 		if (!p || !p.total) return null;
-		return Math.max(0, Math.min(100, Math.round((p.frame / p.total) * 100)));
+		return Math.max(0, Math.min(1, p.frame / p.total));
 	}
 
 	const trackedRun = $derived(launch?.runId != null ? (ops.emulatorRuns.find((r) => r.runId === launch.runId) ?? null) : null);
 	const lc = $derived(ops.livingCity);
 
-	/**
-	 * One scenario-precondition entry (C-N, spec.scenario_precondition) as this
-	 * console may print it: the FIR-named plate masked without an officer, a
-	 * failure's reason verbatim (plates masked too).
-	 */
+	/** One scenario-premise entry as this console may print it (C-N): the FIR-named mark masked without an officer. */
 	function premiseText(p: EmulatorRunPremise): string {
 		const plate = ops.plate(p.plate) ?? '—';
 		const text =
@@ -99,156 +98,138 @@
 					: tOps(lang, 'emuPremise_skipped', plate);
 		return `${tOps(lang, 'emuPremiseTitle')}: ${text}`;
 	}
+
+	function runStatus(r: EmulatorRunRow): string {
+		const key = `emuPhase_${r.status}`;
+		const w = tOps(lang, key);
+		return w === key ? r.status : w;
+	}
 </script>
 
-{#snippet headRight()}
-	<Badge variant={ops.emulator.online ? 'live' : 'offline'} label={ops.emulator.online ? t(lang, 'emuOnline') : t(lang, 'emuOffline')} />
-	<Badge variant="emulated" label={tOps(lang, 'labelEmulated')} />
-{/snippet}
-
-<Panel
-	title={t(lang, 'emuTitle')}
-	sub={tOps(lang, 'emuSubProxy')}
-	status={ops.emulator.lastChecked ? { state: ops.emulator.online ? 'live' : 'offline', updatedAt: ops.emulator.lastChecked } : null}
-	pollMs={POLL_MS.emulator}
-	lang={lang}
-	{...{ 'header-right': headRight }}
->
-	<div class="row health">
-		<Button variant="ghost" size="sm" onclick={() => void ops.pollEmulator()}>{t(lang, 'emuCheck')}</Button>
-		<span class="detail mono">
-			{#if ops.emulator.lastChecked}
-				{ops.emulator.online ? (ops.emulator.healthDetail ?? 'GET /health ok') : (ops.emulator.healthDetail ?? 'connection refused').slice(0, 80)}
-				{#if ops.emulator.stack}
-					· {Object.entries(ops.emulator.stack).map(([k, v]) => `${k} ${v ? '✓' : '✗'}`).join(' ')}
-				{/if}
-			{:else}
-				probing…
-			{/if}
-		</span>
-		<span class="detail mono lib" data-testid="emu-library-count" data-count={library.length}>{tOps(lang, 'emuLibrary', library.length)}</span>
+<div class="emu" data-wall="emulator">
+	<div class="sub-head">
+		<h3 class="h">{L('wall_emu')}</h3>
+		<Tag intent={ops.emulator.online ? 'success' : 'none'} icon={ops.emulator.online ? undefined : 'offline'}>{ops.emulator.online ? L('wall_emu_online') : L('wall_emu_offline')}</Tag>
+		<ProvenanceTag source="emulated" {lang} />
+		<span class="grow"></span>
+		<span class="muted tn" data-testid="emu-library-count" data-count={library.length}>{L('wall_emu_library', library.length)}</span>
+		<Button minimal small icon="refresh" tooltip={L('wall_emu_check')} aria-label={L('wall_emu_check')} onclick={() => void ops.pollEmulator()} />
 	</div>
+	{#if ops.emulator.lastChecked && !ops.emulator.online}
+		<p class="note">{(ops.emulator.healthDetail ?? L('wall_emu_unreachable')).slice(0, 120)}</p>
+	{/if}
 
 	<div class="launch" data-testid="emu-launch">
 		<label class="field grow">
-			<span>{tOps(lang, 'emuUseCase')}</span>
-			<select bind:value={selectedUseCase} data-testid="emu-use-case">
-				{#if library.length}
-					{#each library as u (u.id)}
-						<option value={u.id}>{u.hero ? '★ ' : ''}{u.name}{u.category ? ` · ${u.category}` : ''}</option>
-					{/each}
-				{:else}
-					<option value={selectedUseCase}>{selectedUseCase} (library not loaded)</option>
-				{/if}
-			</select>
+			<span class="lbl">{L('wall_emu_tape')}</span>
+			<HTMLSelect small fill options={useCaseOptions} bind:value={useCase} data-testid="emu-use-case" />
 		</label>
-		<label class="field">
-			<span>{tOps(lang, 'emuClock')}</span>
-			<select bind:value={selectedClock} data-testid="emu-clock">
-				{#each EMULATOR_CLOCKS as c (c)}
-					<option value={c} disabled={hero && c > EMULATOR_HERO_CLOCK_CAP}>×{c}{hero && c > EMULATOR_HERO_CLOCK_CAP ? ` (${tOps(lang, 'emuHeroCapShort')})` : ''}</option>
-				{/each}
-			</select>
+		<label class="field clock">
+			<span class="lbl">{L('wall_emu_clock')}</span>
+			<HTMLSelect small fill options={clockOptions} bind:value={clockChoice} data-testid="emu-clock" />
 		</label>
 		<Button
-			variant="secondary"
-			size="sm"
-			busy={ops.emulatorBusy === 'launch'}
+			small
+			icon="play"
 			disabled={!ops.emulator.online || !inLibrary || ops.emulatorBusy !== null}
-			onclick={() => void ops.launchUseCase(selectedUseCase, selectedClock)}
+			loading={ops.emulatorBusy === 'launch'}
+			onclick={() => void ops.launchUseCase(useCase, chosenClock)}
+			data-testid="emu-launch-btn"
 		>
-			<span data-testid="emu-launch-btn">{tOps(lang, 'emuLaunchBtn')}</span>
+			{L('wall_emu_launch')}
 		</Button>
 	</div>
-	<p class="sampling mono" data-testid="emu-sampling">
-		{tOps(lang, 'emuSampling', effectiveClock, tOps(lang, 'emuSamplingNote', sampling.value, sampling.unit))}
-		{#if hero}· {tOps(lang, 'emuHeroCap', EMULATOR_HERO_CLOCK_CAP)}{/if}
+	<p class="note" data-testid="emu-sampling">
+		{tOps(lang, 'emuSampling', effectiveClock, tOps(lang, 'emuSamplingNote', sampling.value, sampling.unit))}{#if hero}{` · ${L('wall_emu_hero_cap', EMULATOR_HERO_CLOCK_CAP)}`}{/if}
 	</p>
 
 	{#if launch}
 		<div class="launch-state" data-testid="emu-launch-state" data-phase={launch.phase} data-run-id={launch.runId ?? ''} data-contract={launch.contract ?? ''}>
 			<div class="ls-head">
-				<Badge variant={phaseVariant(launch.phase)} label={tOps(lang, `emuPhase_${launch.phase}`)} />
-				<span class="mono">{launch.kind === 'replay' ? tOps(lang, 'emuReplayOf') : ''}{launch.useCaseId} ×{launch.clockScale}{launch.runId != null ? ` · run #${launch.runId}` : ''}</span>
-				<span class="mono dim">{tOps(lang, 'emuSince', fmtAgeSince(launch.at, clock))}</span>
+				<Tag intent={phaseIntent(launch.phase)}>{tOps(lang, `emuPhase_${launch.phase}`)}</Tag>
+				<span class="ell">{launch.kind === 'replay' ? L('wall_emu_replay_of') : ''}<Id value={launch.useCaseId} /> ×{launch.clockScale}{launch.runId != null ? ` · ${L('wall_emu_run', launch.runId)}` : ''}</span>
+				<span class="grow"></span>
+				<span class="muted tn">{fmtAgeSince(launch.at, clock)}</span>
 			</div>
 			{#if trackedRun?.progress}
-				{@const pct = progressPct(trackedRun)}
-				<div class="bar" role="progressbar" aria-valuenow={pct ?? 0} aria-valuemin="0" aria-valuemax="100">
-					<span class="fill" style:width="{pct ?? 0}%"></span>
-				</div>
-				<p class="mono dim">{tOps(lang, 'emuProgress', trackedRun.progress.frame, trackedRun.progress.total, trackedRun.progress.delivered, trackedRun.progress.failed)}</p>
+				<ProgressBar value={progress(trackedRun)} stripes={false} label={L('wall_emu_progress')} />
+				<p class="note tn">{tOps(lang, 'emuProgress', trackedRun.progress.frame, trackedRun.progress.total, trackedRun.progress.delivered, trackedRun.progress.failed)}</p>
 			{/if}
 			{#if trackedRun && trackedRun.status === 'running' && trackedRun.eventStatus === 'planning'}
-				<p class="mono pending-event" data-testid="emu-event-pending">{tOps(lang, 'emuEventNotLive')}</p>
+				<p class="note" data-testid="emu-event-pending">{tOps(lang, 'emuEventNotLive')}</p>
 			{/if}
 			{#each trackedRun?.premises ?? [] as p, i (i)}
-				<p class="mono premise" class:err={p.result === 'failed'} data-testid="emu-premise" data-result={p.result} data-earmark={p.earmark ?? ''}>
-					<Badge variant="emulated" label={tOps(lang, 'labelEmulated')} />
-					<span>{premiseText(p)}</span>
+				<p class="note premise" data-testid="emu-premise" data-result={p.result} data-earmark={p.earmark ?? ''}>
+					<ProvenanceTag source="emulated" compact {lang} /><span>{premiseText(p)}</span>
 				</p>
 			{/each}
 			{#if trackedRun && (trackedRun.status === 'failed' || trackedRun.status === 'interrupted') && trackedRun.failReason}
-				<p class="mono err" data-testid="emu-fail-reason">{tOps(lang, 'emuFailReason', trackedRun.failReason)}</p>
+				<p class="note strong" data-testid="emu-fail-reason">{tOps(lang, 'emuFailReason', trackedRun.failReason)}</p>
 			{/if}
-			{#if launch.detail}<p class="mono dim">{launch.detail}</p>{/if}
-			{#if launch.contract === 'sync' && launch.phase === 'running'}<p class="mono dim">{tOps(lang, 'emuSyncNote')}</p>{/if}
+			{#if launch.detail}<p class="note">{launch.detail}</p>{/if}
+			{#if launch.contract === 'sync' && launch.phase === 'running'}<p class="note">{tOps(lang, 'emuSyncNote')}</p>{/if}
 		</div>
 	{/if}
-	{#if ops.emulatorActionNote}<p class="note-line mono">{ops.emulatorActionNote}</p>{/if}
+	{#if ops.emulatorActionNote}<p class="note">{ops.emulatorActionNote}</p>{/if}
 
 	{#if ops.emulatorRuns.length}
 		<div class="runs">
 			<div class="runs-head">
-				<span class="runs-title">{tOps(lang, 'emuRunsTitle')}</span>
-				<label class="replay-clock">
-					<span>{tOps(lang, 'emuReplayClock')}</span>
-					<select bind:value={replayClock}>
-						{#each EMULATOR_CLOCKS as c (c)}
-							<option value={c}>×{c}</option>
-						{/each}
-					</select>
-				</label>
+				<span class="runs-title">{L('wall_emu_runs')}</span>
+				<span class="grow"></span>
+				<label class="replay-clock"><span class="lbl">{L('wall_emu_replay_at')}</span><HTMLSelect small minimal options={replayOptions} bind:value={replayClock} /></label>
 			</div>
-			<table>
+			<table class="wdt">
+				<colgroup><col style:width="56px" /><col /><col style:width="96px" /><col style:width="44px" /><col style:width="72px" /><col style:width="80px" /></colgroup>
 				<thead>
-					<tr><th>#</th><th>{tOps(lang, 'emuUseCase')}</th><th>{tOps(lang, 'emuStatus')}</th><th>×</th><th>{tOps(lang, 'emuStarted')}</th><th></th></tr>
+					<tr>
+						<th scope="col" class="num">{L('wall_emu_col_run')}</th>
+						<th scope="col">{L('wall_emu_tape')}</th>
+						<th scope="col">{L('wall_emu_col_status')}</th>
+						<th scope="col" class="num">×</th>
+						<th scope="col" class="num">{L('wall_emu_col_started')}</th>
+						<th aria-hidden="true"></th>
+					</tr>
 				</thead>
 				<tbody>
 					{#each ops.emulatorRuns as r (r.runId)}
 						<tr data-testid="emu-run" data-run-id={r.runId} data-status={r.status}>
-							<td class="num">{r.runId}{r.isReplay ? ' ↻' : ''}</td>
-							<td class="uc" title={r.useCaseId}>{r.useCaseId}</td>
-							<td
-								class:okrun={r.status === 'completed'}
-								class:badrun={r.status === 'failed' || r.status === 'interrupted'}
-								class:runrun={r.status === 'running'}
-								title={r.failReason ?? (r.status === 'running' && r.eventStatus === 'planning' ? tOps(lang, 'emuEventNotLive') : undefined)}
-								data-event-status={r.eventStatus ?? ''}
-							>
-								{r.status}{#if r.status === 'running' && progressPct(r) != null}&nbsp;{progressPct(r)}%{/if}{#if r.status === 'running' && r.eventStatus === 'planning'}&nbsp;·&nbsp;{tOps(lang, 'emuEventPendingShort')}{/if}
+							<td class="num"><div class="c tn">{r.runId}{r.isReplay ? ' ↻' : ''}</div></td>
+							<td><div class="c"><span class="ell" title={r.useCaseId}><Id value={r.useCaseId} /></span></div></td>
+							<td>
+								<div class="c" title={r.failReason ?? (r.status === 'running' && r.eventStatus === 'planning' ? tOps(lang, 'emuEventNotLive') : undefined)} data-event-status={r.eventStatus ?? ''}>
+									<span class="ell">{runStatus(r)}{#if r.status === 'running' && progress(r) != null}{` ${Math.round((progress(r) ?? 0) * 100)}%`}{/if}</span>
+								</div>
 							</td>
-							<td class="num">{r.clockScale ?? '—'}</td>
-							<td class="num">{r.createdAt ? istHm(r.createdAt) : '—'}</td>
-							<td class="acts">
-								{#if r.status === 'running'}
-									<Button variant="danger-outline" size="sm" busy={ops.emulatorBusy === `stop:${r.runId}`} disabled={ops.emulatorBusy !== null} onclick={() => void ops.stopRun(r.runId)}>
-										<span data-testid="emu-stop">{tOps(lang, 'emuStop')}</span>
-									</Button>
-								{:else}
-									<Button variant="ghost" size="sm" busy={ops.emulatorBusy === `replay:${r.runId}`} disabled={ops.emulatorBusy !== null || !ops.emulator.online} onclick={() => void ops.replayRun(r.runId, replayClock)}>
-										<span data-testid="emu-replay">{tOps(lang, 'emuReplay')}</span>
-									</Button>
-								{/if}
+							<td class="num"><div class="c tn">{r.clockScale ?? '—'}</div></td>
+							<td class="num"><div class="c tn">{r.createdAt ? fmtTime(r.createdAt) : '—'}</div></td>
+							<td class="num">
+								<div class="c">
+									{#if r.status === 'running'}
+										<Button small minimal disabled={ops.emulatorBusy !== null} loading={ops.emulatorBusy === `stop:${r.runId}`} onclick={() => void ops.stopRun(r.runId)} data-testid="emu-stop">
+											{tOps(lang, 'emuStop')}
+										</Button>
+									{:else}
+										<Button
+											small
+											minimal
+											disabled={ops.emulatorBusy !== null || !ops.emulator.online}
+											loading={ops.emulatorBusy === `replay:${r.runId}`}
+											onclick={() => void ops.replayRun(r.runId, Number(replayClock) || 10)}
+											data-testid="emu-replay"
+										>
+											{tOps(lang, 'emuReplay')}
+										</Button>
+									{/if}
+								</div>
 							</td>
 						</tr>
 						{#if r.premises?.length}
-							<!-- the run's EMULATED scenario premise (C-N): earmark created / already active / failed → reads skipped -->
-							<tr class="premise-row" data-testid="emu-run-premise" data-run-id={r.runId}>
+							<tr class="detail" data-testid="emu-run-premise" data-run-id={r.runId}>
 								<td></td>
 								<td colspan="5">
 									{#each r.premises as p, i (i)}
-										<span class="premise" class:err={p.result === 'failed'} data-result={p.result} data-earmark={p.earmark ?? ''}>{tOps(lang, 'labelEmulated')} · {premiseText(p)}</span>
+										<span class="premise" data-result={p.result} data-earmark={p.earmark ?? ''}>{premiseText(p)}</span>
 									{/each}
 								</td>
 							</tr>
@@ -260,356 +241,208 @@
 	{/if}
 
 	<section class="living" data-testid="living-city" data-supported={ops.emulator.livingCitySupported ? '1' : '0'} data-status={lc?.status ?? ''}>
-		<div class="lc-head">
-			<span class="lc-title">{tOps(lang, 'emuLivingCity')}</span>
+		<div class="sub-head">
+			<h3 class="h">{L('wall_emu_living')}</h3>
 			{#if ops.emulator.livingCitySupported && lc}
-				<Badge variant={lc.status === 'running' ? 'live' : 'neutral'} label={lc.status} />
-				<Badge variant="emulated" label={tOps(lang, 'labelEmulated')} />
-				<span class="spacer"></span>
-				<Button
-					variant="secondary"
-					size="sm"
-					busy={ops.livingCityBusy}
-					onclick={() => void ops.setLivingCity(lc.status === 'running' ? 'stop' : 'start')}
-				>
-					<span data-testid="living-city-toggle">{lc.status === 'running' ? tOps(lang, 'emuLivingStop') : tOps(lang, 'emuLivingStart')}</span>
+				<Tag intent={lc.status === 'running' ? 'success' : 'none'}>{L(`wall_emu_living_${lc.status === 'running' ? 'running' : 'stopped'}`)}</Tag>
+				<span class="grow"></span>
+				<Button small loading={ops.livingCityBusy} onclick={() => void ops.setLivingCity(lc.status === 'running' ? 'stop' : 'start')} data-testid="living-city-toggle">
+					{lc.status === 'running' ? tOps(lang, 'emuLivingStop') : tOps(lang, 'emuLivingStart')}
 				</Button>
 			{:else}
-				<span class="mono dim">{ops.emulator.online ? tOps(lang, 'emuLivingAbsent') : tOps(lang, 'labelOffline')}</span>
+				<span class="muted">{ops.emulator.online ? L('wall_emu_living_absent') : L('wall_emu_offline')}</span>
 			{/if}
 		</div>
 		{#if lc}
-			<p class="mono dim">
-				{lc.dateIst ?? '—'}{lc.daySeed != null ? ` · seed ${lc.daySeed}` : ''} · {tOps(lang, 'emuLivingSlots', lc.activeSlots.length)}{lc.units.length ? ` · ${tOps(lang, 'emuLivingUnits', lc.units.length)}` : ''}{lc.since ? ` · ${tOps(lang, 'emuSince', fmtAgeSince(lc.since, clock))}` : ''}
+			<p class="note tn">
+				{lc.dateIst ?? '—'}{lc.daySeed != null ? ` · ${L('wall_emu_seed', lc.daySeed)}` : ''}{` · ${tOps(lang, 'emuLivingSlots', lc.activeSlots.length)}`}{lc.units.length ? ` · ${tOps(lang, 'emuLivingUnits', lc.units.length)}` : ''}
 			</p>
 			{#if lc.activeSlots.length}
 				<ul class="slots">
 					{#each lc.activeSlots.slice(0, 4) as s (s.slotId)}
-						<li class="mono" data-slot-status={s.eventStatus ?? ''}>
-							<span class="kind">{s.kind}</span> {ops.text(s.title)} <span class="dim">{s.startsAt ? istHm(s.startsAt) : '—'}–{s.endsAt ? istHm(s.endsAt) : '—'}</span>
-							{#if s.eventStatus}<span class="slot-status" class:pending-event={s.eventStatus === 'planning'}>{s.eventStatus === 'planning' ? tOps(lang, 'emuEventPendingShort') : s.eventStatus}</span>{/if}
+						<li data-slot-status={s.eventStatus ?? ''}>
+							<span class="ell">{ops.text(s.title)}</span>
+							<span class="muted tn">{s.startsAt ? fmtTime(s.startsAt) : '—'}–{s.endsAt ? fmtTime(s.endsAt) : '—'}</span>
+							{#if s.eventStatus}<span class="muted">{s.eventStatus === 'planning' ? tOps(lang, 'emuEventPendingShort') : s.eventStatus}</span>{/if}
 						</li>
 					{/each}
 				</ul>
 			{/if}
 			{#if lc.counters && Object.keys(lc.counters).length}
-				<p class="mono dim" data-testid="living-city-counters">
-					{Object.entries(lc.counters).slice(0, 6).map(([k, n]) => `${k.replace(/_/g, ' ')} ${n}`).join(' · ')}
-					{#if lc.preempted}· {tOps(lang, 'emuLivingPreempted', lc.preempted)}{/if}
-					{#if lc.refiling}· {tOps(lang, 'emuLivingRefiling', lc.refiling)}{/if}
-					{#if lc.violators === false}· {tOps(lang, 'emuLivingNoViolators')}{/if}
+				<p class="note" data-testid="living-city-counters">
+					{Object.entries(lc.counters).slice(0, 6).map(([k, n]) => `${k.replace(/_/g, ' ')} ${n}`).join(', ')}{lc.preempted ? `, ${tOps(lang, 'emuLivingPreempted', lc.preempted)}` : ''}{lc.refiling ? `, ${tOps(lang, 'emuLivingRefiling', lc.refiling)}` : ''}{lc.violators === false ? `, ${tOps(lang, 'emuLivingNoViolators')}` : ''}
 				</p>
 			{/if}
-			{#if lc.detail}<p class="mono dim">{lc.detail}</p>{/if}
+			{#if lc.detail}<p class="note">{lc.detail}</p>{/if}
 			{#if lc.nextCauses.length}
-				<p class="mono dim">{tOps(lang, 'emuLivingNext')}: {ops.text(lc.nextCauses.slice(0, 2).map((c) => `${c.at ? istClock(c.at) : '—'} ${c.title}`).join(' · '))}</p>
+				<p class="note">{tOps(lang, 'emuLivingNext')}: {ops.text(lc.nextCauses.slice(0, 2).map((c) => `${c.at ? fmtTime(c.at) : '—'} ${c.title}`).join(', '))}</p>
 			{/if}
 		{/if}
-		{#if ops.livingCityNote}<p class="mono err">{ops.livingCityNote}</p>{/if}
+		{#if ops.livingCityNote}<p class="note strong">{ops.livingCityNote}</p>{/if}
 	</section>
 
-	<p class="note">{tOps(lang, 'emuCausesOnly')}</p>
-</Panel>
+	<p class="note rule">{L('wall_emu_causes_only')}</p>
+</div>
 
 <style>
-	.row {
-		display: flex;
-		align-items: center;
-		gap: var(--v-space-2);
-		flex-wrap: wrap;
-	}
-
-	.detail {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.detail.lib {
-		margin-left: auto;
-	}
-
-	.launch {
-		display: flex;
-		align-items: flex-end;
-		gap: var(--v-space-2);
-		flex-wrap: wrap;
-		margin-top: var(--v-space-2);
-	}
-
-	.field {
+	.emu {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		min-width: 0;
-	}
-
-	.field.grow {
-		flex: 1;
-		min-width: 160px;
-	}
-
-	.field span,
-	.replay-clock span {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-	}
-
-	select {
-		height: var(--v-ctl-sm);
-		min-width: 0;
-		font: inherit;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-1);
-		background: var(--v-surface-sink);
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-btn);
-	}
-
-	.sampling {
-		margin: var(--v-space-1) 0 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-data);
-	}
-
-	.launch-state {
-		margin-top: var(--v-space-2);
-		padding: var(--v-space-2);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-panel);
-		display: flex;
-		flex-direction: column;
-		gap: var(--v-space-1);
-	}
-
-	.launch-state p {
-		margin: 0;
-		font-size: var(--v-text-2xs);
-	}
-
-	.ls-head {
-		display: flex;
-		align-items: center;
-		gap: var(--v-space-2);
-		flex-wrap: wrap;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-2);
-	}
-
-	.bar {
-		height: 4px;
-		border-radius: var(--v-radius-pill);
-		background: var(--v-line-1);
-		overflow: hidden;
-	}
-
-	.fill {
-		display: block;
-		height: 100%;
-		background: var(--v-data);
-		transition: width var(--v-dur-out) var(--v-ease);
-	}
-
-	.note-line {
-		margin: var(--v-space-1) 0 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.runs {
-		margin-top: var(--v-space-2);
-	}
-
-	.runs-head {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: var(--v-space-2);
-		margin-bottom: var(--v-space-1);
-	}
-
-	.runs-title {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-	}
-
-	.replay-clock {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--v-space-1);
-	}
-
-	.runs table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: var(--v-text-2xs);
-		table-layout: fixed;
-	}
-
-	.runs th {
-		text-align: left;
-		font-weight: var(--v-weight-status);
-		color: var(--v-ink-3);
-		padding: 1px var(--v-space-1);
-		border-bottom: 1px solid var(--v-line-2);
-	}
-
-	.runs th:nth-child(1) {
-		width: 4.2em; /* run id + the replay mark ↻ */
-	}
-
-	.runs th:nth-child(4) {
-		width: 2.4em;
-	}
-
-	.runs th:nth-child(5) {
-		width: 4.4em;
-	}
-
-	.runs th:nth-child(6) {
-		width: 6.5em;
-	}
-
-	.runs td {
-		padding: 1px var(--v-space-1);
+		gap: 8px;
+		padding: 8px 0 12px;
 		border-bottom: 1px solid var(--v-line-1);
+		font-size: var(--v-text-xs);
+		line-height: 16px;
+	}
+
+	.sub-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		min-height: 28px;
+		padding: 0 8px 0 16px;
+	}
+
+	.h {
+		margin: 0;
+		font-size: var(--v-text-base);
+		font-weight: 600;
+		line-height: 18px;
+		white-space: nowrap;
+	}
+
+	.grow {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+
+	.muted {
 		color: var(--v-ink-2);
+	}
+
+	.tn {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.ell {
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.uc {
-		font-family: var(--v-font-mono);
+	.note {
+		margin: 0;
+		padding: 0 16px;
+		color: var(--v-ink-2);
+		overflow-wrap: anywhere;
 	}
 
-	.acts {
-		text-align: right;
+	.note.strong {
+		color: var(--v-ink-1);
 	}
 
-	.num {
-		font-family: var(--v-font-mono);
+	.note.rule {
+		padding-top: 4px;
 	}
 
-	.okrun {
-		color: var(--v-band-green);
+	.launch {
+		display: flex;
+		align-items: flex-end;
+		gap: 8px;
+		padding: 0 16px;
 	}
 
-	.badrun {
-		color: var(--v-band-red);
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
 	}
 
-	.runrun {
-		color: var(--v-data);
+	.field.grow {
+		flex: 1 1 auto;
+	}
+
+	.field.clock {
+		flex: 0 0 80px;
+	}
+
+	.lbl {
+		color: var(--v-ink-2);
+		font-size: var(--v-text-xs);
+	}
+
+	.launch-state {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		margin: 0 16px;
+		padding: 8px 0 0;
+		border-top: 1px solid var(--v-line-1);
+	}
+
+	.launch-state .note {
+		padding: 0;
+	}
+
+	.ls-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+
+	.premise {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.runs {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.runs-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 8px 4px 16px;
+	}
+
+	.runs-title {
+		font-weight: 600;
+	}
+
+	.replay-clock {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 	}
 
 	.living {
-		margin-top: var(--v-space-2);
-		padding-top: var(--v-space-2);
-		border-top: 1px solid var(--v-line-1);
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-1);
-	}
-
-	.living p {
-		margin: 0;
-		font-size: var(--v-text-2xs);
-	}
-
-	.lc-head {
-		display: flex;
-		align-items: center;
-		gap: var(--v-space-2);
-		flex-wrap: wrap;
-	}
-
-	.lc-head .dim {
-		font-size: var(--v-text-2xs);
-	}
-
-	.lc-title {
-		font-size: var(--v-text-xs);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-ink-2);
-	}
-
-	.spacer {
-		flex: 1;
+		gap: 6px;
+		padding-top: 4px;
+		border-top: 1px solid var(--v-line-1);
 	}
 
 	.slots {
-		list-style: none;
-		margin: 0;
-		padding: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-2);
+		margin: 0;
+		padding: 0 16px;
+		list-style: none;
 	}
 
-	.slots .kind {
-		color: var(--v-data);
-	}
-
-	.dim {
-		color: var(--v-ink-3);
-	}
-
-	.err {
-		color: var(--v-band-red);
-	}
-
-	.note {
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.mono {
-		font-family: var(--v-font-mono);
-	}
-
-	/* a run (or slot) whose corridor event has not gone live yet — said, never hidden */
-	.pending-event {
-		color: var(--v-band-amber);
-	}
-
-	.slot-status {
-		margin-left: var(--v-space-1);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-2);
-	}
-
-	/* a run's EMULATED scenario premise (C-N) — a failed one in red: its stolen-plate reads were skipped */
-	.premise {
-		color: var(--v-ink-2);
-	}
-
-	.premise.err {
-		color: var(--v-band-red);
-	}
-
-	.launch-state p.premise {
+	.slots li {
 		display: flex;
-		align-items: center;
-		gap: var(--v-space-1);
-		flex-wrap: wrap;
-	}
-
-	.runs .premise-row td {
-		white-space: normal;
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-2xs);
-	}
-
-	.premise-row .premise {
-		display: block;
+		align-items: baseline;
+		gap: 8px;
+		min-width: 0;
 	}
 </style>

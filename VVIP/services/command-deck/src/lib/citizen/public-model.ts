@@ -68,6 +68,13 @@ export interface PublicEventWire {
 	unavailable: UnavailableFact[];
 	/** Opened by the event emulator (metadata.source 'event-emulator'). */
 	emulated: boolean;
+	/**
+	 * F-CONN-03: the deck could not read whether this movement's escort drives
+	 * on the brain's emulated GPS (the brain did not answer). Its position is
+	 * then UNVERIFIED — never shown as live, never in the city strip's tier.
+	 * Absent from older decks (read as false).
+	 */
+	position_unverified?: boolean;
 }
 
 /** A public event beyond the citizen horizon — a dated heads-up only. */
@@ -127,9 +134,11 @@ export interface PublicCorridorEvent {
 	unavailable: { hold: boolean; alternate: boolean; roadNames: boolean };
 	/**
 	 * live = a real event on the deck's public projection; emulated = an
-	 * event-emulator run (SIMULATED FEED); offline-fixture = labelled preview.
+	 * event-emulator run (SIMULATED FEED); unverified = a movement whose
+	 * position source could not be read this pass (labelled, never live);
+	 * offline-fixture = labelled preview.
 	 */
-	source: 'live' | 'emulated' | 'offline-fixture';
+	source: 'live' | 'emulated' | 'unverified' | 'offline-fixture';
 }
 
 /** A later public event as the citizen page lists it. */
@@ -212,7 +221,7 @@ export function mapPublicEvent(raw: unknown): PublicCorridorEvent | null {
 		alternate: altNames.length ? { roadNames: altNames, segmentIds: altSegs } : null,
 		tier: pick(w.tier, TIERS),
 		unavailable: { hold: missing.has('hold'), alternate: missing.has('alternate'), roadNames: missing.has('road_names') },
-		source: w.emulated === true ? 'emulated' : 'live',
+		source: w.emulated === true ? 'emulated' : w.position_unverified === true ? 'unverified' : 'live',
 	};
 }
 

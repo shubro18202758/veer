@@ -4,7 +4,9 @@
     GET  /api/v1/events/active           live events for the ops board
     GET  /api/v1/events?status=&since=&limit=
                                          history (same row shape as /active)
-    POST /api/v1/events/{id}/status      lifecycle transition (contract C-F)
+    GET  /api/v1/events/{id}             one event row (same shape), 404
+                                         when absent; read-only
+    POST /api/v1/events/{id}/status     lifecycle transition (contract C-F)
     POST /api/v1/events/{id}/routes      route update (contract C-O, 018):
                                          a re-route spine becomes the
                                          event's primary; the spine it
@@ -62,6 +64,18 @@ no control or bidi characters — city/common.named_actor); notes and every
 text the create body carries are refused with a 422 when they hold a NUL
 (Postgres cannot store one) instead of failing the write with a 500; a
 ``movement_id`` must be a uuid (the column is ``uuid``).
+
+Provenance (migration 021, contract C-T): an event may carry its first-class
+``source_kind`` (operator | brain | emulator | osint), a ``credibility``
+(0..1), an honest ``verification_state``, a ``provenance`` document (≤ 4 KB,
+no person key at any depth) and a ``geotag`` point inside the city.  They
+stay NULL unless the creator supplies them (no inference).  An ``osint``
+event is created by PROMOTION only: a named officer promotes a reported
+situation (OSINT router, which sets ``request.state.osint_promotion``); a
+direct POST with ``source_kind`` 'osint' is a 422.  Every row this module
+returns carries the five fields (``geotag`` as ``{lon, lat}`` or null).
+The core never imports ``osint_*`` (X20): the person-key denylist below is a
+local copy, pinned equal to ``osint_common.ethics`` by test_osint_lockstep.
 """
 
 from __future__ import annotations
@@ -69,6 +83,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import unicodedata
 import uuid as _uuid
 from datetime import datetime
 from typing import Annotated, Any
@@ -76,14 +91,18 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from traffic_oracle.adaptive.enums import CrowdDensity, SecurityTier
 from traffic_oracle.city.common import (
+    EVIDENCE_SOURCE_KEY,
     as_uuid,
     clean_text,
+    event_source,
     find_nul,
     iso_z,
+    label_source,
+    mark_demo_fir,
     named_actor,
     relation_exists,
     routes_supersede_supported,
@@ -102,11 +121,14 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
-#: The archetypes (migration 007 CHECK + the 010 relaxation mirror this list
-#: exactly — contract C3 lockstep with corridor-store migration 010 and the
-#: emulator's profiles.EVENT_KINDS).  crime_incident and vehicle_pursuit are
-#: the watchlist-anpr additions (010): a reported crime driving corridor
-#: operations, and a HUMAN-initiated pursuit of an earmarked vehicle.
+#: The archetypes (migration 007 CHECK + the 010 and 021 relaxations mirror
+#: this list exactly — contract C3 lockstep with corridor-store migrations
+#: 010/021, the emulator's profiles.EVENT_KINDS, the deck's ops/types.ts
+#: EventKind and osint_common.kinds.ALL_EVENT_KINDS).  crime_incident and
+#: vehicle_pursuit are the watchlist-anpr additions (010): a reported crime
+#: driving corridor operations, and a HUMAN-initiated pursuit of an earmarked
+#: vehicle.  The six OSINT kinds (021) are REPORTED situations promoted by a
+#: named officer for RESPONSE; OSINT never emits crime_incident.
 EVENT_KINDS: tuple[str, ...] = (
     "protected_movement",
     "procession",
@@ -119,7 +141,78 @@ EVENT_KINDS: tuple[str, ...] = (
     # watchlist-anpr additions (010, C3):
     "crime_incident",
     "vehicle_pursuit",
+    # OSINT reported-situation additions (021, C3):
+    "reported_crime",
+    "public_disorder",
+    "road_accident",
+    "hazard",
+    "flooding",
+    "infra_failure",
 )
+
+#: corridor_events.source_kind (021 CHECK): who created the event.
+SOURCE_KINDS: tuple[str, ...] = ("operator", "brain", "emulator", "osint")
+
+#: corridor_events.verification_state (021 CHECK): the honest label.
+#: CONFIRMED is reserved — nothing in this programme sets it (plan R29), so
+#: POST /events refuses it (422): it records an officer's confirmation.
+VERIFICATION_STATES: tuple[str, ...] = (
+    "EMULATED",
+    "SIMULATED",
+    "UNVERIFIED-OSINT",
+    "NEWS-REPORTED",
+    "OFFICIAL-VERIFIED",
+    "CONFIRMED",
+)
+CONFIRMED_STATE = "CONFIRMED"
+
+#: The person-key denylist (OSINT SPEC §4) — a LOCAL copy of
+#: osint_common.ethics.FORBIDDEN_KEY_RE (the core never imports osint_*;
+#: tests/test_osint_lockstep.py pins the string, the exemptions and the
+#: matching equal).  It fails closed: a key (as given, and NFKC) is a person
+#: key when a term occurs ANYWHERE in it, case-insensitive (authorname,
+#: userName, faceprint, and lookalikes such as authority or interface too),
+#: or in one of its tokens split on ``_``, non-alphanumerics and camelCase
+#: (driverName → driver_name, individualId → individual_id).
+PERSON_KEY_RE = (
+    r"author|person|handle|username|byline|reporter|poster|uploader|suspect|accused"
+    r"|victim|owner|driver_name|face|biometric|individual_"
+)
+_PERSON_KEY_ANYWHERE_RE = re.compile(PERSON_KEY_RE, re.IGNORECASE)
+_PERSON_TERMS = tuple(PERSON_KEY_RE.split("|"))
+_PERSON_WORD_TERMS = tuple(t for t in _PERSON_TERMS if not t.endswith("_"))
+_PERSON_PREFIX_TERMS = tuple(t for t in _PERSON_TERMS if t.endswith("_"))
+_PERSON_KEY_TOKEN_RE = re.compile(
+    r"(?:^|_)(?:" + "|".join(re.escape(t) for t in _PERSON_WORD_TERMS) + r")(?:e?s)?(?=_|$)"
+    r"|(?:^|_)(?:" + "|".join(re.escape(t) for t in _PERSON_PREFIX_TERMS) + r")"
+)
+#: The only escape (= osint_common.ethics.EXEMPT_KEYS): contract keys that
+#: contain a term but name no person, each allowed only with its contract
+#: value type — the gazetteer's surface_forms (a list of strings),
+#: PipelineCounts.surfaced (an int) and the C-U COA ethics assertion
+#: touches_persons (a bool: the COA touches NO person).
+_PERSON_KEY_EXEMPT_TYPES: dict[str, tuple[type, ...]] = {
+    "surface_forms": (list, tuple),
+    "surfaced": (int,),
+    "touches_persons": (bool,),
+}
+_PERSON_KEY_EXEMPT = frozenset(_PERSON_KEY_EXEMPT_TYPES)
+#: Opaque ids are never person keys (= osint_common.ethics.OPAQUE_ID_RE):
+#: a whole 40-hex sha1 (a signal id) or a whole canonical lower-case uuid,
+#: even when its hex digits spell "face" (about 1 sha1 in 2,000 does);
+#: matched in full on the key as given, before both rules.
+_PERSON_KEY_OPAQUE_ID_RE = re.compile(
+    r"[0-9a-f]{40}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+
+#: A geotag lies inside the city (lon min, lat min, lon max, lat max).
+GEOTAG_BBOX: tuple[float, float, float, float] = (72.40, 22.90, 72.80, 23.20)
+
+#: corridor_events.provenance is bounded (serialised JSON, UTF-8 bytes).
+PROVENANCE_MAX_BYTES = 4096
+
+#: The refusal of a direct POST /events with source_kind 'osint'.
+OSINT_PROMOTION_ONLY = "osint events are created by promotion only"
 
 #: Event statuses (migration 007 CHECK, same order).
 EVENT_STATUSES: tuple[str, ...] = (
@@ -154,6 +247,8 @@ _ACTIVE_EVENTS_SQL = (
     "e.title, e.description, e.status, e.movement_id, "
     "e.planned_start, e.planned_end, e.actual_start, e.actual_end, "
     "e.metadata, e.created_at, e.updated_at, "
+    "e.source_kind, e.credibility, e.verification_state, e.provenance, "
+    "ST_X(e.geotag) AS geotag_lon, ST_Y(e.geotag) AS geotag_lat, "
     "ST_AsGeoJSON(e.zone_geom) AS zone_geojson "
     "FROM events.corridor_events e "
     "WHERE e.status IN ('planning', 'approved', 'active') "
@@ -161,7 +256,10 @@ _ACTIVE_EVENTS_SQL = (
 )
 
 #: History: optional status set + updated-since, newest first.
-_SQL_EVENTS_HISTORY = "SELECT e.event_id, e.event_kind, e.protection_class, e.crowd_class, e.title, e.description, e.status, e.movement_id, e.planned_start, e.planned_end, e.actual_start, e.actual_end, e.metadata, e.created_at, e.updated_at, ST_AsGeoJSON(e.zone_geom) AS zone_geojson FROM events.corridor_events e WHERE (cardinality($1::text[]) = 0 OR e.status = ANY($1::text[])) AND ($2::timestamptz IS NULL OR e.updated_at >= $2::timestamptz) ORDER BY e.updated_at DESC, e.event_id LIMIT $3"  # noqa: E501
+_SQL_EVENTS_HISTORY = "SELECT e.event_id, e.event_kind, e.protection_class, e.crowd_class, e.title, e.description, e.status, e.movement_id, e.planned_start, e.planned_end, e.actual_start, e.actual_end, e.metadata, e.created_at, e.updated_at, e.source_kind, e.credibility, e.verification_state, e.provenance, ST_X(e.geotag) AS geotag_lon, ST_Y(e.geotag) AS geotag_lat, ST_AsGeoJSON(e.zone_geom) AS zone_geojson FROM events.corridor_events e WHERE (cardinality($1::text[]) = 0 OR e.status = ANY($1::text[])) AND ($2::timestamptz IS NULL OR e.updated_at >= $2::timestamptz) ORDER BY e.updated_at DESC, e.event_id LIMIT $3"  # noqa: E501
+
+#: One event by id, in the history list's columns (GET /events/{id}).
+_SQL_EVENT_BY_ID = "SELECT e.event_id, e.event_kind, e.protection_class, e.crowd_class, e.title, e.description, e.status, e.movement_id, e.planned_start, e.planned_end, e.actual_start, e.actual_end, e.metadata, e.created_at, e.updated_at, e.source_kind, e.credibility, e.verification_state, e.provenance, ST_X(e.geotag) AS geotag_lon, ST_Y(e.geotag) AS geotag_lat, ST_AsGeoJSON(e.zone_geom) AS zone_geojson FROM events.corridor_events e WHERE e.event_id = $1"  # noqa: E501
 
 _SQL_EVENT_ROUTES = "SELECT r.event_id, r.label, r.segment_ids FROM events.event_routes r WHERE r.event_id = ANY($1::uuid[]) ORDER BY r.event_id, r.route_rank"  # noqa: E501
 
@@ -186,7 +284,12 @@ _SQL_EVENT_FOR_UPDATE = "SELECT e.event_id, e.status, e.event_kind, e.title FROM
 #: The pursuit's authorising recommendation, with its rule and whether the
 #: vehicle is CURRENTLY reported stolen (an active FIR earmark — C-N: such a
 #: pursuit is authorised by the R_STOLEN_SIGHTING, never by an e-challan).
-_SQL_PURSUIT_RECOMMENDATION = "SELECT r.recommendation_id, r.vehicle_id, r.status, r.decided_by, r.rule_id, " + SQL_STOLEN_EARMARK + " AS stolen_vehicle FROM events.enforcement_recommendations r WHERE r.recommendation_id = $1 FOR SHARE"  # noqa: E501
+#: HON-4: also where its evidence came from — the authorising sighting's
+#: source, the evidence's own ``source`` and whether EVERY read of the
+#: vehicle is emulated (NULL when it has none) — so a pursuit of an emulated
+#: vehicle is never opened as a live event.  Scalar sub-selects keep the
+#: FOR SHARE lock on the recommendation row alone.
+_SQL_PURSUIT_RECOMMENDATION = "SELECT r.recommendation_id, r.vehicle_id, r.status, r.decided_by, r.rule_id, " + SQL_STOLEN_EARMARK + " AS stolen_vehicle, (SELECT s.source FROM corridor.vehicle_sightings s WHERE s.sighting_id = r.sighting_id) AS sighting_source, r.evidence->>'source' AS evidence_source, (SELECT bool_and(v.source = 'emulated_anpr') FROM corridor.vehicle_sightings v WHERE v.vehicle_id = r.vehicle_id) AS vehicle_reads_emulated FROM events.enforcement_recommendations r WHERE r.recommendation_id = $1 FOR SHARE"  # noqa: E501
 
 _SQL_ACTIVE_EARMARKS = "SELECT count(*) FROM corridor.vehicle_earmarks e WHERE e.vehicle_id = $1 AND e.cleared_at IS NULL AND e.retention_until > NOW()"  # noqa: E501
 
@@ -213,6 +316,63 @@ def _officer(v: str | None) -> str | None:
     """Trim an officer identity: the shared named-actor rule (C6, C-F) —
     2..64 characters, no control or bidi characters."""
     return named_actor(v)
+
+
+def is_person_key(key: object) -> bool:
+    """True when ``key`` names a person (fail closed, see PERSON_KEY_RE):
+    the denylist anywhere in the key, case-insensitive, or in one of its
+    tokens, on the key as given AND on its NFKC form; only the exempt
+    contract keys and whole opaque ids (a sha1 or a canonical uuid)
+    escape."""
+    raw = str(key)
+    if raw in _PERSON_KEY_EXEMPT or _PERSON_KEY_OPAQUE_ID_RE.fullmatch(raw):
+        return False
+    for s in (raw, unicodedata.normalize("NFKC", raw)):
+        if _PERSON_KEY_ANYWHERE_RE.search(s) is not None:
+            return True
+        t = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", s)
+        t = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", t)
+        if _PERSON_KEY_TOKEN_RE.search(re.sub(r"[^a-z0-9]+", "_", t.lower())) is not None:
+            return True
+    return False
+
+
+def _person_key_exempt_ok(key: str, value: Any) -> bool:
+    """An exempt key carries only its contract value type."""
+    if not isinstance(value, _PERSON_KEY_EXEMPT_TYPES[key]):
+        return False
+    return key != "surface_forms" or all(isinstance(x, str) for x in value)
+
+
+def _person_key_in(value: Any, depth: int = 0) -> str | None:
+    """The first person key at any depth of a JSON-like value (or an exempt
+    key carrying anything but its contract value type), else None."""
+    if depth > 64:
+        return "<nesting deeper than 64 levels>"
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if is_person_key(k) or (
+                str(k) in _PERSON_KEY_EXEMPT and not _person_key_exempt_ok(str(k), v)
+            ):
+                return str(k)
+            hit = _person_key_in(v, depth + 1)
+            if hit:
+                return hit
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            hit = _person_key_in(v, depth + 1)
+            if hit:
+                return hit
+    return None
+
+
+class GeotagModel(BaseModel):
+    """The event's resolved point (021 ``geotag``), inside the city."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lon: float = Field(ge=GEOTAG_BBOX[0], le=GEOTAG_BBOX[2], allow_inf_nan=False)
+    lat: float = Field(ge=GEOTAG_BBOX[1], le=GEOTAG_BBOX[3], allow_inf_nan=False)
 
 
 class RouteSpineModel(BaseModel):
@@ -273,6 +433,35 @@ class CorridorEventRequest(BaseModel):
             "the creation row in events.event_status_log"
         ),
     )
+    # ── OSINT provenance (021, additive; contract C-T) ───────────────────
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "operator | brain | emulator | osint — who created the event; NULL "
+            "unless supplied (no inference). 'osint' only through promotion."
+        ),
+    )
+    credibility: float | None = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False, description="0..1"
+    )
+    verification_state: str | None = Field(
+        default=None,
+        description=(
+            "EMULATED | SIMULATED | UNVERIFIED-OSINT | NEWS-REPORTED | "
+            "OFFICIAL-VERIFIED (required with source_kind osint); CONFIRMED is "
+            "reserved for an officer's confirmation and refused on create"
+        ),
+    )
+    provenance: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "provenance document (source feeds, publishers, geocoder, ...): "
+            "at most 4 KB of JSON, no person key at any depth"
+        ),
+    )
+    geotag: GeotagModel | None = Field(
+        default=None, description="{lon, lat} inside the city bbox (72.40, 22.90, 72.80, 23.20)"
+    )
 
     @field_validator("event_kind")
     @classmethod
@@ -308,6 +497,58 @@ class CorridorEventRequest(BaseModel):
             raise ValueError("movement_id must be a uuid (corridor_events.movement_id)")
         return str(canon)
 
+    @field_validator("source_kind")
+    @classmethod
+    def _valid_source_kind(cls, v: str | None) -> str | None:
+        if v is not None and v not in SOURCE_KINDS:
+            raise ValueError(f"source_kind must be one of {SOURCE_KINDS}")
+        return v
+
+    @field_validator("verification_state")
+    @classmethod
+    def _valid_verification_state(cls, v: str | None) -> str | None:
+        if v is not None and v not in VERIFICATION_STATES:
+            raise ValueError(f"verification_state must be one of {VERIFICATION_STATES}")
+        if v == CONFIRMED_STATE:
+            # plan R29 / ethics rule 7: CONFIRMED records an officer's
+            # confirmation, and no confirm path exists yet — never on create.
+            raise ValueError(
+                "verification_state CONFIRMED is set only by an officer's confirmation, "
+                "never when an event is created"
+            )
+        return v
+
+    @field_validator("provenance")
+    @classmethod
+    def _valid_provenance(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        if v is None:
+            return None
+        hit = _person_key_in(v)
+        if hit:
+            raise ValueError(
+                f"provenance must not carry a person field (forbidden_key:{hit[:64]}) — "
+                "events are about places and situations, never persons"
+            )
+        try:
+            blob = json.dumps(v, allow_nan=False, ensure_ascii=False, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("provenance must be JSON-serialisable (no NaN)") from exc
+        if len(blob.encode("utf-8")) > PROVENANCE_MAX_BYTES:
+            raise ValueError(f"provenance must be at most {PROVENANCE_MAX_BYTES} bytes of JSON")
+        return v
+
+    @model_validator(mode="after")
+    def _osint_fields_complete(self) -> CorridorEventRequest:
+        """An OSINT event carries its honest label and credibility (C-T)."""
+        if self.source_kind == "osint" and (
+            self.verification_state is None or self.credibility is None
+        ):
+            raise ValueError(
+                "source_kind 'osint' requires verification_state and credibility "
+                "(every OSINT event carries its honest label and credibility)"
+            )
+        return self
+
     @model_validator(mode="after")
     def _no_nul_anywhere(self) -> CorridorEventRequest:
         """No NUL in any text the event persists (TEXT and JSONB refuse it)."""
@@ -319,6 +560,7 @@ class CorridorEventRequest(BaseModel):
             "phases": [{"label": p.label, "closure_policy": p.closure_policy} for p in self.phases],
             "metadata": self.metadata,
             "zone_geojson": self.zone_geojson,
+            "provenance": self.provenance,
         }
         where = find_nul(texts)
         if where:
@@ -533,7 +775,28 @@ async def _validate_pursuit(conn: Any, metadata: dict[str, Any]) -> dict[str, An
     out = dict(metadata)
     out["vehicle_id"] = str(vehicle_id)
     out["recommendation_id"] = str(rec_id)
+    # HON-4: a pursuit authorised by an emulated sighting (or of a vehicle
+    # only ever read by the emulator) is an EMULATED event, whatever its
+    # caller's metadata says — event_source() reads this stamp everywhere
+    if pursuit_evidence_emulated(rec):
+        out[EVIDENCE_SOURCE_KEY] = "emulated"
     return out
+
+
+def pursuit_evidence_emulated(rec: Any) -> bool:
+    """Whether a pursuit's authorising evidence is emulated (HON-4): the
+    approved sighting's source, else the recommendation evidence's own
+    ``source``, is an emulated tag — or every read of the vehicle is."""
+    def get(key: str) -> Any:
+        try:
+            return rec.get(key) if hasattr(rec, "get") else rec[key]
+        except (KeyError, IndexError):
+            return None
+
+    tag = get("sighting_source") or get("evidence_source")
+    if tag is not None and label_source(tag) == "emulated":
+        return True
+    return get("vehicle_reads_emulated") is True
 
 
 @router.post("")
@@ -544,7 +807,13 @@ async def create_event(req: CorridorEventRequest, request: Request) -> dict:
     All inserts are parameter-bound (asyncpg ``$n`` placeholders, values
     passed positionally — never interpolated into the SQL text; the same
     contract as adaptive/persistence.py).
+
+    An event with ``source_kind`` 'osint' is created by promotion only: the
+    OSINT router sets ``request.state.osint_promotion`` after a named officer
+    promotes a reported situation; any other caller gets a 422.
     """
+    if req.source_kind == "osint" and getattr(request.state, "osint_promotion", False) is not True:
+        raise HTTPException(status_code=422, detail=OSINT_PROMOTION_ONLY)
     pool = getattr(request.app.state, "pool", None)
     if pool is None:
         raise HTTPException(status_code=503, detail="database pool unavailable")
@@ -586,7 +855,7 @@ async def create_event(req: CorridorEventRequest, request: Request) -> dict:
             if req.event_kind == "vehicle_pursuit":
                 metadata_doc = await _validate_pursuit(conn, metadata_doc)
 
-            insert_event_query = "INSERT INTO events.corridor_events (event_kind, protection_class, crowd_class, title, description, movement_id, planned_start, planned_end, zone_geom, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ST_SetSRID(ST_GeomFromGeoJSON($9), 4326), $10::jsonb) RETURNING event_id, created_at"  # noqa: E501
+            insert_event_query = "INSERT INTO events.corridor_events (event_kind, protection_class, crowd_class, title, description, movement_id, planned_start, planned_end, zone_geom, metadata, source_kind, credibility, verification_state, provenance, geotag) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ST_SetSRID(ST_GeomFromGeoJSON($9), 4326), $10::jsonb, $11, $12, $13, $14::jsonb, ST_SetSRID(ST_MakePoint($15::float8, $16::float8), 4326)) RETURNING event_id, created_at"  # noqa: E501
             row = await conn.fetchrow(
                 insert_event_query,
                 req.event_kind,
@@ -599,6 +868,13 @@ async def create_event(req: CorridorEventRequest, request: Request) -> dict:
                 _coerce_ist(planned_end) if planned_end else None,
                 zone_param,
                 json.dumps(metadata_doc),
+                # 021 provenance (NULL unless supplied; ST_MakePoint(NULL, NULL) is NULL)
+                req.source_kind,
+                req.credibility,
+                req.verification_state,
+                json.dumps(req.provenance) if req.provenance is not None else None,
+                req.geotag.lon if req.geotag is not None else None,
+                req.geotag.lat if req.geotag is not None else None,
             )
             event_id = row["event_id"]
 
@@ -639,6 +915,8 @@ async def create_event(req: CorridorEventRequest, request: Request) -> dict:
         spines=len(req.route_spines),
         phases=len(req.phases),
         actor=actor,
+        source_kind=req.source_kind,
+        verification_state=req.verification_state,
         **_provenance_fields(claim),
     )
     return {
@@ -661,6 +939,34 @@ async def create_event(req: CorridorEventRequest, request: Request) -> dict:
 
 def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
+
+
+def _row_get(row: Any, key: str) -> Any:
+    """An additive (021) column, read tolerantly: asyncpg Records and dict
+    rows have ``.get``; a row without the column reads None."""
+    getter = getattr(row, "get", None)
+    if callable(getter):
+        return getter(key)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _json_object(value: Any) -> dict | None:
+    """A JSONB object column (asyncpg returns JSONB as text) → dict | None."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return value if isinstance(value, dict) else None
+
+
+def _geotag_out(lon: Any, lat: Any) -> dict | None:
+    if lon is None or lat is None:
+        return None
+    return {"lon": round(float(lon), 7), "lat": round(float(lat), 7)}
 
 
 def _spine_out(rr: Any, *, extended: bool = False, history: bool = False) -> dict:
@@ -744,14 +1050,20 @@ async def _event_rows_out(conn: Any, rows: list[Any]) -> list[dict]:
         if isinstance(meta, str):  # asyncpg returns JSONB as text
             with contextlib.suppress(json.JSONDecodeError):
                 meta = json.loads(meta)
+        credibility = _row_get(r, "credibility")
+        meta = meta if isinstance(meta, dict) else {}
+        # HON-4: an emulated event's FIR (a pursuit of an emulated vehicle)
+        # is a demo reference — said so in what the oracle serves
+        demo = event_source(meta, _row_get(r, "source_kind")) == "emulated"
+        mark = mark_demo_fir if demo else (lambda v: v)
         events.append(
             {
                 "event_id": event_id,
                 "event_kind": r["event_kind"],
                 "protection_class": r["protection_class"],
                 "crowd_class": r["crowd_class"],
-                "title": r["title"],
-                "description": r["description"],
+                "title": mark(r["title"]),
+                "description": mark(r["description"]),
                 "status": r["status"],
                 "movement_id": (
                     str(r["movement_id"]) if r["movement_id"] else None
@@ -762,13 +1074,20 @@ async def _event_rows_out(conn: Any, rows: list[Any]) -> list[dict]:
                 "actual_start": _iso(r["actual_start"]),
                 "actual_end": _iso(r["actual_end"]),
                 "updated_at": _iso(r["updated_at"]),
-                "metadata": meta if isinstance(meta, dict) else {},
+                "metadata": mark(meta),
                 "zone_geojson": zone_geojson,  # additive C1 field (optional)
                 "routes": routes_by_event.get(event_id, []),
                 # additive (C-O, 018): spines a route update superseded
                 "route_history": history_by_event.get(event_id, []),
                 "phases": phases_by_event.get(event_id, []),
                 "inputs_key": event_inputs_key(event_id),
+                # additive (021, contract C-T): first-class provenance, NULL
+                # unless the creator supplied it
+                "source_kind": _row_get(r, "source_kind"),
+                "credibility": round(float(credibility), 6) if credibility is not None else None,
+                "verification_state": _row_get(r, "verification_state"),
+                "provenance": _json_object(_row_get(r, "provenance")),
+                "geotag": _geotag_out(_row_get(r, "geotag_lon"), _row_get(r, "geotag_lat")),
             }
         )
     return events
@@ -815,6 +1134,30 @@ async def list_events(
         rows = await conn.fetch(_SQL_EVENTS_HISTORY, statuses, since_dt, limit)
         events = await _event_rows_out(conn, rows)
     return {"events": events, "count": len(events)}
+
+
+@router.get("/{event_id}")
+async def get_event(event_id: str, request: Request) -> dict:
+    """One event row by id — exactly a row of GET /events and /active (spines,
+    phases, provenance: ``source_kind``, ``metadata.source``); 404 when absent.
+
+    Read-only, same posture as the history list.  The deck's public dispatch
+    status reads it to apply the OSINT firewall to the dispatch's OWN event
+    row: a window of recent rows (GET /events?limit=) misses an older event.
+    Declared after ``/active``, so that path never reads as an id."""
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="database pool unavailable")
+    try:
+        eid = _uuid.UUID(event_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="invalid event uuid") from exc
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(_SQL_EVENT_BY_ID, eid)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"event {event_id} not found")
+        events = await _event_rows_out(conn, [row])
+    return events[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1093,13 +1436,21 @@ async def update_event_routes(
 
 __all__ = [
     "CLOSING_STATUSES",
+    "CONFIRMED_STATE",
     "EVENT_KINDS",
     "EVENT_STATUSES",
     "EVENT_TRANSITIONS",
+    "GEOTAG_BBOX",
     "LIVE_EVENT_STATUSES",
+    "OSINT_PROMOTION_ONLY",
+    "PERSON_KEY_RE",
+    "PROVENANCE_MAX_BYTES",
     "ROUTE_VARIANT_RE",
+    "SOURCE_KINDS",
     "STATUS_LOG",
+    "VERIFICATION_STATES",
     "event_inputs_key",
+    "is_person_key",
     "load_spines",
     "router",
 ]

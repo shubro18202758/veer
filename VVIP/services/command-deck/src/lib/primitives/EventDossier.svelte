@@ -1,13 +1,21 @@
 <script lang="ts">
 	/**
-	 * EventDossier — the dossier frame. Supplies the frame (title, band
-	 * chip, event id in mono, sectioned slots); the pages own the content:
-	 * metadata, phases, audit_tail narrative (FeedItems), trilingual
-	 * advisory preview, ranked choke plan.
+	 * EventDossier — the dossier frame, rebuilt as the event property block of
+	 * src/lib/ui (SPEC §5.2): the title (H5), the event id through the
+	 * formatter (mono), the band chip and the state tag; then the page's
+	 * grouped sections (details, phases, audit, advisory), each under a 12 px
+	 * group heading like a PropertyTable group. The pages own the content.
+	 * With no event: the honest empty state. `data-prim="event-dossier"` stays.
 	 */
 	import type { Band } from '$lib/design/tokens';
+	import { t } from '$lib/i18n/strings';
+	import '$lib/i18n/packs';
+	import Tag from '$lib/ui/Tag.svelte';
+	import Id from '$lib/ui/format/Id.svelte';
+	import { uiLang } from '$lib/ui/lang';
 	import BandChip from './BandChip.svelte';
 	import EmptyState from './EmptyState.svelte';
+	import { sentenceStart } from './text';
 
 	interface Props {
 		event?: {
@@ -28,63 +36,37 @@
 		children?: import('svelte').Snippet;
 	}
 
-	let {
-		event = null,
-		title,
-		emptyTitle = 'No event selected',
-		lang = 'en',
-		meta,
-		phases,
-		audit,
-		advisory,
-		footer,
-		children
-	}: Props = $props();
+	let { event = null, title, emptyTitle, lang, meta, phases, audit, advisory, footer, children }: Props = $props();
 
+	const ctxLang = uiLang();
+	const L = $derived(lang ?? ctxLang());
 	const heading = $derived(title ?? event?.name ?? null);
-	const sectionLabel = (key: string) => key;
 </script>
+
+{#snippet group(key: string, body: import('svelte').Snippet)}
+	<div class="group" data-group={key}>
+		<h4 class="gh">{t(L, `dossier_sec_${key}`)}</h4>
+		{@render body()}
+	</div>
+{/snippet}
 
 <section class="dossier" data-prim="event-dossier">
 	{#if heading}
 		<header class="head">
-			<div class="head-text">
+			<div class="title-row">
 				<h3 class="title">{heading}</h3>
-				{#if event?.eventId}
-					<span class="eid mono">{event.eventId}</span>
-				{/if}
+				{#if event?.band}<BandChip band={event.band} size="sm" lang={L} />{/if}
+				{#if event?.state}<Tag>{sentenceStart(event.state)}</Tag>{/if}
 			</div>
-			{#if event?.band}<BandChip band={event.band} size="sm" />{/if}
-			{#if event?.state}<span class="state mono">{event.state}</span>{/if}
+			{#if event?.eventId}
+				<div class="eid"><Id value={event.eventId} /></div>
+			{/if}
 		</header>
 
-		{#if meta}
-			<div class="section">
-				<h4 class="section-label">{sectionLabel('meta')}</h4>
-				{@render meta()}
-			</div>
-		{/if}
-
-		{#if phases}
-			<div class="section">
-				<h4 class="section-label">{sectionLabel('phases')}</h4>
-				{@render phases()}
-			</div>
-		{/if}
-
-		{#if audit}
-			<div class="section">
-				<h4 class="section-label">{sectionLabel('audit_tail')}</h4>
-				{@render audit()}
-			</div>
-		{/if}
-
-		{#if advisory}
-			<div class="section">
-				<h4 class="section-label">{sectionLabel('advisory')}</h4>
-				{@render advisory()}
-			</div>
-		{/if}
+		{#if meta}{@render group('meta', meta)}{/if}
+		{#if phases}{@render group('phases', phases)}{/if}
+		{#if audit}{@render group('audit', audit)}{/if}
+		{#if advisory}{@render group('advisory', advisory)}{/if}
 
 		{@render children?.()}
 
@@ -94,7 +76,7 @@
 			</footer>
 		{/if}
 	{:else}
-		<EmptyState title={emptyTitle} hint="Select an event on the board or the city canvas." />
+		<EmptyState title={emptyTitle ?? t(L, 'dossier_empty')} hint={t(L, 'dossier_empty_hint')} />
 	{/if}
 </section>
 
@@ -102,69 +84,64 @@
 	.dossier {
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-gap-panel);
-		background: var(--v-surface-1);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-panel);
-		padding: var(--v-pad-panel);
 		min-height: 0;
+		padding: 12px 16px;
+		border-radius: var(--v-radius-panel);
+		background: var(--v-surface-1);
+		box-shadow: var(--v-elev-0);
+		color: var(--v-ink-1);
+		font-family: var(--v-font-ui);
+		font-size: var(--v-text-base);
+		line-height: calc(var(--v-text-base) + 4px);
 	}
 
 	.head {
 		display: flex;
-		align-items: center;
-		gap: var(--v-space-2);
+		flex-direction: column;
+		gap: 2px;
+		padding-bottom: 8px;
 	}
 
-	.head-text {
+	.title-row {
 		display: flex;
-		align-items: baseline;
-		gap: var(--v-space-2);
-		flex: 1;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
 		min-width: 0;
 	}
 
 	.title {
 		margin: 0;
 		font-size: var(--v-text-md);
-		color: var(--v-ink-1);
+		font-weight: 600;
+		line-height: 20px;
+		overflow-wrap: anywhere;
 	}
 
 	.eid {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
+		color: var(--v-ink-2);
+		font-size: var(--v-text-xs);
 	}
 
-	.state {
-		font-size: var(--v-text-2xs);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-ink-3);
-	}
-
-	.mono {
-		font-family: var(--v-font-mono);
-	}
-
-	.section {
+	/* a group: the PropertyTable group heading (12 px, 600, ink-2) over its rows */
+	.group {
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-1);
+		gap: 4px;
+		padding: 12px 0 8px;
 		border-top: 1px solid var(--v-line-1);
-		padding-top: var(--v-space-2);
 	}
 
-	.section-label {
+	.gh {
 		margin: 0;
-		font-size: var(--v-text-2xs);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-ink-3);
+		color: var(--v-ink-2);
+		font-size: var(--v-text-xs);
+		font-weight: 600;
+		line-height: calc(var(--v-text-xs) + 4px);
 	}
 
 	.foot {
+		padding-top: 8px;
 		border-top: 1px solid var(--v-line-1);
-		padding-top: var(--v-space-2);
 	}
 </style>

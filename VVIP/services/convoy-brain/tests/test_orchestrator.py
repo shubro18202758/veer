@@ -104,7 +104,8 @@ class TestStrategicSelection:
         orch = Orchestrator(bridge, executor, fake_store,
                             decider_brain=DeciderBrain(
                                 ScriptDecider(["find_convoy_routes", "final_answer"])))
-        result = await run_turn(orch)
+        # the segment ids are the operator's (HON-2: drafted ids need a source)
+        result = await run_turn(orch, "Plan a Z+ route from segment 1001 to segment 1040")
 
         assert result["action"] == "route_ready"
         assert [c["name"] for c in result["tool_calls"]] == ["find_convoy_routes"]
@@ -163,8 +164,11 @@ class TestFallbackChain:
                             decider_brain=DeciderBrain(
                                 ScriptDecider(error=DeciderUnavailable("down"))))
         result = await run_turn(orch, "What is the current traffic on the ring road?")
-        # heuristic keyword selection picked a tool, heuristic arguments ran it
-        assert [c["name"] for c in result["tool_calls"]] == ["get_live_traffic"]
+        # the named road is resolved by name first (HON-2; this executor has
+        # no network, so the lookup fails and is said); heuristic keyword
+        # selection picked a tool, heuristic arguments ran it
+        assert [c["name"] for c in result["tool_calls"]] == [
+            "query_segments_in_bbox", "get_live_traffic"]
         assert result["tiers_used"][-1] == "heuristic_final"
         assert result["confidence"] == "low"
         assert result["data"]["tier"] == "heuristic"
@@ -185,7 +189,7 @@ class TestFallbackChain:
         orch = Orchestrator(bridge, executor, fake_store,
                             decider_brain=DeciderBrain(
                                 ScriptDecider(["find_convoy_routes", "final_answer"])))
-        result = await run_turn(orch)
+        result = await run_turn(orch, "Plan a Z+ route from segment 1 to segment 2")
         assert result["tool_calls"][0]["arguments"] == {
             "origin_segment": 1, "destination_segment": 2,
         }
@@ -278,7 +282,7 @@ class TestTimeoutGuard:
         orch = Orchestrator(bridge, executor, fake_store,
                             decider_brain=DeciderBrain(
                                 ScriptDecider(["get_live_traffic", "final_answer"])))
-        result = await run_turn(orch, "traffic now please")
+        result = await run_turn(orch, "traffic on segment 1 now please")
         # retried once, then the error result is fed into the final answer
         assert len(executor.calls) == 2
         assert result["action"] == "after_error"
@@ -334,7 +338,7 @@ class TestRetryPolicy:
             "oracle HTTP 422", status_code=422, retryable=False)})
         orch = Orchestrator(bridge, executor, fake_store, decider_brain=DeciderBrain(
             ScriptDecider(["get_live_traffic", "final_answer"])))
-        await run_turn(orch, "traffic now please")
+        await run_turn(orch, "traffic on segment 1 now please")
         assert len(executor.calls) == 1
 
 
@@ -454,7 +458,8 @@ class TestEventCallback:
         kinds = [k for k, _ in events]
         assert kinds == ["thought", "thought", "tool_call", "tool_result", "thought", "thought"]
         assert events[0][1]["tier"] == "decider"
-        assert result["tiers"] == ["decider:pplx-decider-v1-27b", "gemma:aditi-ps18-v7h"]
+        # the operator-facing tactical name (COPY-10), never the served alias
+        assert result["tiers"] == ["decider:pplx-decider-v1-27b", "gemma:gemma4-12b-veer"]
 
     async def test_a_failing_sink_never_breaks_the_turn(self, fake_store):
         async def sink(kind, data):
@@ -503,19 +508,26 @@ class TestFollowUpGrounding:
         ]}
         first_answer = dict(FINAL_OK, reasoning="Segment 1014 has 4 lanes and a 50 km/h limit.")
         bridge = ScriptBridge(replies=[
+            json.dumps({"arguments": {"segment_id": 1014}}),
             json.dumps(first_answer),
             json.dumps({"arguments": {"segment_ids": [1014]}}),
             json.dumps(FINAL_OK),
         ])
-        decider = RecordingDecider(["final_answer", "get_live_traffic", "final_answer"])
-        orch = Orchestrator(bridge, FakeExecutor(routes={"get_live_traffic": lambda a: huge}),
+        # the first answer's figures come from a tool (the grounding check
+        # removes figures no tool reported)
+        decider = RecordingDecider(["query_segment_details", "final_answer",
+                                    "get_live_traffic", "final_answer"])
+        details = {"segment_id": 1014, "road_name": "Test Road", "lanes": 4,
+                   "speed_limit_kmh": 50}
+        orch = Orchestrator(bridge, FakeExecutor(routes={
+            "get_live_traffic": lambda a: huge, "query_segment_details": details}),
                             fake_store, decider_brain=DeciderBrain(decider))
         await orch.create_session("s1")
         await orch.process_turn("s1", "Lane details for segment 1014")
         await orch.process_turn("s1", "Is that enough lanes for a Z+ movement?")
 
         assert "earlier_in_session" not in decider.states[0]
-        assert "Segment 1014 has 4 lanes" in decider.states[1]
+        assert "Segment 1014 has 4 lanes" in decider.states[2]
         final = [c for c in bridge.calls if c["schema"] == "orchestrator_final"][-1]
         transcript = final["extra"][0]["content"]
         assert transcript.startswith("[EARLIER IN THIS SESSION]")

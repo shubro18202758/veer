@@ -58,6 +58,24 @@
 # lets it drive its deliberate violators — each only a PENDING e-challan
 # recommendation for a named officer's review, never a fine on its own — and
 # EMULATOR_CITY_SEED (default 1411) picks its deterministic day program.
+#
+# PORTS. The host ports above are this file's constants. scripts/veer_up.sh
+# reads them from the rendered compose (docker compose config) and probes
+# exactly those, so a shell that exports ORACLE_PORT & co. for a sandbox can
+# neither move the live stack nor make --status probe somebody else's.
+#
+# PASS-THROUGH FLAGS. A key with no value below (e.g. `VVIP_CONFIDENCE_FLOOR:`)
+# is passed through from the bring-up's environment (veer.env — persist with
+# scripts/veer_env.sh --set KEY VALUE) and is ABSENT in the container when
+# unset there, so each service keeps its own built-in default; an empty string
+# never reaches a parser.
+#
+# HEALTHCHECKS (oracle, brain, deck; the emulator adds its store and Valkey
+# seams) are connectivity only: the HTTP service answers on its port.
+# Upstream conditions a restart cannot fix (a model host still loading, NATS
+# down) stay visible in /health and in scripts/veer_up.sh --status instead of
+# flapping container health. osint-ingress (compose.osint-ingress.yml) waits
+# for a healthy oracle.
 
 services:
   postgis:
@@ -103,6 +121,10 @@ services:
     image: vvip-argus-signal-ingress:latest
     # NATS_URL stays nats://nats:4222 — service DNS on this project's own
     # bridge network, i.e. the argus nats.
+    environment:
+      # seed of the synthetic city field (src/feeds/city.rs; pass-through:
+      # unset = the built-in default)
+      INGRESS_CITY_SEED:
     depends_on:
       nats:
         condition: service_healthy
@@ -129,6 +151,27 @@ services:
       PORT: "8091"
       # C7 city signal-plan writer: empty = OFF; veer_up.sh --demo sets 1.
       VVIP_SIGNAL_POLICY_WRITER: ${VVIP_SIGNAL_POLICY_WRITER:-}
+      # The same switch as the brain's (below): earmark create / clear
+      # (vehicles/) and city signal-plan apply / restore (signals/) must name
+      # the officer — the deck-verified x-veer-officer header or the body's
+      # officer — else 422. Unnamed writes were silently attributed to
+      # 'operator' before. 0 = optional, as for the brain.
+      VVIP_REQUIRE_OFFICER: ${VVIP_REQUIRE_OFFICER:-1}
+      # pass-through (unset = the oracle's default): 1 = accept reads labelled
+      # live ANPR (a real vendor feed; otherwise refused), and the situation
+      # engine's robust-inputs override (adaptive/engine_loop.py)
+      VVIP_ACCEPT_LIVE_ANPR:
+      VVIP_ADAPTIVE_ROBUST_INPUTS:
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json,os,sys,urllib.request as u; d=json.load(u.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT', '8091'), timeout=4)); sys.exit(0 if d.get('status') == 'ok' else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
 
   convoy-brain:
     container_name: vvip-argus-convoy-brain
@@ -141,9 +184,7 @@ services:
     ports: !override []
     extra_hosts: !override []
     environment:
-      VVIP_DATABASE_URL: postgresql://corridor_admin:${POSTGIS_PASSWORD:-dev_changeme}@127.0.0.1:56434/corridor_db
       VVIP_VALKEY_URL: redis://127.0.0.1:6380
-      VVIP_NATS_URL: nats://127.0.0.1:4223
       MODEL_HOST_URL: http://127.0.0.1:8083
       LLAMA_BASE_URL: http://127.0.0.1:8084
       EMBEDDING_SERVICE_URL: http://127.0.0.1:8085
@@ -162,6 +203,27 @@ services:
       # 0 = the officer is optional (an unnamed stop / clear is attributed to
       # the brain's system actor).
       VVIP_REQUIRE_OFFICER: ${VVIP_REQUIRE_OFFICER:-1}
+      # pass-through (unset = the brain's defaults in config.py): the emulated
+      # escort's cruise speed (5..120 km/h), the wait for a real GPS fix
+      # (10..3600 s), the route-switch approval window (15..600 s), the
+      # decider's confidence floor, and the tier-0 cache kill switch
+      VVIP_ESCORT_SIM_SPEED_KMH:
+      VVIP_ESCORT_GPS_TIMEOUT_SEC:
+      VVIP_ESCORT_APPROVAL_TIMEOUT_SEC:
+      VVIP_CONFIDENCE_FLOOR:
+      DECIDER_TIER0_DISABLE:
+    healthcheck:
+      # /health answers 'ok' or 'degraded' (a model host loading or down):
+      # both mean the brain itself is up
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json,os,sys,urllib.request as u; d=json.load(u.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT', '8092'), timeout=12)); sys.exit(0 if d.get('status') in ('ok', 'degraded') else 1)"
+      interval: 20s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
 
   command-deck:
     container_name: vvip-argus-command-deck
@@ -188,6 +250,18 @@ services:
       VEER_OPERATOR_PIN: ${VEER_OPERATOR_PIN:-}
       VEER_SESSION_SECRET: ${VEER_SESSION_SECRET:-}
       VEER_SESSION_SECURE: ${VEER_SESSION_SECURE:-}
+    healthcheck:
+      # GET /api/session: answered with the gate state whether or not the
+      # operator gate is on (no proxy, no upstream, no cookie set)
+      test:
+        - CMD
+        - bun
+        - -e
+        - "const r = await fetch('http://127.0.0.1:' + (process.env.PORT || '5173') + '/api/session', { signal: AbortSignal.timeout(4000) }); const d = await r.json(); process.exit(r.ok && 'gate' in d ? 0 : 1);"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   event-emulator:
     container_name: vvip-argus-event-emulator
@@ -209,6 +283,9 @@ services:
       EMULATOR_TRAFFIC_ORACLE_URL: http://localhost:8091
       EMULATOR_DECK_ORIGINS: http://127.0.0.1:5273,http://localhost:5273
       HOST: 127.0.0.1
+      # the emulator's own default, named here so compose is the one source
+      # of every port scripts/veer_up.sh probes
+      PORT: "8090"
       # ambient living-city emulation (event-emulator, WP-13); 0 = off
       EMULATOR_LIVING_CITY: ${EMULATOR_LIVING_CITY:-0}
       # the living city's deliberate violators (PENDING recommendations for a
@@ -232,7 +309,7 @@ services:
         # historical conditions (a failed last run, NATS/oracle down) that a
         # container restart cannot fix — those stay visible in /health and in
         # veer_up.sh --status instead of flapping the container's health.
-        - "import json,sys,urllib.request as u; d=json.load(u.urlopen('http://127.0.0.1:8090/health', timeout=3)); s=d.get('stack', {}); sys.exit(0 if s.get('store') and s.get('valkey') else 1)"
+        - "import json,os,sys,urllib.request as u; d=json.load(u.urlopen('http://127.0.0.1:%s/health' % os.environ.get('PORT', '8090'), timeout=3)); s=d.get('stack', {}); sys.exit(0 if s.get('store') and s.get('valkey') else 1)"
       interval: 15s
       timeout: 5s
       retries: 3

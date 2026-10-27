@@ -4,9 +4,11 @@
 **One unbroken session on the command deck of the live stack** — a browser
 on the GB10 box at `http://127.0.0.1:5273`, **signed in as the duty officer**
 (name + PIN; every approval in the video is recorded under that name). `/`
-is the Convoy Command cockpit over 3D Ahmedabad, `/ops` the situation wall.
-No cuts between beats: the camera may move (cockpit → ops → gods-eye →
-citizen → driver → comms), the session never stops. Every beat is a real
+is Home (the one thing that needs the officer now), `/decide` takes one
+decision at a time, and under Analyst `/ops` is the situation wall and
+`/gods-eye` the 3D city. No cuts between beats: the camera may move (home →
+ops → decide → gods-eye → citizen → driver → comms), the session never
+stops. Every beat is a real
 flow proven end to end on the real stack — by the judge's journeys
 (`VVIP/scripts/journeys.mjs`, J1–J6) and the flagship showcase
 (`VVIP/scripts/showcase_run.sh`; artifacts in `VVIP/showcase/`) — nothing in
@@ -16,7 +18,7 @@ hain, aur har screen par likha hai" — is delivered once, in Beat 2, and
 never repeated.*
 
 **Pre-roll (not recorded):**
-- `bash VVIP/scripts/veer_up.sh --status` → **READY 11/11** (the stack also
+- `bash VVIP/scripts/veer_up.sh --status` → **READY 12/12** (the stack also
   comes back by itself after a reboot).
 - Within ~20 minutes of recording — and at least 30 minutes after any
   showcase or `journeys.mjs --live` run (their finished dispatch tiles
@@ -124,7 +126,7 @@ unit. Approve, raste mein, on-scene: har kadam ek audit row."
 **[2:15–2:40] BEAT 8 — THE GOLDEN HOUR: the driver's own window.**
 Visual: cut to `/driver` (Daylight theme, Gujarati-first, no sign-in). The
 golden-hour counter ticks. Request → **"awaiting duty officer"** → the duty
-officer **APPROVES** on `/ops` → **WINDOW OPEN** with the live countdown.
+officer **APPROVES** in Decide (or on `/ops`) → **WINDOW OPEN** with the live countdown.
 (The evaluating → proposal steps belong to the labelled scripted fallback,
 which shows only when no live event is up — not in this live session.)
 VO: "Aur wahi jo aaj exist nahi karta — 108 driver ka apna rasta. Ek
@@ -153,7 +155,7 @@ Team Veer.
 - [ ] Record 1280×720+ (1680×1050 preferred — the wall's three-column grid
       activates ≥1500px). Browser zoom 100%. One continuous session; cuts
       only between screens, never within a flow.
-- [ ] Sign in first; pre-open tabs in order: `/`, `/ops`, `/gods-eye`,
+- [ ] Sign in first; pre-open tabs in order: `/`, `/ops`, `/decide`, `/gods-eye`,
       `/citizen`, `/driver`, `/comms` — all on `http://127.0.0.1:5273`. No
       dev server in the video. Give the 3D tiles a minute to stream in
       before recording.

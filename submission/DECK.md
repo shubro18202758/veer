@@ -9,9 +9,11 @@
 numbers are pulled live from `VVIP/scripts/impact_results.json` by
 `submission/make_deck.py`. **Interface of record: the SvelteKit
 command-deck at `http://127.0.0.1:5273` on the GB10 box, behind the
-operator sign-in — `/` the Convoy Command cockpit, `/ops` the situation
-wall, `/gods-eye` the city in photorealistic 3D, `/citizen` and `/driver`
-public, `/comms`, `/chat` — the canonical surface for every audience; the
+operator sign-in — the V3 interface (live since 2026-10-27): `/` Home,
+`/map`, `/decide`, `/plan`, `/assistant`, `/comms` (Advisories) on one rail,
+and under Analyst the workspace `/analyst`, the situation wall `/ops`, the
+city in photorealistic 3D `/gods-eye` and `/chat`; `/citizen` and `/driver`
+public — the canonical surface for every audience; the
 legacy React `frontend/` is the offline fallback demo** —
 `VVIP/README.md` "The Interface", `VVIP/TECHNICAL_DOCS.md` §2.7 and §16.)*
 
@@ -82,13 +84,19 @@ Same engine the operators run — **but the Very Important Persons are the
 Voter on the bus, the Victim in the 108 ambulance, and the Vulnerable
 patient for whom ten minutes matter.**
 
-- **One canonical interface for every audience:** the SvelteKit
-  command-deck at `:5273` — the **Convoy Command cockpit** at `/`, the
-  `/ops` situation wall, the `/gods-eye` cinematic, the public `/citizen`
-  and `/driver`, the trilingual `/comms` desk and `/chat`. Operators sign
-  in by name; every approval is recorded under it. One design system,
-  verified surface-by-surface by a headless camera (40/40 checks). The
-  React demo is retained only as the offline fallback.
+- **One canonical interface for every audience — simple by default,
+  deep on demand:** the SvelteKit command-deck at `:5273`. **Home** shows
+  the one thing that needs an officer now over the real map of its place;
+  **Decide** takes one decision at a time and says what changes if you
+  approve; **Map**, **Plan**, **Assistant** and the trilingual
+  **Advisories** share one left rail; the full-density workspace, the
+  `/ops` situation wall and the 3D city sit one click deeper under
+  **Analyst**; the public `/citizen` and `/driver` pages run in a calm day
+  theme. Neutral black-and-white surfaces where colour only carries
+  meaning, with real place photographs (credited, labelled not live),
+  agency marks and artwork for every event kind. Operators sign in by name;
+  every approval is recorded under it. The React demo is retained only as
+  the offline fallback.
 - **The God's-eye — real 3D Ahmedabad, one picture for every agency:**
   signed-in operators see Google Photorealistic 3D Tiles over Cesium World
   Terrain (chip `PHOTOREAL 3D · GOOGLE`) with the overlays draped on the
@@ -147,20 +155,23 @@ patient for whom ten minutes matter.**
 - **One interface, live on the box:** `bash scripts/veer_up.sh` brings the
   whole stack up — and it **starts itself at boot**: real reboots on
   2026-10-23 came back to **READY 11/11 in 4 min 25 s** with no manual
-  command. Open `http://127.0.0.1:5273`, sign in by name: `/` is **the
-  Convoy Command cockpit** (served directly), `/ops` the situation wall
-  (band masthead, Corridor Operations Board, Pursuit & Watchlist, the
-  Decision Queue with its escort lane, Jan Rakshak Dispatch, City Signal
-  Plans, the AMA card, the Decision-Audit Stream, the God's-eye canvas).
-  Per-surface acceptance is a camera, not a claim:
-  `services/command-deck/tests/screens-verify.mjs` — **40/40 checks green**
-  on the live deck (2026-10-24; artifacts at `tests/artifacts/screens/`).
+  command. Open `http://127.0.0.1:5273`, sign in by name: `/` is **Home**,
+  and the V3 interface went live on **2026-10-27** (READY 12/12 with the
+  OSINT service on, migrations 001–025, the operator gate on); under
+  Analyst, `/ops` is the situation wall (band masthead, Corridor Operations
+  Board, Pursuit & Watchlist, the Decision Queue with its escort lane, Jan
+  Rakshak Dispatch, City Signal Plans, the AMA card, the Decision-Audit
+  Stream, the God's-eye canvas). Per-surface acceptance is a camera, not a
+  claim: `services/command-deck/tests/screens-verify.mjs` — **40/40 checks
+  green** on the live deck (2026-10-24, the pre-V3 deck; re-run green on
+  the V3 deck on 2026-10-27, its two dev-harness checks skipped in
+  production; artifacts at `tests/artifacts/screens/`).
   The legacy React `frontend/` remains the **offline fallback** (scripted
   simulation, no GPU, no backends; it ships with an 11-check e2e journey).
 - **Deployed, then accepted on the live stack (night of 2026-10-23/24
   IST):** the release went live at 23:33 (`veer_up.sh --build`, READY
   11/11, the real-road network `osm 49/49 · 34 junctions`, migrations
-  001–020) and its 22-step acceptance ladder ran there — **19 passed
+  001 through 020 at the time) and its 22-step acceptance ladder ran there — **19 passed
   first time**. The 3 that failed are on the record with their fixes:
   the live tier-0 gate found no cache hit on three identical plans (the
   decider's route options were the oracle's per-request ids — now labels
@@ -221,7 +232,13 @@ patient for whom ten minutes matter.**
   name of the officer who made it — a signed-in human in the judged demo;
   a script's unattended approval says so (`Scripted demo officer
   (showcase script)`).
-- **Screenshots — the hero shots recaptured 2026-10-24 01:25–01:26 IST on
+- **Screenshots on slides 3–4 — the V3 interface on the live stack,
+  2026-10-27** (1440×900): `VVIP/showcase/showcase_v3_home.png` (Home),
+  `VVIP/showcase/showcase_v3_citizen.png` (the public citizen page, keyless),
+  `VVIP/showcase/showcase_v3_decide.png` (Decide on the stolen-vehicle sighting,
+  EMULATED reads, plate masked until an officer is named) and
+  `VVIP/showcase/showcase_v3_map.png` (the Map on Google's photoreal 3D city).
+- **The flagship's canvas hero shots recaptured 2026-10-24 01:25–01:26 IST on
   the live stack in its clean, staged judging state** (after the
   pre-judging reset; 1440×900, pixel-proven non-blank; the three operator
   views on `PHOTOREAL 3D · GOOGLE`, the public page keyless):
@@ -251,14 +268,15 @@ patient for whom ten minutes matter.**
   structural (delay ∝ hold²), so even the conservative bound clears the
   original unmeasured "6×" we no longer lead with.
 - **Under the hood — built, with tests; only measured numbers quoted:**
-  **2709 pytest** tests collected on the deployed tree (incl. the
-  emulator's 328, the traffic-oracle's 1500 and convoy-brain's 635 after
-  the tier-0 fix; every suite run whole: 2624 pass, 85 skip themselves
-  when an optional dependency or a scratch store (a database, a Valkey) is absent) and the
-  Rust ingress's 120 cargo tests; the generalized
-  events schema and the enforcement tables (migrations 007–011) extended
-  by 012–020 — the real-road network is migration 020 — **migrations
-  001–020** on a fresh install. The two-tier
+  **5123 pytest** tests collected on the deployed tree (incl. the
+  emulator's 331, the traffic-oracle's 2168, convoy-brain's 743 and the
+  four OSINT services'; the 2026-10-27 gate run of the ten service suites:
+  5012 pass, 92 skip themselves when an optional dependency or a scratch
+  store (a database, a Valkey) is absent) and the Rust ingress's 120 cargo
+  tests; the generalized events schema and the enforcement tables
+  (migrations 007–011) extended by 012–025 — the real-road network is
+  migration 020, OSINT events and decision support 021–025 — **migrations
+  001–025** on a fresh install. The two-tier
   brain (27B decider + Gemma 4 12B + dual embedders) resident on a 121 GiB
   GB10 edge box; bench (`scripts/bench_results.json` +
   `bench_adversarial_report.json`, **2026-10-13T13:24Z**): decider
@@ -276,9 +294,10 @@ patient for whom ten minutes matter.**
 ### Demo storyboard (the judged live demo, in order)
 
 1. **Open `http://127.0.0.1:5273` on the box and sign in** as the duty
-   officer → `/` is **the Convoy Command cockpit** over 3D Ahmedabad; step
-   into **`/ops`** — band masthead live, the event board, the
-   Decision-Audit Stream scrolling.
+   officer → `/` is **Home**: the one decision that needs you now over the
+   real map of its place, the city's status in one sentence; step into
+   **Analyst → Situation wall** (`/ops`) — band masthead live, the event
+   board, the Decision-Audit Stream scrolling.
 2. **`/gods-eye`** fullscreen — the photorealistic 3D city with the live
    congestion network draped on the real roads; flip sensor modes; paste a
    share link to restore the exact view.
@@ -385,8 +404,9 @@ patient for whom ten minutes matter.**
   route switch: the AI proposes, a named officer decides. The interface of
   record is the backend-wired command-deck at `:5273` behind the operator
   sign-in; the screenshots on these slides were taken on it against the
-  running live stack (recaptured 2026-10-24 in the staged judging state —
-  the operator views in photorealistic 3D, the public page keyless); the
+  running live stack (2026-10-27, the V3 interface — the operator views
+  signed in, the public page keyless; reference photos are credited and
+  labelled not live); the
   legacy React demo runs a clearly-labelled scripted
   simulation as the **offline fallback**; the flagship showcase injects
   emulator-generated *causes* into the real stack (camera reads labelled

@@ -53,6 +53,15 @@
  * content-encoding / content-length are never
  * relayed with them.
  *
+ * MACHINE INGEST (plan R26): `POST /api/v1/osint/signals` is the loopback
+ * ingest path osint-ingress posts to the oracle DIRECTLY — never through the
+ * deck. The deck proxies all of /api/v1, so a browser (signed in or not)
+ * could otherwise post a fabricated "official" signal. Any write to that
+ * path — checked on every decoding of the path (once-decoded canonical, %2F
+ * spellings, any case, a trailing slash) — is answered 403 "machine ingest:
+ * loopback only" BEFORE the gate and before any upstream fetch, gate on or
+ * off. Every other /api/v1/osint/* read proxies as usual.
+ *
  * OPERATOR GATE (opt-in, VEER_OPERATOR_PIN — see
  * $lib/shell/operator-session.server.ts): without the signed session
  * cookie POST /api/session issues, every proxied request is DEFAULT-DENIED
@@ -61,6 +70,13 @@
  * (capped per client: 429 beyond PUBLIC_DISPATCH_MAX). The deck's own
  * server-side reads (the public projection, /api/public/*) are
  * sub-requests and pass.
+ *
+ * ROUTES vs URLS (the V3 root flip, src/hooks.ts + $lib/shell/root-flip.ts): `/` is Home and `/analyst` the v2
+ * workspace, by a `reroute` — so `event.route.id` is the RESOLVED node (`/(v3)/home`, `/(deck)`) while
+ * `event.url.pathname` stays what the client asked for. Everything here that decides per page (the operator
+ * CSP, the theme, the default language) reads the route id and never the URL, which is what keeps `/analyst`
+ * on exactly the policy the old `/` had (tests/ops-guard.entry.ts holds it). The gate and the proxy rules
+ * name /api paths only; no page URL is special to them.
  *
  * DOCUMENTS: every route sets its own <title>; a document that rendered
  * none (SvelteKit's built-in error page for an unknown path) gets the
@@ -74,12 +90,14 @@ import { randomBytes } from 'node:crypto';
 import type { Handle, RequestEvent } from '@sveltejs/kit';
 import {
 	PUBLIC_DISPATCH_MAX,
+	canonicalGatePath,
 	gateDecision,
 	gateEnabled,
 	sessionFromCookieHeader,
 	takePublicDispatch,
 } from './lib/shell/operator-session.server';
 import { langFromCookieHeader } from './lib/i18n/lang-cookie';
+import { clientAbort, proxyBudgetMs } from './lib/shell/proxy-limits';
 
 interface ProxyRule {
 	prefix: string;
@@ -202,20 +220,67 @@ function isUpgrade(request: Request): boolean {
 	return Boolean(request.headers.get('upgrade'));
 }
 
+/** The oracle's machine-ingest path (osint-ingress → oracle on loopback, never via the deck). */
+const MACHINE_INGEST_PATH = '/api/v1/osint/signals';
+const MACHINE_INGEST_DETAIL = 'machine ingest: loopback only';
+
+/** Collapse repeated slashes, resolve '.' / '..' segments, drop a trailing slash, lower-case. */
+function normaliseIngestPath(path: string): string {
+	const out: string[] = [];
+	for (const seg of path.replace(/\\/g, '/').split('/')) {
+		if (seg === '' || seg === '.') continue;
+		if (seg === '..') out.pop();
+		else out.push(seg);
+	}
+	return `/${out.join('/')}`.toLowerCase();
+}
+
+/**
+ * True for a write (anything but GET/HEAD/OPTIONS) to the machine-ingest path
+ * in ANY spelling: the raw pathname, its canonical once-decoded form (what
+ * uvicorn routes on) and up to three further decodings (so %252F, %2e%2e and
+ * friends cannot slip past), each normalised. Refusing a spelling the oracle
+ * would 404 costs nothing; letting one through would be a forged signal.
+ */
+function isMachineIngestWrite(method: string, pathname: string): boolean {
+	const m = method.toUpperCase();
+	if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return false;
+	const spellings = new Set<string>([pathname]);
+	const canonical = canonicalGatePath(pathname);
+	if (canonical) spellings.add(canonical);
+	let decoded = pathname;
+	for (let i = 0; i < 3; i++) {
+		try {
+			const next = decodeURIComponent(decoded);
+			if (next === decoded) break;
+			decoded = next;
+			spellings.add(decoded);
+		} catch {
+			break;
+		}
+	}
+	for (const p of spellings) if (normaliseIngestPath(p) === MACHINE_INGEST_PATH) return true;
+	return false;
+}
+
 /**
  * Per-route document defaults: public pages render daylight; the language
  * is the reader's veer_lang choice — read by the same pure parser the
  * browser uses (lib/i18n/lang-cookie langFromCookieHeader: only en | hi |
  * gu count, a malformed escape is no choice, never a 500) — else the
  * route's (/driver is Gujarati-first); only operator routes (which embed
- * Cesium) relax eval.
+ * Cesium) relax eval. Operator routes are the whole console: the (deck) group
+ * AND the (v3) group (Home, Decide, Map, Plan, Assistant, object pages) — a CSP is
+ * per DOCUMENT and a client-side navigation from Home to the map or to Analyst
+ * keeps the document it started in, so Home must already carry the policy the
+ * canvas needs (the public pages stay strict; user decision 2026-10-26).
  */
 function documentDefaults(event: RequestEvent): { theme: string; lang: string; operator: boolean } {
 	const id = event.route.id ?? '';
 	return {
 		theme: id.startsWith('/(public)') ? 'daylight' : 'command',
 		lang: langFromCookieHeader(event.request.headers.get('cookie')) ?? (id === '/(public)/driver' ? 'gu' : 'en'),
-		operator: id.startsWith('/(deck)'),
+		operator: id.startsWith('/(deck)') || id.startsWith('/(v3)'),
 	};
 }
 
@@ -267,16 +332,16 @@ async function proxy(event: RequestEvent, rule: ProxyRule, officer: string | nul
 	if (officer) headers.set(OFFICER_HEADER, encodeURIComponent(officer));
 
 	const method = event.request.method.toUpperCase();
-	// Brain workflows are heavyweight by design (the pre-movement plan runs
-	// the decider checkpoint + corridor assessment + Gemma narration — the
-	// original template budgeted a 5-minute axios timeout for exactly this
-	// call). Everything else keeps the 60 s budget.
-	const budgetMs = rule.prefix === '/api/convoy' ? 300_000 : 60_000;
+	const budgetMs = proxyBudgetMs(rule.prefix, event.url.pathname);
+	// F-CONN-04: the upstream request ends when the CLIENT gives up too (a
+	// closed tab, an aborted fetch, a superseded poll) — never left running
+	// to its budget on the oracle or the brain.
+	const client = clientAbort(event);
 	const init: RequestInit & { duplex?: 'half' } = {
 		method: event.request.method,
 		headers,
 		redirect: 'manual',
-		signal: AbortSignal.timeout(budgetMs),
+		signal: AbortSignal.any([AbortSignal.timeout(budgetMs), client.signal]),
 	};
 	if (method !== 'GET' && method !== 'HEAD') {
 		init.body = event.request.body;
@@ -290,12 +355,15 @@ async function proxy(event: RequestEvent, rule: ProxyRule, officer: string | nul
 			const k = key.toLowerCase();
 			if (!HOP_BY_HOP.has(k) && !DECODED_BODY_HEADERS.has(k)) outHeaders.set(key, value);
 		});
-		return new Response(res.body, {
+		// the client watch lasts as long as the body streams (an NDJSON chat stream included)
+		const body = res.body ? res.body.pipeThrough(new TransformStream({ flush: () => client.release() })) : (client.release(), null);
+		return new Response(body, {
 			status: res.status,
 			statusText: res.statusText,
 			headers: outHeaders,
 		});
 	} catch (err) {
+		client.release();
 		return jsonResponse(502, {
 			detail: `deck proxy: upstream ${rule.target} unreachable (${
 				err instanceof Error ? err.message : String(err)
@@ -313,6 +381,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 			}),
 			null,
 		);
+	}
+
+	// R26: the machine-ingest path is loopback-only — refused for every caller,
+	// gate on or off, signed in or not, before the gate and any upstream fetch.
+	if (isMachineIngestWrite(event.request.method, event.url.pathname)) {
+		return harden(jsonResponse(403, { detail: MACHINE_INGEST_DETAIL }), null);
 	}
 
 	const rule = matchRule(event.url.pathname);

@@ -73,10 +73,12 @@ from typing import Any
 
 import structlog
 
+from convoy_brain import grounding
 from convoy_brain.config import (
+    CITY_BBOX,
     CONFIDENCE_FLOOR,
     DECIDER_MODEL_ID,
-    GEMMA_MODEL_ID,
+    GEMMA_DISPLAY_NAME,
     TACTICAL_ARGS_MAX_TOKENS,
     TACTICAL_FINAL_MAX_TOKENS,
     TACTICAL_SELECT_MAX_TOKENS,
@@ -96,6 +98,7 @@ from convoy_brain.llm.schemas import load_schema
 from convoy_brain.mcp.prompts import TOOL_CALLING_INSTRUCTION, VVIP_AGENT_SYSTEM_PROMPT
 from convoy_brain.mcp.server import (
     CANVAS_VERBS,
+    DSS_GENERATE_TIMEOUT_SEC,
     TOOL_ALIASES,
     TOOL_DEFINITIONS,
     ToolExecutionError,
@@ -116,6 +119,11 @@ logger = structlog.get_logger(__name__)
 MAX_TOOL_ROUNDS = 6          # Max tier loops before forced termination
 MAX_RETRIES_PER_TOOL = 2     # Max attempts for a single retryable tool failure
 TOOL_TIMEOUT_SEC = 30.0      # Per-tool execution timeout
+#: Per-tool bounds above the default (SUS-1): decision-support generation
+#: wargames every course of action (+ one 27B opinion first).
+_TOOL_TIMEOUTS_SEC = {"city_decision_support": DSS_GENERATE_TIMEOUT_SEC + 15.0}
+#: Tools never re-sent after a timeout / transport error (they write a proposal).
+_NO_RETRY_TOOLS = frozenset({"city_decision_support"})
 TOTAL_TURN_TIMEOUT_SEC = 120.0  # Max time for a complete orchestration turn
 
 SESSION_TTL_SEC = 900.0      # Sessions live 15 min after their last turn
@@ -339,6 +347,25 @@ class ConversationState:
     directives: list[dict] = field(default_factory=list)
     last_pick: dict = field(default_factory=dict)
     aux_low_confidence: list[dict] = field(default_factory=list)
+    # Grounding enforced in code (convoy_brain.grounding): the session
+    # context text, the reads that grounded the session (streamed on the
+    # first turn), and every number / integer a source reported this
+    # session — the operator's messages, the context, the tool results.
+    context_text: str = ""
+    grounding_reads: list[dict] = field(default_factory=list)
+    grounded_ints: set[int] = field(default_factory=set)
+    grounded_numbers: set[float] = field(default_factory=set)
+    # Per turn: the operator's message, road names resolved against the
+    # network (name -> matching segments), claims the check removed.
+    turn_input: str = ""
+    road_lookups: dict[str, list[dict]] = field(default_factory=dict)
+    grounding_removed: list[str] = field(default_factory=list)
+
+    def ground(self, payload: Any) -> None:
+        """Record what a source reported: its numbers may be used and quoted."""
+        numbers = grounding.numbers_in(payload)
+        self.grounded_numbers |= numbers
+        self.grounded_ints |= {int(n) for n in numbers if n == int(n)}
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         self.messages.append(Message(role=role, content=content, **kwargs))
@@ -535,6 +562,11 @@ class Orchestrator:
                 elif isinstance(content, str):
                     context_prompt += "\n\n" + content
 
+        # What the session context states is evidence the answers may use.
+        state.context_text = context_prompt
+        state.ground(context_prompt)
+        for entity in state.session_entities.values():
+            state.ground(entity)
         state.system_prompt = (
             VVIP_AGENT_SYSTEM_PROMPT + "\n\n" + TOOL_CALLING_INSTRUCTION + context_prompt
         )
@@ -567,14 +599,17 @@ class Orchestrator:
                 "(not an event id — ignored)\n"
             )
         state.event_id = event_id
+        read_args = {"event_id": event_id}
         try:
-            payload = await self._executor.dispatch(
-                "get_active_corridor_events", {"event_id": event_id})
+            payload = await self._executor.dispatch("get_active_corridor_events", read_args)
         except Exception as exc:  # grounding is best effort: say so, never guess
             logger.warning("orchestrator.event_grounding_failed",
                            event_id=event_id, error=str(exc)[:200])
+            _note_grounding_read(state, "get_active_corridor_events", read_args,
+                                 {"error": True, "message": str(exc)[:200]}, ok=False)
             state.event_brief = f"{event_id} (could not be resolved: the board did not answer)"
             return f"\n\nSelected corridor event: {state.event_brief}\n"
+        _note_grounding_read(state, "get_active_corridor_events", read_args, payload, ok=True)
         rows = payload.get("events") if isinstance(payload, dict) else None
         event = next(
             (e for e in rows or [] if isinstance(e, dict) and str(e.get("event_id")) == event_id),
@@ -620,8 +655,12 @@ class Orchestrator:
             payload = await self._executor.dispatch("city_get_dossier", {"urn": urn})
         except Exception as exc:
             logger.warning("orchestrator.context_grounding_failed", urn=urn, error=str(exc)[:200])
+            _note_grounding_read(state, "city_get_dossier", {"urn": urn},
+                                 {"error": True, "message": str(exc)[:200]}, ok=False)
             state.context_brief = f"{urn} (the dossier could not be read)"
             return f"\n\nContext entity: {state.context_brief}\n"
+        _note_grounding_read(state, "city_get_dossier", {"urn": urn}, payload,
+                             ok=not (isinstance(payload, dict) and payload.get("ok") is False))
         entity = payload.get("entity") if isinstance(payload, dict) else None
         if not isinstance(entity, dict):
             detail = (payload or {}).get("detail") or "not in the city picture"
@@ -638,16 +677,26 @@ class Orchestrator:
         )
         state.context_brief = (
             f"{urn} — {entity.get('label')} ({entity.get('kind')}, {entity.get('state')}, "
-            f"source {entity.get('source')})"
+            f"source {entity.get('source')}{_observed_text(entity)})"
         )
         state.session_entities[urn] = dict(entity, call_id=None)
         for row in payload.get("related") or []:
             if isinstance(row, dict) and parse_urn(row.get("urn")):
                 state.session_entities.setdefault(row["urn"], dict(row, call_id=None))
+        # HON-5: when each related vehicle / unit / sighting was last observed —
+        # a 'right now' question must not read a days-old sighting as live.
+        freshness = "; ".join(
+            f"{mask_plates(row.get('label') or row.get('urn'))} ({row.get('kind')})"
+            f"{_observed_text(row)}"
+            for row in (payload.get("related") or [])[:16]
+            if isinstance(row, dict) and row.get("kind") in _POSITIONED_KINDS
+            and (row.get("seen_ist") or isinstance(row.get("age_sec"), (int, float)))
+        )
         return (
             f"\n\nContext entity (the operator is asking about it): {state.context_brief}\n"
             + (f"Facts: {facts}\n" if facts else "")
             + (f"Related: {related}\n" if related else "")
+            + (f"Last observed (not live unless seconds old): {freshness}\n" if freshness else "")
             + (f"Recent audit: {audit}\n" if audit else "")
         )
 
@@ -748,9 +797,14 @@ class Orchestrator:
         state.directives = []
         state.last_pick = {}
         state.aux_low_confidence = []
+        state.turn_input = user_input
+        state.road_lookups = {}
+        state.grounding_removed = []
         state.turns += 1
         state.add_message("user", user_input)
         state.turn_start_index = len(state.messages)
+        # The operator's own figures and ids are a source the tools may use.
+        state.ground(user_input)
 
         turn_start = time.time()
         turn_deadline = turn_start + TOTAL_TURN_TIMEOUT_SEC
@@ -771,6 +825,15 @@ class Orchestrator:
                 "answering without movement context (nothing is audited against it).",
                 "heuristic",
             )
+
+        # HON-14: the reads that grounded the session (the selected event,
+        # the dossier asked about) are shown like any other tool call.
+        await self._stream_grounding_reads(state, events)
+
+        # HON-2: a road the operator names is resolved against the network
+        # by name first — its segments, or 'no segment named X'.
+        tool_round = await self._resolve_road_names(
+            state, user_input, tool_round, events, deadline=turn_deadline)
 
         # Deterministic grounding of a map request: one read-only lookup of
         # the kinds the operator named, so the canvas directive never
@@ -830,6 +893,12 @@ class Orchestrator:
             arguments = await self._ground_canvas_urns(
                 state, next_tool, arguments, user_input, events)
 
+            # Provenance enforced in code (HON-2 / HON-3): ids and ETA inputs
+            # must come from a source; a road the operator named supplies its
+            # own segments.
+            arguments, refusal, assumed = await self._check_provenance(
+                state, next_tool, arguments, events)
+
             signature = (next_tool, json.dumps(arguments, sort_keys=True, default=str))
             if signature in executed_signatures:
                 # Identical (tool, arguments) already ran this turn — its
@@ -847,11 +916,17 @@ class Orchestrator:
                 break
             executed_signatures.add(signature)
 
+            if refusal is not None:
+                tool_round += 1
+                await self._refuse_tool(state, next_tool, arguments, refusal, tool_round, events)
+                continue
+
             # ---- Dispatch the tool call via MCP (HTTP) -------------------------
             tool_round += 1
             await self._run_tool(
                 state, next_tool, arguments, tool_round, events, deadline=turn_deadline,
                 tier=state.last_pick.get("tier"), confidence=state.last_pick.get("confidence"),
+                assumed_inputs=assumed,
             )
 
         if final_response is None:
@@ -866,15 +941,17 @@ class Orchestrator:
         await self._map_post_step(state, user_input, events)
 
         # Audit trail: decisions_log entry for this turn.
-        final_response["tool_calls_made"] = [
-            tc["name"] for tc in state.tool_calls
-        ]
+        final_response["tool_calls_made"] = _made(state)
         final_response["tool_calls"] = list(state.tool_calls)
         final_response["tiers_used"] = list(dict.fromkeys(state.tiers_used)) or ["heuristic"]
         final_response["tiers"] = list(state.tiers) or ["heuristic"]
         final_response["degraded"] = state.degraded
         final_response["directives"] = list(state.directives)
         final_response["citations"] = self._citations(state, final_response)
+        final_response["protocol_assessment"] = _protocol_not_assessed(
+            final_response.get("protocol_assessment"))
+        if state.grounding_removed:
+            final_response["grounding"] = {"removed": list(state.grounding_removed)}
         if state.operator_alerts:
             final_response["operator_alerts"] = state.operator_alerts
         if state.aux_low_confidence:
@@ -906,6 +983,7 @@ class Orchestrator:
                     ],
                     "event_id": state.event_id,
                     "context_urn": state.context_urn,
+                    "grounding_removed": list(state.grounding_removed),
                     "turn_duration_sec": round(time.time() - turn_start, 2),
                     "timestamp": time.time(),
                 },
@@ -939,9 +1017,13 @@ class Orchestrator:
         deadline: float | None,
         tier: str | None = None,
         confidence: float | None = None,
+        assumed_inputs: list[str] | None = None,
     ) -> None:
         """Dispatch one tool, stream it, keep its result for the answer, and
-        harvest the entities it names (a canvas verb becomes a directive)."""
+        harvest the entities it names (a canvas verb becomes a directive).
+
+        ``assumed_inputs`` (predict_eta inputs no source reported) label the
+        result and its summary ASSUMED INPUTS (HON-3)."""
         call_id = "call_" + str(tool_round) + "_" + str(name)
         logger.info("orchestrator.tool_round", round=tool_round, tool=name)
         state.tool_calls.append({"name": name, "arguments": arguments})
@@ -967,7 +1049,11 @@ class Orchestrator:
                 directive = payload["directive"]
                 payload = {**payload, "directive": {
                     **directive, "label": _directive_label(directive, state)}}
+            if ok and assumed_inputs and isinstance(payload, dict):
+                payload = {**payload, "assumed_inputs": list(assumed_inputs)}
             summary = summarize_tool_result(result["name"], arguments, payload)
+            if ok and assumed_inputs:
+                summary += " (ASSUMED INPUTS: " + ", ".join(assumed_inputs) + ")"
             state.tool_results.append({
                 "name": result["name"],
                 "arguments": arguments,
@@ -975,7 +1061,10 @@ class Orchestrator:
                 "summary": summary,
                 "call_id": call_id,
                 "simulated": ok and _simulated_source(payload),
+                "payload": payload,
             })
+            if ok:
+                state.ground(payload)
             await events.tool_result(
                 result.get("call_id") or call_id, result["name"], ok, summary,
                 payload, duration_ms,
@@ -994,6 +1083,200 @@ class Orchestrator:
                         state, payload.get("directive"), events,
                         tier=tier or "heuristic", confidence=confidence, tool_call_id=call_id,
                     )
+
+    # -- grounding enforced in code (convoy_brain.grounding) ------------------
+
+    async def _stream_grounding_reads(self, state: ConversationState, events: _TurnEvents) -> None:
+        """Stream the reads that grounded the session, once (HON-14)."""
+        reads, state.grounding_reads = state.grounding_reads, []
+        if not reads:
+            return
+        await events.thought(
+            "Session grounding — read the operator's selection before the first turn "
+            "(deterministic, read-only)",
+            "heuristic",
+        )
+        for index, read in enumerate(reads):
+            call_id = f"call_0{index}_{read['name']}"
+            await events.tool_call(call_id, read["name"], read["arguments"])
+            await events.tool_result(
+                call_id, read["name"], read["ok"], read["summary"], read["payload"], 0)
+
+    async def _resolve_road_names(
+        self,
+        state: ConversationState,
+        user_input: str,
+        tool_round: int,
+        events: _TurnEvents,
+        *,
+        deadline: float | None,
+    ) -> int:
+        """Resolve each road the operator named against the network (HON-2).
+
+        One read of the segments in the city bounding box; the result kept
+        for the turn is the resolution only — the matching segments per name,
+        or none — so another road's id never reads as this road's.
+        """
+        names = grounding.place_names(user_input, roads_only=True, require_capital=False)
+        if not names:
+            return tool_round
+        tool_round += 1
+        name = "query_segments_in_bbox"
+        call_id = f"call_{tool_round}_{name}"
+        args = dict(zip(("min_lon", "min_lat", "max_lon", "max_lat"), CITY_BBOX))
+        await events.thought(
+            "Road named — resolving " + ", ".join(f"'{n}'" for n in names)
+            + " against the city road network first (deterministic, read-only)",
+            "heuristic",
+        )
+        state.tool_calls.append({"name": name, "arguments": args})
+        state.tool_calls_total += 1
+        await events.tool_call(call_id, name, args)
+        started = time.monotonic()
+        remaining = self._deadline_timeout(deadline)
+        ok = True
+        try:
+            raw = await asyncio.wait_for(
+                self._executor.dispatch(name, args),
+                timeout=min(TOOL_TIMEOUT_SEC, remaining) if remaining else TOOL_TIMEOUT_SEC,
+            )
+            segments = [r for r in (raw or {}).get("segments") or [] if isinstance(r, dict)]
+        except Exception as exc:  # the lookup failing is said, never guessed around
+            logger.warning("orchestrator.road_lookup_failed", error=str(exc)[:200])
+            ok, segments = False, []
+        if ok:
+            state.road_lookups = {n: grounding.resolve_road_name(n, segments) for n in names}
+            payload = {
+                "road_names": [
+                    {"name": n, "found": bool(m), "matches": m[:24]}
+                    for n, m in state.road_lookups.items()
+                ],
+                "segments_searched": len(segments),
+            }
+            summary = "road-name lookup: " + "; ".join(
+                (f"'{n}' → " + ", ".join(
+                    f"{x['road_name']} ({x['segment_id']})" for x in m[:6])
+                 + (f" (+{len(m) - 6} more)" if len(m) > 6 else ""))
+                if m else f"no road segment named '{n}' in the city road network"
+                for n, m in state.road_lookups.items()
+            ) + f" ({len(segments)} segments searched)"
+        else:
+            payload = {"error": True, "message": "the road network could not be read"}
+            summary = f"{name} failed: the road network could not be read"
+        state.tool_results.append({
+            "name": name, "arguments": args, "ok": ok, "summary": summary,
+            "call_id": call_id, "simulated": False, "payload": payload, "resolution": True,
+        })
+        if ok:
+            state.ground(payload)
+        await events.tool_result(call_id, name, ok, summary, payload,
+                                 int((time.monotonic() - started) * 1000))
+        state.add_message("tool", json.dumps(payload, default=str),
+                          tool_name=name, tool_call_id=call_id)
+        return tool_round
+
+    async def _check_provenance(
+        self,
+        state: ConversationState,
+        tool_name: str,
+        arguments: dict,
+        events: _TurnEvents,
+    ) -> tuple[dict, str | None, list[str]]:
+        """``(arguments, refusal or None, assumed ETA inputs)`` for one draft.
+
+        Segment ids must come from a source (HON-2); a road the operator
+        named supplies its own resolved segments to the segment readers;
+        predict_eta needs a reported route length and speed (HON-3).
+        """
+        canonical = _TOOL_ALIASES.get(tool_name, tool_name)
+        if canonical not in grounding.SEGMENT_TOOLS:
+            return arguments, None, []
+        typed = {int(n) for n in grounding.numbers_in(state.turn_input) if n == int(n)}
+        resolved = [
+            int(m["segment_id"]) for matches in state.road_lookups.values() for m in matches
+            if isinstance(m.get("segment_id"), int)
+        ]
+        unresolved = [n for n, m in state.road_lookups.items() if not m]
+        drafted = grounding.segment_ids_of(arguments)
+        drafted_ints = {int(v) for v in drafted if isinstance(v, (int, float))
+                        and not isinstance(v, bool) and v == int(v)}
+        if resolved and canonical in (grounding.SEGMENT_LIST_TOOLS | grounding.SINGLE_SEGMENT_TOOLS) \
+                and not drafted_ints <= (set(resolved) | typed):
+            wanted = list(dict.fromkeys(resolved))
+            if canonical in grounding.SEGMENT_LIST_TOOLS:
+                arguments = {**arguments, "segment_ids": wanted[:200]}
+            else:
+                arguments = {**arguments, "segment_id": wanted[0]}
+            await events.thought(
+                f"{tool_name}: segments set to the ones the road-name lookup resolved "
+                f"({', '.join(str(i) for i in wanted[:8])}) — not the drafted ids",
+                "heuristic",
+            )
+        elif unresolved and not resolved \
+                and canonical in (grounding.SEGMENT_LIST_TOOLS | grounding.SINGLE_SEGMENT_TOOLS) \
+                and not (drafted_ints and drafted_ints <= typed):
+            names = ", ".join(f"'{n}'" for n in unresolved)
+            return arguments, (
+                f"no road segment named {names} in the city road network — another "
+                "road's segments are not an answer for it"
+            ), []
+        bad = grounding.ungrounded_ids(arguments, state.grounded_ints)
+        if bad:
+            shown = ", ".join(str(b) for b in bad[:8]) + (" …" if len(bad) > 8 else "")
+            return arguments, (
+                f"segment id(s) {shown} come from no tool result, the session context or "
+                "the operator's message — ids are never guessed (name the road, or "
+                "read the segments first)"
+            ), []
+        if canonical == "predict_eta":
+            core, assumed = grounding.eta_input_check(arguments, state.grounded_numbers)
+            if core:
+                return arguments, (
+                    ", ".join(core) + " reported by no tool this session — an ETA needs a "
+                    "real route (find the route or read its segments first); no figure "
+                    "is assumed"
+                ), []
+            return arguments, None, assumed
+        return arguments, None, []
+
+    async def _refuse_tool(
+        self,
+        state: ConversationState,
+        name: str,
+        arguments: dict,
+        reason: str,
+        tool_round: int,
+        events: _TurnEvents,
+    ) -> None:
+        """Show a refused draft as a failed tool card; nothing is dispatched."""
+        call_id = "call_" + str(tool_round) + "_" + str(name)
+        logger.info("orchestrator.tool_refused", tool=name, reason=reason[:200])
+        state.tool_calls.append({"name": name, "arguments": arguments, "refused": True})
+        payload = {"ok": False, "refused": True, "detail": reason}
+        summary = f"{name} refused: {reason}"
+        await events.tool_call(call_id, name, arguments)
+        state.tool_results.append({
+            "name": name, "arguments": arguments, "ok": False, "summary": summary,
+            "call_id": call_id, "simulated": False, "payload": payload, "refused": True,
+        })
+        await events.tool_result(call_id, name, False, summary, payload, 0)
+        state.add_message("tool", json.dumps(payload), tool_name=name, tool_call_id=call_id)
+
+    async def _report_grounding(self, state: ConversationState, events: _TurnEvents) -> None:
+        """Say what the grounding check removed (thought + operator alert)."""
+        if not state.grounding_removed:
+            return
+        count = len(state.grounding_removed)
+        await events.thought(
+            f"Grounding check removed {count} ungrounded claim(s): "
+            + "; ".join(state.grounding_removed[:4]),
+            "heuristic",
+        )
+        state.operator_alerts.append({
+            "type": "ungrounded_claims_removed",
+            "action": f"{count} claim(s) no tool reported were removed from the answer",
+            "claims": list(state.grounding_removed[:8]),
+        })
 
     async def _scope_to_selection(
         self,
@@ -1169,10 +1452,11 @@ class Orchestrator:
                                     confidence=None, tool_call_id=top.get("call_id"))
 
     def _citations(self, state: ConversationState, answer: dict) -> list[dict]:
-        """``[{urn, label}]`` the turn's tool results named (plate-masked labels).
+        """``[{urn, label}]`` the answer is about (plate-masked labels).
 
-        Directive targets first, then entities the answer's prose mentions,
-        then the rest in the order the tools returned them.
+        Directive targets first, then the entities the answer's prose names
+        (this turn's results or the session context), then the operator's own
+        selection — never every row a lookup returned (HON-13).
         """
         prose = _answer_prose(answer) or ""
         prose_norm = prose.lower()
@@ -1180,19 +1464,27 @@ class Orchestrator:
         for d in state.directives:
             args = d.get("args") or {}
             targets += [args["urn"]] if args.get("urn") else list(args.get("urns") or [])
-        pool = dict(state.turn_entities)
-        if state.context_urn and state.context_urn in state.session_entities:
-            pool.setdefault(state.context_urn, state.session_entities[state.context_urn])
 
         def mentioned(entity: dict) -> bool:
             label = str(entity.get("label") or "").lower()
             ident = entity["urn"].split(":", 1)[1].lower()
             return (len(label) > 3 and label in prose_norm) or ident in prose_norm
 
+        pool = dict(state.turn_entities)
+        for urn, entity in state.session_entities.items():
+            # the session's own entities: the selection, or one the answer names
+            if urn in (state.context_urn, f"event:{state.event_id}") or (
+                    isinstance(entity.get("urn"), str) and mentioned(entity)):
+                pool.setdefault(urn, entity)
+
+        # HON-13: only what the answer is about — the directive targets, the
+        # entities its prose names and the operator's own context entity —
+        # never every entity a lookup happened to return.
+        selected = [u for u in (state.context_urn, f"event:{state.event_id}") if u in pool]
         order = (
             [u for u in targets if u in pool]
             + [u for u, e in pool.items() if u not in targets and mentioned(e)]
-            + [u for u in pool if u not in targets]
+            + selected
         )
         out: list[dict] = []
         for urn in dict.fromkeys(order):
@@ -1284,7 +1576,8 @@ class Orchestrator:
         """Record a contributing tier in the contract shape (C-D tiers_used)."""
         label = {
             "decider": "decider:" + DECIDER_MODEL_ID,
-            "gemma": "gemma:" + GEMMA_MODEL_ID,
+            # the operator-facing name (COPY-10): the served alias stays internal
+            "gemma": "gemma:" + GEMMA_DISPLAY_NAME,
         }.get(tier, "heuristic")
         if label not in state.tiers:
             state.tiers.append(label)
@@ -1663,6 +1956,20 @@ class Orchestrator:
         prompt — the session system prompt is never duplicated into it.
         """
         events = events or _TurnEvents(None)
+        # HON-1: every lookup about the operator's subject came back empty or
+        # failed — the answer is the deterministic "not in the city picture",
+        # never a composed guess.
+        nothing = _nothing_found_answer(state, user_input)
+        if nothing is not None:
+            state.tiers_used.append("grounding_final")
+            if "heuristic" not in state.tiers:
+                state.tiers.append("heuristic")
+            await events.thought(
+                "Every lookup came back empty or failed — answering from what the tools "
+                "returned, without a composed answer (deterministic)",
+                "heuristic",
+            )
+            return nothing
         schema = load_schema("orchestrator_final")
         prompt = (
             "Compose the final answer to the operator's request from the tool "
@@ -1718,6 +2025,7 @@ class Orchestrator:
                             f"{len(state.tool_results)} tool result(s)",
                             "gemma",
                         )
+                        await self._report_grounding(state, events)
                         return parsed
                     error = "the composed answer carried no prose"
                 else:
@@ -1734,18 +2042,15 @@ class Orchestrator:
                             "its complete reasoning was recovered",
                             "gemma",
                         )
+                        reasoning = _grounded_prose(rescued.strip(), state)
+                        await self._report_grounding(state, events)
                         return {
                             "action": rescue_string_field(raw, "action") or "answered",
-                            "reasoning": _grounded_prose(rescued.strip(), state),
-                            "tool_calls_made": [tc["name"] for tc in state.tool_calls],
+                            "reasoning": reasoning,
+                            "tool_calls_made": _made(state),
                             "confidence": "medium",
                             "data": {"tier": "gemma_final_rescued"},
-                            "protocol_assessment": {
-                                "asl_status": "not_assessed",
-                                "protocol_violations": [],
-                                "threat_level": "nominal",
-                                "plan_b_ready": False,
-                            },
+                            "protocol_assessment": _protocol_not_assessed(None),
                         }
                     error = "the composed answer did not match the answer schema"
             else:
@@ -1763,7 +2068,7 @@ class Orchestrator:
         )
         floor = heuristic_final_answer(
             user_input,
-            [tc["name"] for tc in state.tool_calls],
+            _made(state),
             error=(error or "")[:160] or None,
             tool_summaries=[r["summary"] for r in state.tool_results],
         )
@@ -1977,14 +2282,18 @@ class Orchestrator:
         """
         name = tool_call.get("name", "")
         arguments = tool_call.get("arguments", {})
+        canonical = _TOOL_ALIASES.get(name, name)
+        # SUS-1: a slow compute tool gets its own bound, and a tool whose
+        # call writes a proposal is never re-sent (a retried generation
+        # would supersede the one that may have landed).
+        budget = _TOOL_TIMEOUTS_SEC.get(canonical, TOOL_TIMEOUT_SEC)
+        attempts = 1 if canonical in _NO_RETRY_TOOLS else MAX_RETRIES_PER_TOOL
 
-        for attempt in range(MAX_RETRIES_PER_TOOL):
+        for attempt in range(attempts):
             remaining = self._deadline_timeout(deadline)
             if remaining is not None and remaining <= 0:
                 break
-            call_timeout = (
-                min(TOOL_TIMEOUT_SEC, remaining) if remaining is not None else TOOL_TIMEOUT_SEC
-            )
+            call_timeout = min(budget, remaining) if remaining is not None else budget
             try:
                 result = await asyncio.wait_for(
                     self._executor.dispatch(name, arguments),
@@ -1992,12 +2301,12 @@ class Orchestrator:
                 )
                 return {"name": name, "call_id": call_id, "result": result}
             except asyncio.TimeoutError:
-                if attempt < MAX_RETRIES_PER_TOOL - 1:
+                if attempt < attempts - 1:
                     await asyncio.sleep(0.5 * (attempt + 1))
                     continue
                 timeout_msg = (
                     "Tool '" + name + "' timed out after "
-                    + str(TOOL_TIMEOUT_SEC) + "s"
+                    + f"{call_timeout:.0f}s"
                 )
                 return {
                     "name": name,
@@ -2014,7 +2323,7 @@ class Orchestrator:
                     status=getattr(exc, "status_code", None),
                     error=str(exc),
                 )
-                if retryable and attempt < MAX_RETRIES_PER_TOOL - 1:
+                if retryable and attempt < attempts - 1:
                     await asyncio.sleep(0.5 * (attempt + 1))
                     continue
                 return {
@@ -2226,6 +2535,12 @@ def _harvest_entities(into: dict[str, dict], payload: Any, call_id: str, depth: 
             facts["lon"], facts["lat"] = float(lon), float(lat)
         elif current.get("lon") is not None:
             facts["lon"], facts["lat"] = current["lon"], current["lat"]
+        # when the entity itself was observed (HON-5 freshness)
+        for key in ("age_sec", "seen_ist"):
+            if payload.get(key) is not None:
+                facts[key] = payload[key]
+            elif current.get(key) is not None:
+                facts[key] = current[key]
         into[urn] = facts
     for key in ("vehicle_urn", "event_urn"):
         linked = canonical_urn(payload.get(key)) if isinstance(payload.get(key), str) else None
@@ -2382,8 +2697,14 @@ def _simulated_source(payload: Any, depth: int = 0) -> bool:
 
 
 def _label_simulated(prose: str, state: ConversationState) -> str:
-    """An answer drawn from an emulated / synthetic tool result says so."""
-    simulated = any(r.get("ok") and r.get("simulated") for r in state.tool_results)
+    """An answer drawn from an emulated / synthetic tool result — or naming an
+    emulated entity of the session's own context — says so."""
+    lowered = prose.lower()
+    simulated = any(r.get("ok") and r.get("simulated") for r in state.tool_results) or any(
+        str(e.get("source") or "").lower() in _SIMULATED_SOURCES
+        and len(str(e.get("label") or "")) > 3 and str(e.get("label")).lower() in lowered
+        for e in state.session_entities.values()
+    )
     if not simulated or _SIMULATED_WORDS_RE.search(prose):
         return prose
     return prose.rstrip() + " " + SIMULATED_FEED_NOTE
@@ -2461,19 +2782,287 @@ def _grounded_prose(prose: str, state: ConversationState) -> str:
     emulated is dropped, and an event called 'active' that the tools report
     otherwise carries its reported status."""
     prose = _true_event_status(_scrub_unverifiable(mask_plates(prose)), state)
+    prose, tail = _enforce_grounding(prose, state)
     if _DIGIT_RE.search(prose):
-        return _label_simulated(prose, state)
+        return _label_simulated(_join(prose, tail), state)
     facts = [
         r["summary"] for r in state.tool_results
         if r.get("ok") and _DIGIT_RE.search(r.get("summary") or "")
         and not str(r.get("name", "")).startswith("canvas_")
     ]
     if not facts:
-        return _label_simulated(prose, state)
+        return _label_simulated(_join(prose, tail), state)
     data = "; ".join(_clip_words(f, 240) for f in facts[:3])
     if not prose:
-        return _label_simulated(f"Data: {data}.", state)
-    return _label_simulated(prose.rstrip() + f" (Data: {data}.)", state)
+        return _label_simulated(_join(f"Data: {data}.", tail), state)
+    return _label_simulated(_join(prose.rstrip() + f" (Data: {data}.)", tail), state)
+
+
+def _join(*parts: str) -> str:
+    return " ".join(p.strip() for p in parts if p and p.strip())
+
+
+# ---------------------------------------------------------------------------
+# Grounding enforced in code (HON-1 / HON-2 / HON-3 / HON-5)
+# ---------------------------------------------------------------------------
+
+#: Entities whose position goes stale (a 'right now' answer needs their age).
+_POSITIONED_KINDS = frozenset({"vehicle", "unit", "convoy", "sighting"})
+#: A position older than this is not 'right now'.
+STALE_POSITION_SEC = 600.0
+_NOW_RE = re.compile(
+    r"\b(right now|now|currently|current|at the moment|at present|live|where is|where's)\b",
+    re.IGNORECASE,
+)
+#: Personal details Veer never holds (vehicles only — never persons).
+_PERSONAL_RE = re.compile(
+    r"\b(owner|owns|owned|registered to|whose|driver'?s? name|who (?:is|was) driving|"
+    r"phone|mobile|address|contact details?)\b",
+    re.IGNORECASE,
+)
+_NOT_ASSESSED = {
+    "asl_status": "not_assessed",
+    "protocol_violations": [],
+    "threat_level": "not_assessed",
+    "plan_b_ready": False,
+}
+
+
+def _protocol_not_assessed(assessment: Any) -> dict:
+    """The answer's protocol block with the threat level NOT assessed (HON-16).
+
+    A threat level is a named officer's record (POST /movements/{id}/protocol);
+    a model's guess is kept only as ``threat_level_ai_draft`` — never shown as
+    the level, never persisted, never a reassuring default.
+    """
+    block = dict(_NOT_ASSESSED)
+    if isinstance(assessment, dict):
+        for key in ("asl_status", "protocol_violations", "plan_b_ready"):
+            if key in assessment:
+                block[key] = assessment[key]
+        drafted = assessment.get("threat_level")
+        if isinstance(drafted, str) and drafted not in ("", "not_assessed"):
+            block["threat_level_ai_draft"] = drafted
+    return block
+
+
+def _made(state: ConversationState) -> list[str]:
+    """Names of the tools actually dispatched this turn (refusals excluded)."""
+    return [tc["name"] for tc in state.tool_calls if not tc.get("refused")]
+
+
+def _observed_text(entity: dict) -> str:
+    """', last observed 22:08 IST, 23 Oct (2.6 days ago)' ('' when unknown)."""
+    seen = entity.get("seen_ist")
+    age = entity.get("age_sec")
+    if not seen and not isinstance(age, (int, float)):
+        return ""
+    ago = f" ({grounding.age_text(float(age))} ago)" if isinstance(age, (int, float)) else ""
+    return f", last observed {seen or 'at an unknown time'}{ago}"
+
+
+def _note_grounding_read(
+    state: ConversationState, name: str, arguments: dict, payload: Any, *, ok: bool,
+) -> None:
+    """Keep a session-grounding read for the first turn's stream (HON-14)."""
+    summary = (
+        summarize_tool_result(name, arguments, payload) if ok
+        else f"{name} failed: {(payload or {}).get('message') or 'no answer'}"
+    )
+    state.grounding_reads.append({
+        "name": name, "arguments": dict(arguments), "ok": ok,
+        "summary": summary, "payload": payload,
+    })
+    if ok:
+        state.ground(payload)
+
+
+def _typed_plates(text: str) -> list[str]:
+    """Registration marks the operator typed, compacted upper-case."""
+    return list(dict.fromkeys(
+        re.sub(r"[\s-]", "", m.group(1)).upper() for m in _PLATE_RE.finditer(text or "")
+    ))
+
+
+def _plate_found(plate: str, state: ConversationState) -> bool:
+    """True when a looked-up entity carries this mark (masked or raw)."""
+    prefix = grounding.plate_prefix(plate)
+    for entity in {**state.session_entities, **state.turn_entities}.values():
+        blob = " ".join(
+            str(v) for v in (entity.get("label"), *((entity.get("props") or {}).values()))
+            if isinstance(v, str)
+        ).upper().replace(" ", "")
+        if plate in blob or f"{prefix}•••" in blob:
+            return True
+    return False
+
+
+def _zero_units(state: ConversationState) -> bool:
+    """True when this turn's unit roster came back empty."""
+    rows = [r for r in state.tool_results if r.get("name") == "list_units" and r.get("ok")]
+    return bool(rows) and all(
+        not (r.get("payload") or {}).get("units") for r in rows if isinstance(r.get("payload"), dict)
+    )
+
+
+def _evidence(state: ConversationState) -> grounding.Evidence:
+    """The turn's evidence: ok tool results, the session context, the question."""
+    ok_rows = [r for r in state.tool_results if r.get("ok")]
+    # a road-name resolution grounds only the roads it FOUND — the name it
+    # searched for and did not find is no evidence for that name
+    payloads = [
+        [m for n in (r.get("payload") or {}).get("road_names") or [] for m in n.get("matches") or []]
+        if r.get("resolution") else r.get("payload")
+        for r in ok_rows
+    ] + list(state.session_entities.values())
+    return grounding.Evidence(
+        tool_payloads=payloads,
+        tool_summaries=[r.get("summary") or "" for r in ok_rows if not r.get("resolution")],
+        # the session context: its own lines, the protocol floors and the
+        # doctrine the agent is given (Blue Book tables, timeline)
+        context_text="\n".join((state.context_text, _PROTOCOL_FLOORS, VVIP_AGENT_SYSTEM_PROMPT)),
+        question=state.turn_input,
+        earlier=_previous_exchange(state),
+    )
+
+
+def _honest_facts(state: ConversationState) -> list[tuple[str, str]]:
+    """``(subject, sentence)`` — the deterministic facts behind an empty lookup."""
+    facts = []
+    for plate in _typed_plates(state.turn_input):
+        if not _plate_found(plate, state):
+            facts.append((mask_plates(plate),
+                          f"Vehicle {mask_plates(plate)} is not in the city picture: no camera "
+                          "sighting, earmark or record matches it, so Veer cannot say where "
+                          "it was last seen."))
+    for name, matches in state.road_lookups.items():
+        if not matches:
+            facts.append((name,
+                          f"No road segment named '{name}' is in the city road network, so "
+                          "Veer has no traffic reading for it."))
+    if _zero_units(state):
+        agencies = sorted({
+            str(r["arguments"]["agency"]) for r in state.tool_results
+            if r.get("name") == "list_units" and isinstance(r.get("arguments"), dict)
+            and isinstance(r["arguments"].get("agency"), str)
+            and r["arguments"]["agency"].strip().lower() not in ("", "*", "all", "any")
+        })
+        what = " or ".join(agencies) + " unit" if agencies else "unit"
+        facts.append(("no " + what.split()[0],
+                      f"No {what} is fielded right now (EMULATED feed), so there is no "
+                      f"{what} ETA."))
+    if _PERSONAL_RE.search(state.turn_input or ""):
+        facts.append(("personal details",
+                      "Veer holds no owner or other personal details — it works with "
+                      "vehicles, never people."))
+    return facts
+
+
+def _honest_lines(state: ConversationState) -> list[str]:
+    return [line for _subject, line in _honest_facts(state)]
+
+
+def _enforce_grounding(prose: str, state: ConversationState) -> tuple[str, str]:
+    """``(kept prose, tail)`` — ungrounded sentences dropped (said so in the
+    tail), the deterministic facts stated, a stale 'right now' position aged,
+    an ETA's fallback model / assumed inputs named."""
+    unfound = [
+        grounding.plate_prefix(p) for p in _typed_plates(state.turn_input)
+        if not _plate_found(p, state)
+    ]
+    kept, removed = grounding.enforce(
+        prose, _evidence(state), unfound_plates=unfound, zero_units=_zero_units(state))
+    state.grounding_removed = removed
+    tail: list[str] = []
+    kept_lower = kept.lower()
+    for subject, line in _honest_facts(state):
+        # stated unless the kept prose already says it about the same subject
+        if removed or subject.lower() not in kept_lower:
+            tail.append(line)
+    if removed:
+        dropped = len(grounding.sentences(prose)) - len(grounding.sentences(kept)) if kept \
+            else len(grounding.sentences(prose))
+        tail.append(grounding.removal_note(removed, max(dropped, 1)))
+    tail.extend(_freshness_notes(kept, state))
+    tail.extend(_eta_notes(kept, state))
+    return kept, " ".join(tail)
+
+
+def _freshness_notes(prose: str, state: ConversationState) -> list[str]:
+    """A 'right now' answer naming a stale vehicle / unit says how old it is."""
+    if not prose or not _NOW_RE.search(state.turn_input or ""):
+        return []
+    notes = []
+    lowered = prose.lower()
+    for entity in {**state.session_entities, **state.turn_entities}.values():
+        age = entity.get("age_sec")
+        if str(entity.get("kind")) not in _POSITIONED_KINDS or not isinstance(age, (int, float)):
+            continue
+        if age < STALE_POSITION_SEC:
+            continue
+        label = mask_plates(entity.get("label") or "")
+        if not label or label == entity.get("urn") or label.lower() not in lowered:
+            continue
+        if " ago" in lowered:
+            continue
+        seen = entity.get("seen_ist")
+        notes.append(
+            f"Note: {label} was last observed {seen + ' — ' if seen else ''}"
+            f"{grounding.age_text(float(age))} ago; that is not a live position."
+        )
+        if len(notes) >= 2:
+            break
+    return list(dict.fromkeys(notes))
+
+
+def _eta_notes(prose: str, state: ConversationState) -> list[str]:
+    """An ETA quoted from the fallback model / assumed inputs says so (HON-3)."""
+    notes = []
+    for row in state.tool_results:
+        if row.get("name") != "predict_eta" or not row.get("ok"):
+            continue
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        if payload.get("model") == "fallback" and "fallback" not in prose.lower():
+            notes.append(
+                "(The ETA is the oracle's distance ÷ speed fallback — no trained ETA "
+                "model answered.)"
+            )
+        assumed = payload.get("assumed_inputs")
+        if assumed and "assumed" not in prose.lower():
+            notes.append("(ETA inputs ASSUMED, reported by no tool: " + ", ".join(assumed) + ".)")
+    return list(dict.fromkeys(notes))
+
+
+def _nothing_found_answer(state: ConversationState, user_input: str) -> dict | None:
+    """The deterministic answer when every lookup about the operator's subject
+    came back empty or failed.
+
+    None when no tool ran, any lookup returned data, no subject went unfound,
+    or the session is grounded in the operator's selection (its context may
+    hold the answer; the prose check still applies there).
+    """
+    rows = [r for r in state.tool_results if not str(r.get("name", "")).startswith("canvas_")]
+    if not rows or state.context_urn or state.event_id:
+        return None
+    if not all(grounding.payload_empty(r.get("payload"), bool(r.get("ok"))) for r in rows):
+        return None
+    # Only when the lookups were about a subject they did not find (a typed
+    # plate, a named road, the unit roster, personal details): a question the
+    # session's doctrine answers ('minimum lanes for Z+?') is still composed —
+    # and checked — even if an unrelated lookup came back empty.
+    lines = _honest_lines(state)
+    if not lines:
+        return None
+    summaries = "; ".join(_clip_words(r.get("summary") or r["name"], 240) for r in rows[:6])
+    prose = " ".join(lines) + f" What the lookups returned: {summaries}."
+    return {
+        "action": "not_in_city_picture",
+        "reasoning": mask_plates(prose),
+        "tool_calls_made": _made(state),
+        "confidence": "high",
+        "data": {"tier": "grounding", "lookups_empty": True},
+        "protocol_assessment": _protocol_not_assessed(None),
+    }
 
 
 #: URN kinds whose ids are uuids (a hand-copied uuid is where near misses occur).

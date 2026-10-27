@@ -102,4 +102,4 @@ strict = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 # `cd services/traffic-oracle && pytest -q` works without PYTHONPATH=src.
-pythonpath = ["src"]
+pythonpath = ["src", "../osint-common/src", "../osint-geo/src", "../osint-analysis/src"]

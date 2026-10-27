@@ -354,7 +354,6 @@ def test_a_batch_without_a_quality_column_is_dropped_and_counted():
 CALIBRATION_SOURCES = (
     "simulation/calibration.py",
     "simulation/scheduler.py",
-    "synthetic/pattern_matcher.py",
     "data/vector_store.py",
 )
 
@@ -366,7 +365,7 @@ class TestCalibrationGuard:
         assert SYNTHETIC_TABLE not in text, rel
         assert "hourly_aggregates" in text, f"{rel} no longer reads the real baseline?"
 
-    @pytest.mark.parametrize("pkg", ["simulation", "synthetic", "predict", "adaptive", "optimize"])
+    @pytest.mark.parametrize("pkg", ["simulation", "predict", "adaptive", "optimize"])
     def test_no_fitting_package_names_it_anywhere(self, pkg):
         hits = [
             str(p.relative_to(SRC))

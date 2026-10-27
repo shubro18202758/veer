@@ -26,7 +26,10 @@
 import { feedError, feedHint, godsEye } from '../store.svelte';
 import type { AgencyUnitRecord } from '../data';
 import type { GodsEyeLayer, GodsEyeLayerContext, GodsEyeLayerInstance } from '../registry';
-import { cssColor } from '../theme';
+import { canvasFont, cssColor } from '../theme';
+import { kindIcon } from '$lib/design/icons';
+import { chromeOf } from '../hud/map/view';
+import { markerBillboard, tagMarker, type MarkerMeta } from '../hud/map/symbols';
 import { agencyColor, agencyLabel, agencyTextColor, unitPhase } from './agency';
 import { clampedDot, clampedLabel, drapeAudit, ground } from './draping';
 import { labelPlate } from './labels';
@@ -64,11 +67,40 @@ function createAgencyUnitsLayer(): GodsEyeLayerInstance {
 			units.map((u) => [u.unitId, u.agency, u.lon, u.lat, u.emulated, unitStatusLine(u)]),
 			godsEye.unitsFeed.status,
 		]);
+		const v2 = chromeOf(ctx) === 'v2';
 		if (sig === lastSignature) return;
 		lastSignature = sig;
 
 		for (const id of entityIds) viewer.entities.removeById(id);
 		entityIds.length = 0;
+
+		if (v2) {
+			// SPEC §2.4: units are neutral (type by glyph); the agency and the
+			// status read on hover and in the pick text, never as a hue.
+			for (const u of units) {
+				const status = u.status ? u.status.replace(/_/g, ' ') : 'status unknown';
+				const meta: MarkerMeta = {
+					urn: `unit:${u.unitId}`,
+					kind: 'unit',
+					glyph: kindIcon('unit'),
+					shape: 'disc',
+					cluster: true,
+					label: [{ id: u.label ?? u.unitId }],
+					labelWhen: 'hover',
+				};
+				const entity = viewer.entities.add({
+					id: `${AGENCY_UNITS_PICK_PREFIX}${u.unitId}`,
+					position: ground(cesium, u.lon, u.lat),
+					billboard: markerBillboard(cesium, meta),
+					description: `Unit ${u.label ?? u.unitId} (${agencyLabel(u.agency)}): ${status}${
+						u.arrived === true ? ', arrived' : u.etaSec != null ? `, ETA ${Math.max(0, Math.round(u.etaSec))} s` : ''
+					}${u.assignedEventId ? `, assigned to event ${u.assignedEventId}` : ''}. Source: ${u.emulated ? 'emulated' : (u.source ?? 'live')}.`,
+				});
+				tagMarker(entity, meta);
+				entityIds.push(entity.id);
+			}
+			return;
+		}
 
 		for (const u of units) {
 			const line = unitStatusLine(u);
@@ -83,7 +115,7 @@ function createAgencyUnitsLayer(): GodsEyeLayerInstance {
 				}),
 				label: clampedLabel(cesium, {
 					text: `${u.label ?? u.unitId}${u.emulated ? ' ·EMULATED' : ''}\n${line}`,
-					font: '12px monospace',
+					font: canvasFont('12px var(--v-font-ui)'),
 					// the agency's TEXT ink (act-text, not the darker act fill) on the
 					// canvas plate: legible on the dark basemap and over the pins, flow
 					// and trace lines it crosses
@@ -155,10 +187,14 @@ function createAgencyUnitsLayer(): GodsEyeLayerInstance {
 						: (feedHint(feed) ??
 							`${units.length} units (EMULATED) · ${enRoute} en route · ${onScene} on scene${unplaced ? ` · ${unplaced} awaiting a position` : ''}`),
 				error: feedError(feed),
-				detail:
-					ctx && entityIds.length
-						? { units: units.length, enRoute, onScene, ...drapeAudit(ctx.viewer, entityIds) }
-						: { units: units.length, enRoute, onScene },
+				detail: {
+					units: units.length,
+					enRoute,
+					onScene,
+					// v2: the LayerTree row's provenance glyph (SPEC §5.3, §9.2)
+					...(chromeOf(ctx) === 'v2' ? { emulated: units.filter((u) => u.emulated).length } : {}),
+					...(ctx && entityIds.length ? drapeAudit(ctx.viewer, entityIds) : {}),
+				},
 				via: godsEye.via('unit'),
 			};
 		},
@@ -175,5 +211,6 @@ export const agencyUnitsLayer: GodsEyeLayer = {
 	requiresKeyId: null,
 	pickPrefix: AGENCY_UNITS_PICK_PREFIX,
 	defaultOn: true,
+	group: 'response',
 	create: createAgencyUnitsLayer,
 };

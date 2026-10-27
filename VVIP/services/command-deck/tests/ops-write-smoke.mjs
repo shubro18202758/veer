@@ -97,7 +97,10 @@ async function getJson(url, timeoutMs = 8000) {
 		'openPursuitEvent',
 		'transitionEventStatus',
 		'approveEscort',
+		'decideEscortProposal',
 		'clearMovement',
+		'promoteOsintEvent',
+		'decideDecisionSupport',
 	];
 	let allGated = true;
 	const missing = [];
@@ -124,7 +127,10 @@ async function getJson(url, timeoutMs = 8000) {
 			'openPursuitEvent',
 			'transitionEventStatus',
 			'approveEscort',
+			'decideEscortProposal',
 			'clearMovement',
+			'promoteOsintEvent',
+			'decideDecisionSupport',
 		].every((fn) => client.split(`export async function ${fn}`)[1]?.split('\nexport ')[0]?.includes('safePathId(')),
 	);
 
@@ -161,7 +167,9 @@ async function getJson(url, timeoutMs = 8000) {
 				chunk.includes('/earmark') ||
 				chunk.includes('/status') ||
 				chunk.includes('/escort/approve') ||
-				chunk.includes('/clear')
+				chunk.includes('/escort/approvals') ||
+				chunk.includes('/clear') ||
+				chunk.includes('/promote')
 			) {
 				fired.push(`${f}: ${chunk.slice(0, 80).replace(/\s+/g, ' ')}`);
 			}

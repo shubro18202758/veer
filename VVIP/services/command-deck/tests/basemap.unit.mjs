@@ -31,7 +31,7 @@
  *      that lands after the layer was switched off is discarded;
  *   6. picks: a tile feature never opens a card (handlePick false, urnOf null);
  *   7. honest mode (WP-22): imageryModeOf / imageryChip name what is on
- *      screen — PHOTOREAL 3D · GOOGLE once the tiles cover the view (even if
+ *      screen — 'Photoreal 3D · Google' once the tiles cover the view (even if
  *      the imagery under them stumbles), else the offline / ion / keyless
  *      ladder — and every chip key reads in en, hi and gu.
  *
@@ -582,14 +582,21 @@ async function withCapturedTimers(run) {
 	check('mode: the 3D city under a keyless imagery fallback still reads ion-photoreal (the note says why)', mode(false, 'osm-keyless', ready) === 'ion-photoreal');
 	check('mode: a keyless canvas without the tiles stays keyless', mode(false, 'osm-keyless', { via: 'unconfigured', detail: { initialTilesLoaded: 0 } }) === 'keyless-osm');
 	const chip = (offline, basemapId, photoreal, fallbackNote = null) => M.imageryChip({ offline, basemapId, photoreal, fallbackNote });
-	check('chip: PHOTOREAL 3D · GOOGLE once the tiles cover the view', M.t('en', chip(false, 'ion-photoreal', ready)) === 'PHOTOREAL 3D · GOOGLE');
-	check('chip: …and never OFFLINE SCHEMATIC while they do', chip(true, 'ion-photoreal', ready) === 'ge_imagery_photoreal');
+	// the chip's words are sentence case since UI-S3 (SPEC §11; keys moved to i18n/packs.map.ts with this test)
+	check('chip: Photoreal 3D · Google once the tiles cover the view', M.t('en', chip(false, 'ion-photoreal', ready)) === 'Photoreal 3D · Google');
+	check('chip: …and never the offline schematic chip while they do', chip(true, 'ion-photoreal', ready) === 'ge_imagery_photoreal');
 	check('chip: loading tiles say so; ion without the layer says ION AERIAL', chip(false, 'ion-photoreal', loading) === 'ge_imagery_photoreal_loading' && chip(false, 'ion-photoreal', null) === 'ge_imagery_ion');
 	check(
-		'chip: the keyless ladder is unchanged (OSM · DARK, the fallback, offline)',
-		M.t('en', chip(false, 'osm-keyless', null)) === 'OSM · DARK' && M.t('en', chip(false, 'osm-keyless', null, 'ion upgrade unavailable')) === 'OSM · DARK · FALLBACK' && M.t('en', chip(true, 'osm-keyless', null)) === 'OFFLINE SCHEMATIC MODE',
+		'chip: the keyless ladder is unchanged (OSM · dark, the fallback, offline)',
+		M.t('en', chip(false, 'osm-keyless', null)) === 'OSM · dark' && M.t('en', chip(false, 'osm-keyless', null, 'ion upgrade unavailable')) === 'OSM dark (fallback)' && M.t('en', chip(true, 'osm-keyless', null)) === 'Offline schematic mode',
+	);
+	check(
+		'chip: the loading and ion states read in sentence case',
+		M.t('en', 'ge_imagery_photoreal_loading') === 'Photoreal 3D · loading' && M.t('en', 'ge_imagery_ion') === 'Ion aerial · 3D terrain',
 	);
 	const keys = ['ge_imagery_photoreal', 'ge_imagery_photoreal_loading', 'ge_imagery_ion', 'ge_imagery_osm', 'ge_imagery_osm_fallback', 'ge_imagery_offline'];
+	const capsWords = keys.flatMap((k) => (M.t('en', k).match(/\b[A-Z]{2,}\b/g) ?? []).filter((w) => !['OSM', '3D'].includes(w)));
+	check('chip: no ALL-CAPS word outside the acronym allowlist (copy-lint, SPEC §3.4)', capsWords.length === 0, capsWords.join(' ') || 'sentence case');
 	const missing = [];
 	for (const lang of ['en', 'hi', 'gu']) {
 		for (const k of keys) {
@@ -598,7 +605,7 @@ async function withCapturedTimers(run) {
 		}
 	}
 	check('chip: every key reads in en, hi and gu (operational codes stay Latin)', missing.length === 0, missing.join(', ') || `${keys.length} keys × 3`);
-	check('chip: GOOGLE named in every language (attribution)', ['en', 'hi', 'gu'].every((l) => M.t(l, 'ge_imagery_photoreal').includes('GOOGLE')));
+	check('chip: Google named in every language (attribution)', ['en', 'hi', 'gu'].every((l) => M.t(l, 'ge_imagery_photoreal').includes('Google')));
 }
 
 if (failures > 0) {

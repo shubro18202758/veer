@@ -1,34 +1,33 @@
-<script lang="ts">
-	/**
-	 * FeedItem — one row of the decision audit ledger.
-	 *
-	 * human actor: 200ms act left-edge flash, then a persistent 2px act
-	 * rail; machine rows sit in dim mono; system rows (bookkeeping — the
-	 * emulator, event-closed walks, deck notes) sit dimmer still, in
-	 * italics, so a reader never mistakes them for a person or a model.
-	 * Appends settle by 1px — never slide. Click (when detail is present)
-	 * opens the evidence Modal. The time is IST (primitives/time). An
-	 * `emulated` row carries the dashed EMULATED pill in the reader's
-	 * language (the shared 'labelEmulated' word: EN, or EN + native for
-	 * HI/GU — the same badge every other EMULATED surface prints). A
-	 * `simulated` row — its numbers came from a SIMULATED feed (C-Q:
-	 * props.simulated_feed, or data_quality 'synthetic') — carries the
-	 * SIMULATED FEED pill beside it. AuditRow = FeedItem + a source chip.
-	 */
-	import Modal from './Modal.svelte';
-	import { istClock } from './time';
-	import { tOps } from '$lib/i18n/strings.ops';
-
-	/** Structural mirror of ops AuditLevel (design-shell cannot import $lib/ops). */
+<script lang="ts" module>
+	/** Structural mirror of ops AuditLevel (primitives cannot import $lib/ops). */
 	export type FeedLevel = 'info' | 'decision' | 'tool' | 'model' | 'band' | 'error';
 	/** Structural mirror of ops AuditSource. */
-	export type FeedSource =
-		| 'ws-event'
-		| 'ws-convoy'
-		| 'ndjson-chat'
-		| 'audit-poll'
-		| 'operator'
-		| (string & {});
+	export type FeedSource = 'ws-event' | 'ws-convoy' | 'ndjson-chat' | 'audit-poll' | 'operator' | (string & {});
+</script>
+
+<script lang="ts">
+	/**
+	 * FeedItem — one row of the decision audit, rebuilt as the AuditTable row
+	 * renderer of src/lib/ui (SPEC §5.2, §5.3): the IST time (Inter, tabular),
+	 * the actor's glyph from the frozen ACTOR_ICON map (an officer, Veer AI in
+	 * indigo, the rules engine, the system), the actor, the text, the compact
+	 * provenance glyphs (their hidden labels read "Emulated" / "Simulated")
+	 * and the source tag. A row with `detail` is a button that opens the
+	 * evidence in a Dialog. Officers' rows read in ink-1; system bookkeeping
+	 * (the emulator, event-closed walks) recedes to ink-2 so it never reads as
+	 * a person or a model. AuditRow = FeedItem + its source.
+	 *
+	 * `data-prim="feed-item"`, `data-level`, `data-actor-kind`, `data-row-id`
+	 * and `row-simulated` stay; the row's textContent carries the actor and
+	 * the text (the smokes read both).
+	 */
+	import { ACTOR_ICON, INTENT_ICON, type IconName } from '$lib/design/icons';
+	import Icon from '$lib/ui/Icon.svelte';
+	import ProvenanceTag from '$lib/ui/ProvenanceTag.svelte';
+	import Tag from '$lib/ui/Tag.svelte';
+	import Time from '$lib/ui/format/Time.svelte';
+	import { fmtTime } from '$lib/ui/format/format';
+	import Modal from './Modal.svelte';
 
 	interface Props {
 		ts: number;
@@ -38,9 +37,9 @@
 		text: string;
 		detail?: unknown;
 		source?: FeedSource | null;
-		/** The row's source is emulated — render the dashed EMULATED pill. */
+		/** The row's source is emulated — the compact Emulated glyph. */
 		emulated?: boolean;
-		/** The row's numbers came from a SIMULATED feed (C-Q) — render the SIMULATED FEED pill. */
+		/** The row's numbers came from a SIMULATED feed (C-Q) — the compact Simulated glyph. */
 		simulated?: boolean;
 		/** Server rows: the stable FeedItem id (data attribute for tests/deep links). */
 		rowId?: string | null;
@@ -60,24 +59,46 @@
 		emulated = false,
 		simulated = false,
 		rowId = null,
-		lang = 'en',
+		lang,
 		right,
 		children
 	}: Props = $props();
 
 	let open = $state(false);
 
-	const time = $derived(istClock(ts));
-
 	const hasDetail = $derived(detail !== undefined && detail !== null);
-
-	const emulatedWord = $derived(tOps(lang, 'labelEmulated'));
-	const simulatedWord = $derived(tOps(lang, 'labelSimulatedFeed'));
+	const glyph = $derived<IconName>(
+		actorKind === 'human'
+			? ACTOR_ICON.officer
+			: actorKind === 'system'
+				? ACTOR_ICON.system
+				: level === 'error'
+					? INTENT_ICON.danger
+					: level === 'model' || level === 'tool'
+						? ACTOR_ICON.ai
+						: ACTOR_ICON.rules
+	);
+	const ai = $derived(actorKind === 'machine' && (level === 'model' || level === 'tool'));
 
 	function rowText(): string {
-		return `[${time} IST] ${level} ${actorKind} ${actor} — ${text}${emulated ? ` (${emulatedWord})` : ''}${simulated ? ` (${simulatedWord})` : ''}`;
+		return `${fmtTime(ts, { seconds: true })} IST · ${actor} · ${text}`;
 	}
 </script>
+
+{#snippet cells()}
+	<Time value={ts} seconds class="ts" />
+	<span class="glyph" class:ai><Icon name={glyph} size={16} /></span>
+	<span class="actor" title={actor}>{actor}</span>
+	<span class="text">{text}{@render children?.()}</span>
+	{#if emulated || simulated || source}
+		<span class="marks">
+			{#if emulated}<ProvenanceTag source="emulated" compact {lang} />{/if}
+			{#if simulated}<ProvenanceTag source="simulated" compact {lang} data-testid="row-simulated" />{/if}
+			{#if source}<Tag class="src">{source}</Tag>{/if}
+		</span>
+	{/if}
+	{@render right?.()}
+{/snippet}
 
 {#if hasDetail}
 	<button
@@ -90,245 +111,120 @@
 		data-actor-kind={actorKind}
 		data-row-id={rowId ?? undefined}
 	>
-		<span class="ts">{time}</span>
-		<span class="level-dot lv-{level}" aria-hidden="true"></span>
-		<span class="actor" class:human-actor={actorKind === 'human'} title={actor}>{actor}</span>
-		<span class="text">{text}{@render children?.()}</span>
-		{#if emulated}<span class="emulated mono">{emulatedWord}</span>{/if}
-		{#if simulated}<span class="emulated sim mono" data-testid="row-simulated">{simulatedWord}</span>{/if}
-		{#if source}<span class="source mono">{source}</span>{/if}
-		{@render right?.()}
+		{@render cells()}
 	</button>
+	<Modal {open} title="{actor} · {text}" onClose={() => (open = false)}>
+		<pre class="detail">{JSON.stringify(detail, null, 2)}</pre>
+	</Modal>
 {:else}
-	<div
-		class="row {actorKind}"
-		data-prim="feed-item"
-		data-level={level}
-		data-actor-kind={actorKind}
-		data-row-id={rowId ?? undefined}
-	>
-		<span class="ts">{time}</span>
-		<span class="level-dot lv-{level}" aria-hidden="true"></span>
-		<span class="actor" class:human-actor={actorKind === 'human'} title={actor}>{actor}</span>
-		<span class="text">{text}{@render children?.()}</span>
-		{#if emulated}<span class="emulated mono">{emulatedWord}</span>{/if}
-		{#if simulated}<span class="emulated sim mono" data-testid="row-simulated">{simulatedWord}</span>{/if}
-		{#if source}<span class="source mono">{source}</span>{/if}
-		{@render right?.()}
+	<div class="row {actorKind}" data-prim="feed-item" data-level={level} data-actor-kind={actorKind} data-row-id={rowId ?? undefined}>
+		{@render cells()}
 	</div>
 {/if}
 
-{#if hasDetail}
-	<Modal open={open} title="{actor} · {text}" onClose={() => (open = false)}>
-		<pre class="detail mono">{JSON.stringify(detail, null, 2)}</pre>
-	</Modal>
-{/if}
-
 <style>
-	/* Wraps instead of squeezing: in a narrow host (the dossier narrative, a
-	 * dispatch tile) the text drops to its own full-width line rather than
-	 * collapsing to a sliver beside a long officer name; wide rows never wrap. */
+	/* wraps rather than squeezes: in a narrow host the text drops to its own
+	   full-width line instead of collapsing to a sliver beside a long name.
+	   Never shrinks either: the explicit min-height replaces a flex item's
+	   content minimum, so in a fixed-height flex-column scroller (the trace
+	   console, the dossier narrative) a shrinkable row would be squeezed
+	   under its own text; the scroller scrolls instead. */
 	.row {
 		display: flex;
+		flex: 0 0 auto;
 		flex-wrap: wrap;
-		align-items: baseline;
-		column-gap: var(--v-space-2);
-		row-gap: 1px;
+		align-items: center;
+		column-gap: 8px;
+		row-gap: 2px;
+		box-sizing: border-box;
 		width: 100%;
-		padding: var(--v-space-1) var(--v-space-2);
-		border: none;
-		border-left: 2px solid transparent;
-		border-radius: var(--v-radius-chip);
+		min-height: var(--v-ws-row);
+		margin: 0;
+		padding: 4px 8px;
+		border: 0;
+		border-bottom: 1px solid var(--v-line-1);
+		border-radius: 0;
 		background: transparent;
-		font: inherit;
+		color: var(--v-ink-1);
+		font-family: var(--v-font-ui);
+		font-size: var(--v-text-xs);
+		line-height: calc(var(--v-text-xs) + 4px);
 		text-align: left;
-		animation: settle var(--v-dur-out) var(--v-ease);
-	}
-
-	@keyframes settle {
-		from {
-			opacity: 0;
-			transform: translateY(-1px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
 	}
 
 	.clickable {
 		cursor: pointer;
 	}
 
-	.clickable:hover,
-	.clickable:focus-visible {
-		background: var(--v-surface-2);
+	.clickable:hover {
+		background: var(--v-row-hover);
 	}
 
 	.clickable:focus-visible {
-		outline: 1px solid var(--v-act-focus);
-		outline-offset: 2px;
+		outline: 2px solid var(--v-focus);
+		outline-offset: -2px;
 	}
 
-	/* machine rows: dim mono, no rail. */
-	.machine {
-		font-family: var(--v-font-mono);
-		color: var(--v-ink-3);
-		font-size: var(--v-text-xs);
-	}
-
-	.machine .ts {
-		color: var(--v-ink-3);
-	}
-
-	/* system rows: bookkeeping (emulator, event-closed walks, deck notes) —
-	 * dimmer than machine, italic, never on the human rail. */
-	.system {
-		font-family: var(--v-font-mono);
-		font-style: italic;
-		color: var(--v-ink-3);
-		font-size: var(--v-text-xs);
-		opacity: 0.85;
-	}
-
-	.system .ts {
-		color: var(--v-ink-3);
-		font-style: normal;
-	}
-
-	.emulated.sim {
-		color: var(--v-tool);
-		border-color: var(--v-tool);
-	}
-
-	.emulated {
-		font-size: var(--v-text-2xs);
-		font-style: normal;
-		letter-spacing: var(--v-tracking-status);
-		color: var(--v-ink-2);
-		border: 1px dashed var(--v-ink-3);
-		border-radius: var(--v-radius-pill);
-		padding: 0 var(--v-space-1);
-		align-self: center;
-		flex-shrink: 0;
-	}
-
-	/* human rows: one 200ms act flash, then a persistent 2px act rail. */
-	.human {
-		font-family: var(--v-font-ui);
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-1);
-		border-left-color: var(--v-act);
-		animation:
-			settle var(--v-dur-out) var(--v-ease),
-			flash var(--v-dur-pulse) var(--v-ease) 1;
-	}
-
-	@keyframes flash {
-		from {
-			box-shadow: inset 2px 0 0 var(--v-act);
-			color: var(--v-act-text);
-		}
-		to {
-			box-shadow: inset 2px 0 0 transparent;
-		}
-	}
-
-	.human .ts {
+	.row :global(.ts) {
+		flex: 0 0 auto;
 		color: var(--v-ink-2);
 	}
 
-	.human .actor {
-		color: var(--v-act-text);
+	.glyph {
+		display: inline-flex;
+		flex: 0 0 auto;
+		color: var(--v-ink-2);
 	}
 
-	.ts {
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-2xs);
-		flex-shrink: 0;
-	}
-
-	.level-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		flex-shrink: 0;
-		align-self: center;
-		border: 1px solid var(--v-ink-4);
-	}
-
-	.lv-decision {
-		background: var(--v-data);
-		border-color: var(--v-data);
-	}
-
-	.lv-tool {
-		background: var(--v-tool);
-		border-color: var(--v-tool);
-	}
-
-	.lv-band {
-		background: var(--v-band-amber);
-		border-color: var(--v-band-amber);
-	}
-
-	.lv-error {
-		background: var(--v-band-red);
-		border-color: var(--v-band-red);
-	}
-
-	.lv-model {
-		background: transparent;
-		border-color: var(--v-ink-4);
+	.glyph.ai {
+		color: var(--v-ai-text);
 	}
 
 	.actor {
 		flex: 0 1 auto;
-		min-width: 0;
 		max-width: 100%;
+		min-width: 0;
 		overflow: hidden;
+		color: var(--v-ink-2);
+		font-weight: 600;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
 	}
 
-	.human-actor {
-		color: var(--v-act-text);
+	.human .actor {
+		color: var(--v-ink-1);
 	}
 
 	.text {
 		flex: 1 1 14rem;
 		min-width: 0;
-		/* long audit tokens (ids, channel names) must wrap, not overflow */
+		/* long audit tokens (ids, channel names) wrap, never overflow */
 		overflow-wrap: anywhere;
 	}
 
-	.source {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-pill);
-		padding: 0 var(--v-space-1);
-		align-self: center;
-		flex-shrink: 0;
+	/* system bookkeeping recedes: never read as a person or a model */
+	.system .text {
+		color: var(--v-ink-2);
 	}
 
-	.mono {
-		font-family: var(--v-font-mono);
+	.marks {
+		display: inline-flex;
+		flex: 0 0 auto;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.marks :global(.src) {
+		color: var(--v-ink-2);
 	}
 
 	.detail {
 		margin: 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-2);
 		overflow-x: auto;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.row {
-			animation: none;
-		}
+		color: var(--v-ink-2);
+		font-family: inherit;
+		font-size: var(--v-text-xs);
+		line-height: calc(var(--v-text-xs) + 4px);
+		white-space: pre-wrap;
 	}
 </style>

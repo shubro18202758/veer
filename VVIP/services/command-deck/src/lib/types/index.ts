@@ -188,6 +188,20 @@ export interface GpuStatus {
 	};
 }
 
+// ─── Corridor plan & escort (UI-S6A additions) ─────────────────────────────
+
+/** The corridor escort's lifecycle as the Plan tab and the Movement tab read it:
+ * `idle` → `planning` → `planned` → `starting` → `escorting` → `stopping` →
+ * `ended` (the brain's terminal status lands in the follower). */
+export type EscortPhase =
+	| 'idle'
+	| 'planning'
+	| 'planned'
+	| 'starting'
+	| 'escorting'
+	| 'stopping'
+	| 'ended';
+
 // ─── WebSocket Events ───────────────────────────────────────────────────────
 
 export type WsEventType =

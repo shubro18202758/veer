@@ -608,8 +608,14 @@ class TestVehiclesRouter:
                 sql for kind, sql, _ in store.calls
                 if kind == "fetch" and sql.lstrip().upper().startswith("DELETE")
             ]
-            # one reap = the three retention DELETEs, once, not per GET
-            assert len(deletes) == 3
+            # one reap = the four retention DELETEs (sightings x2, orphan
+            # vehicles, lookup audit rows past the cap), once, not per GET
+            assert deletes == [vstore.REAP_DEFAULT_SQL, vstore.REAP_EARMARKED_SQL,
+                               vstore.REAP_ORPHAN_VEHICLES_SQL,
+                               vstore.REAP_LOOKUP_AUDIT_SQL]
+            (audit_args,) = [a for kind, sql, a in store.calls
+                             if sql == vstore.REAP_LOOKUP_AUDIT_SQL]
+            assert audit_args == (vstore.LOOKUP_AUDIT_RETENTION_DAYS,)
             assert vstore.REAPER.due() is False
         finally:
             vstore.REAPER.reset()

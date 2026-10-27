@@ -6,8 +6,10 @@
  *     the deck origin's proxy prefixes (vite dev proxy in dev, hooks.server.ts
  *     in the adapter-node build; no EventSource anywhere — streaming is NDJSON
  *     over fetch with a ReadableStream reader, and WS via the ladder in dev).
- *   - the absolute emulator loopback URL (EMULATOR_BASE) is a dev-only second
- *     rung; production never requests it.
+ *   - no absolute URL to any service port is ever built in the browser: the
+ *     emulator, like the oracle and the brain, is reached ONLY through the
+ *     same-origin proxy (audit F-CONN-01: the old absolute emulator rung
+ *     let a dev deck write to the live emulator).
  *   - all URLs are fixed constants or built from `safePathId`-validated ids;
  *     nothing here accepts a caller-supplied URL (see endpoints.ts guard).
  *
@@ -23,7 +25,6 @@ import {
 	CITY_ENTITIES_API,
 	CITY_FEED_API,
 	CORRIDOR_SUMMARY_API,
-	EMULATOR_BASE,
 	EMULATOR_HERO_CATEGORIES,
 	EMULATOR_HERO_USE_CASES,
 	EMULATOR_PROXY_PATH,
@@ -43,10 +44,11 @@ import {
 	assertSafeExternalUrl,
 	safePathId,
 } from './endpoints';
+import { parseUrn } from '$lib/gods-eye/city-api';
+import { emulatedByMetadata } from './event-source';
 import type {
 	ActorKind,
 	BandCode,
-	BandEvidence,
 	BrainPosture,
 	CorridorEvent,
 	CrowdClass,
@@ -84,10 +86,12 @@ import type {
 	SignalHistoryRow,
 	SignalLastPlan,
 	SignalPlansDoc,
+	SourceKind,
 	TrafficFeedProvenance,
 	TwinArm,
 	TwinCompareResult,
 	VehicleWatchRecord,
+	VerificationState,
 	ClosurePolicySpec,
 } from './types';
 
@@ -309,6 +313,26 @@ const KINDS: EventKind[] = [
 	'work_zone',
 	'vehicle_pursuit',
 	'crime_incident',
+	// OSINT reported-situation kinds (migration 021, contract C3 lockstep)
+	'reported_crime',
+	'public_disorder',
+	'road_accident',
+	'hazard',
+	'flooding',
+	'infra_failure',
+];
+
+/** corridor_events.source_kind (migration 021). */
+const SOURCE_KINDS: SourceKind[] = ['operator', 'brain', 'emulator', 'osint'];
+
+/** corridor_events.verification_state (migration 021). */
+const VERIFICATION_STATES: VerificationState[] = [
+	'EMULATED',
+	'SIMULATED',
+	'UNVERIFIED-OSINT',
+	'NEWS-REPORTED',
+	'OFFICIAL-VERIFIED',
+	'CONFIRMED',
 ];
 
 const PROTECTION: ProtectionClass[] = ['Z+', 'Z', 'Y', 'X', 'none'];
@@ -360,6 +384,25 @@ function routesOf(v: unknown): RouteSpine[] {
 		});
 	}
 	return out;
+}
+
+/** Credibility 0..1, else null (a missing, non-numeric or out-of-range value never reads as a score). */
+function credibilityOf(v: unknown): number | null {
+	return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
+}
+
+/** The wire `geotag` {lon, lat} (finite, in range), else null. */
+function geotagOf(v: unknown): { lon: number; lat: number } | null {
+	if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+	const { lon, lat } = v as Record<string, unknown>;
+	if (typeof lon !== 'number' || typeof lat !== 'number') return null;
+	if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lon) > 180 || Math.abs(lat) > 90) return null;
+	return { lon, lat };
+}
+
+/** The wire `provenance` document: a plain object, else null. */
+function provenanceOf(v: unknown): Record<string, unknown> | null {
+	return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
 function metadataOf(v: unknown): EventMetadata {
@@ -447,8 +490,15 @@ export function mapEventRow(row: Record<string, unknown>, source: EventSource): 
 		status: str(rawStatus),
 		movementId: str(row.movement_id) ?? str(row.movementId),
 		metadata,
-		emulated: metadata.source === 'event-emulator',
+		// FIX-G-ORACLE / HON-4: emulated evidence makes the event emulated too (the oracle's event_source)
+		emulated: emulatedByMetadata(row.metadata),
 		...(Array.isArray(row.route_history) ? { routeHistory: routesOf(row.route_history) } : {}),
+		// additive (migration 021, contract C-T): read tolerantly, null when absent or malformed
+		sourceKind: pick(row.source_kind ?? row.sourceKind, SOURCE_KINDS),
+		credibility: credibilityOf(row.credibility),
+		verificationState: pick(row.verification_state ?? row.verificationState, VERIFICATION_STATES),
+		provenance: provenanceOf(row.provenance),
+		geotag: geotagOf(row.geotag),
 	};
 }
 
@@ -670,33 +720,6 @@ function withEvaluatedAt(doc: CityBandDoc | null, loop: unknown): CityBandDoc | 
 }
 
 /**
- * GET /api/v1/adaptive/params?vvip_class= — band + shadow-eval evidence.
- *
- * NOT a poller rung: on the current oracle this GET creates subject state
- * and persists a param_overrides row per call (adaptive/service.py
- * params_for → log_params). The stores derive evidence from the read-only
- * /adaptive/overrides rows instead; this stays for explicit operator use.
- */
-export async function fetchAdaptiveParams(cls: ProtectionClass): Promise<BandEvidence> {
-	const resp = await request<Record<string, unknown>>(
-		`${ORACLE_V1}/adaptive/params?vvip_class=${encodeURIComponent(cls === 'none' ? 'X' : cls)}`,
-	);
-	const evidence = (resp.evidence ?? {}) as Record<string, unknown>;
-	return {
-		shadowEval:
-			typeof resp.shadow_eval === 'string'
-				? resp.shadow_eval
-				: typeof evidence.shadow_eval === 'string'
-					? evidence.shadow_eval
-					: null,
-		floorApplied: typeof evidence.floor_applied === 'boolean' ? evidence.floor_applied : null,
-		failClosedReason:
-			typeof evidence.fail_closed_reason === 'string' ? evidence.fail_closed_reason : null,
-		situationClass: pick(resp.situation_class, ['GREEN', 'AMBER', 'RED', 'BLACK']),
-	};
-}
-
-/**
  * GET /api/v1/adaptive/overrides?event_id=&limit= — param-override audit rows
  * (contract C-C: {overrides:[{published_at, event_id, movement_id,
  * situation_class, params, source, shadow_eval, shadow_eval_detail}]}),
@@ -870,35 +893,19 @@ function deltaOf(b: TwinArm, c: TwinArm): Record<string, number | null> {
 	return d;
 }
 
-// ─── Emulator (same-origin proxy; absolute loopback is a dev-only rung) ──────
+// ─── Emulator (the same-origin proxy only) ──────────────────────────────────
 
 /**
  * Fetch against the emulator through the deck origin's /api/emulator proxy
- * (vite dev proxy / hooks.server.ts). Only under the vite dev server, when
- * that proxy path is unreachable, the absolute loopback constant is tried
- * second. The production build never requests http://localhost:8090 — that
- * call was CORS-blocked from every non-:5173 origin and flooded the console.
- * Both bases are fixed config constants; `path` is a fixed template.
+ * (vite dev proxy / hooks.server.ts) — the ONLY route, in dev and in the
+ * build. There is no second, absolute rung: a dev deck's proxy points at its
+ * own (sandbox) emulator, and a 404 from it (a missing proxy entry, or the
+ * emulator's own "run N not found") is that answer, never a cue to try a
+ * fixed port — that retry reached the LIVE emulator (audit F-CONN-01).
+ * `path` is a fixed template.
  */
 async function emulatorFetch(path: string, init?: RequestInit, timeoutMs = 6000): Promise<Response> {
-	const bases = DEV_SERVER ? [EMULATOR_PROXY_PATH, EMULATOR_BASE] : [EMULATOR_PROXY_PATH];
-	let lastErr: unknown = null;
-	for (const base of bases) {
-		try {
-			const res = await fetch(`${base}${path}`, { ...init, signal: AbortSignal.timeout(timeoutMs) });
-			// A 404/502 on the PROXY rung means the dev proxy entry is missing
-			// or its upstream is down: only then is the dev-only absolute rung
-			// worth a try. Any other answer is the emulator speaking.
-			if (base === EMULATOR_PROXY_PATH && bases.length > 1 && (res.status === 404 || res.status === 502)) {
-				lastErr = new Error(`emulator proxy ${res.status}`);
-				continue;
-			}
-			return res;
-		} catch (err) {
-			lastErr = err;
-		}
-	}
-	throw lastErr instanceof Error ? lastErr : new Error('emulator unreachable');
+	return fetch(`${EMULATOR_PROXY_PATH}${path}`, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 /** What GET /health on the emulator reports (contract C-G). */
@@ -3110,4 +3117,466 @@ export function junctionsNearSpine(
 		}))
 		.sort((a, b) => a.distanceM - b.distanceM || a.junction.junctionId - b.junction.junctionId)
 		.slice(0, limit);
+}
+
+// ─── OSINT decision support (contracts C-T promote, C-U; plan X22) ───────────
+//
+// Two CITY WRITERS — a named officer decides, and the proxy forwards the
+// session officer as x-veer-officer (the body carries `officer` like every
+// other writer). Two compute/read calls — no officer, never a poller: the
+// object is fetched only when a unit's card opens. `parseDecisionSupport` is
+// tolerant: unknown fields are ignored, junk is null.
+
+/** The 409 codes C-U freezes for POST /decision-support/{id}/decision. */
+export const DSS_409_CODES = ['officer-required', 'not-proposed', 'coa-vetoed', 'coa-infeasible', 'unknown-coa', 'no-anchor'] as const;
+
+/** The 409 codes C-T freezes for POST /osint/events/{id}/promote. */
+export const PROMOTE_409_CODES = ['officer-required', 'already-promoted', 'no-anchor', 'not-an-event'] as const;
+
+export interface DssCriterion {
+	id: string;
+	label: string;
+	direction: string | null;
+	weight: number | null;
+	role: string | null;
+}
+
+export interface DssAction {
+	verb: string;
+	targetUrn: string | null;
+	params: Record<string, unknown>;
+	requiresOfficer: boolean;
+	reversible: boolean | null;
+}
+
+export interface DssDist {
+	mean: number | null;
+	p90: number | null;
+}
+
+/** One course of action, in the deck's words (wire fields snake_case). */
+export interface DssCoa {
+	coaId: string;
+	kind: string;
+	label: string;
+	actions: DssAction[];
+	/** The dispatch actions, parsed once (the writer's per-dispatch rows). */
+	dispatches: DssAction[];
+	responseToSceneSec: number | null;
+	disruption: DssDist | null;
+	spillover: DssDist | null;
+	neighbourhoodsTouched: string[];
+	parallelRoutesLoaded: string[];
+	ambulanceDelaySec: number | null;
+	greenCorridorOk: boolean | null;
+	timeToEffectSec: number | null;
+	resolutionProb: number | null;
+	required: Record<string, number>;
+	free: Record<string, number>;
+	etaToSceneSec: number | null;
+	feasible: boolean;
+	shortfalls: string[];
+	closeness: number | null;
+	rank: number | null;
+	vetoed: boolean;
+	vetoReason: string | null;
+}
+
+export interface DssStrategyPrior {
+	kind: string;
+	probability: number | null;
+	confidence: number | null;
+	tier: string | null;
+}
+
+/** The best response the engine could not resource (absent until the oracle carries it; read defensively). */
+export interface DssBestBlocked {
+	coaId: string;
+	closeness: number | null;
+	missing: string[];
+	unblockAction: string | null;
+}
+
+export interface DssRecommendation {
+	rankedCoaIds: string[];
+	topCoaId: string | null;
+	margin: number | null;
+	strategyPrior: DssStrategyPrior | null;
+	bestBlocked: DssBestBlocked | null;
+	/** The public-safety floor's mode ('hold' | 'verify' | 'none'); null while the wire has none or carries junk. */
+	publicSafetyFloor: 'hold' | 'verify' | 'none' | null;
+	evoi: number | null;
+	adviseGather: boolean | null;
+	evoiWhy: string | null;
+	dissent: string | null;
+	decision: string | null;
+}
+
+export interface DssProvenance {
+	feeds: string[];
+	publishers: string[];
+	simRunIds: string[];
+	modelTiers: string[];
+	wargameMethod: string | null;
+	brainDegraded: boolean | null;
+}
+
+export interface DecisionSupport {
+	dssId: string;
+	eventUrn: string;
+	state: string;
+	generatedAt: string | null;
+	horizonMin: number | null;
+	summary: string | null;
+	veerEventKind: string | null;
+	toponym: string | null;
+	verificationState: VerificationState | null;
+	credibility: number | null;
+	criteria: DssCriterion[];
+	ahpCr: number | null;
+	ahpAcceptable: boolean | null;
+	coaSet: DssCoa[];
+	recommendation: DssRecommendation;
+	provenance: DssProvenance;
+	labels: string[];
+}
+
+const dssStr = (v: unknown): string | null => (typeof v === 'string' && v.length ? v : null);
+const dssNum = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const dssRec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+function dssNumMap(v: unknown): Record<string, number> {
+	const out: Record<string, number> = {};
+	for (const [k, n] of Object.entries(dssRec(v))) if (typeof n === 'number' && Number.isFinite(n)) out[k] = n;
+	return out;
+}
+function dssStrList(v: unknown): string[] {
+	return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
+}
+const dssDist = (v: unknown): DssDist | null => {
+	const r = dssRec(v);
+	return r && ('mean' in r || 'p90' in r) ? { mean: dssNum(r.mean), p90: dssNum(r.p90) } : null;
+};
+
+function parseDssAction(a: unknown): DssAction | null {
+	const r = dssRec(a);
+	const verb = dssStr(r.verb);
+	if (!verb) return null;
+	return {
+		verb,
+		targetUrn: dssStr(r.target_urn),
+		params: dssRec(r.params),
+		requiresOfficer: r.requires_officer === true,
+		reversible: typeof r.reversible === 'boolean' ? r.reversible : null,
+	};
+}
+
+function parseDssCoa(raw: unknown): DssCoa | null {
+	const r = dssRec(raw);
+	const coaId = dssStr(r.coa_id);
+	if (!coaId) return null;
+	const actions = (Array.isArray(r.actions) ? r.actions : []).map(parseDssAction).filter((a): a is DssAction => a !== null);
+	const po = dssRec(r.predicted_outcome);
+	const cascade = dssRec(po.cascade);
+	const rf = dssRec(r.resource_feasibility);
+	const score = dssRec(r.score);
+	const ethics = dssRec(r.ethics);
+	return {
+		coaId,
+		kind: dssStr(r.kind) ?? 'standard',
+		label: dssStr(r.label) ?? coaId,
+		actions,
+		dispatches: actions.filter((a) => a.verb === 'dispatch'),
+		responseToSceneSec: dssNum(po.response_time_to_scene_sec),
+		disruption: dssDist(po.total_disruption_vehicle_hours),
+		spillover: dssDist(cascade.spillover_vehicle_hours),
+		neighbourhoodsTouched: dssStrList(cascade.neighbourhoods_touched),
+		parallelRoutesLoaded: dssStrList(cascade.parallel_routes_loaded),
+		ambulanceDelaySec: dssNum(dssRec(po.emergency_impact).ambulance_delay_sec),
+		greenCorridorOk: typeof dssRec(po.emergency_impact).green_corridor_ok === 'boolean' ? (dssRec(po.emergency_impact).green_corridor_ok as boolean) : null,
+		timeToEffectSec: dssNum(po.time_to_effect_sec),
+		resolutionProb: dssNum(po.event_resolution_prob),
+		required: dssNumMap(rf.required_resources),
+		free: dssNumMap(rf.availability),
+		etaToSceneSec: dssNum(rf.eta_to_scene_sec),
+		feasible: rf.feasible === true,
+		shortfalls: dssStrList(rf.shortfalls),
+		closeness: dssNum(score.closeness),
+		rank: dssNum(score.rank),
+		vetoed: ethics.vetoed === true,
+		vetoReason: dssStr(ethics.veto_reason),
+	};
+}
+
+/**
+ * One C-U DecisionSupport → the deck's object; null when it cannot be
+ * identified (no dss_id). Unknown fields are ignored, missing ones null.
+ * Exported pure for tests.
+ */
+export function parseDecisionSupport(raw: unknown): DecisionSupport | null {
+	const r = dssRec(raw);
+	const dssId = dssStr(r.dss_id);
+	if (!dssId) return null;
+	const sit = dssRec(r.situation);
+	const reco = dssRec(r.recommendation);
+	const ahp = dssRec(r.ahp);
+	const prov = dssRec(r.provenance);
+	const voi = dssRec(reco.value_of_information);
+	const prior = dssRec(reco.strategy_prior);
+	const blocked = dssRec(reco.best_blocked);
+	const criteria = (Array.isArray(r.criteria) ? r.criteria : []).map((c) => {
+		const cr = dssRec(c);
+		return {
+			id: dssStr(cr.id) ?? '',
+			label: dssStr(cr.label) ?? dssStr(cr.id) ?? '',
+			direction: dssStr(cr.direction),
+			weight: dssNum(cr.weight),
+			role: dssStr(cr.role),
+		};
+	});
+	return {
+		dssId,
+		eventUrn: dssStr(r.event_urn) ?? '',
+		state: dssStr(r.state) ?? 'proposed',
+		generatedAt: dssStr(r.generated_at),
+		horizonMin: dssNum(r.horizon_min),
+		summary: dssStr(sit.summary),
+		veerEventKind: dssStr(sit.veer_event_kind),
+		toponym: dssStr(sit.toponym),
+		verificationState: pick(sit.verification_state, VERIFICATION_STATES),
+		credibility: credibilityOf(sit.credibility),
+		criteria: criteria.filter((c) => c.id),
+		ahpCr: dssNum(ahp.consistency_ratio),
+		ahpAcceptable: typeof ahp.acceptable === 'boolean' ? (ahp.acceptable as boolean) : null,
+		coaSet: (Array.isArray(r.coa_set) ? r.coa_set : []).map(parseDssCoa).filter((c): c is DssCoa => c !== null),
+		recommendation: {
+			rankedCoaIds: dssStrList(reco.ranked_coa_ids),
+			topCoaId: dssStr(reco.top_coa_id),
+			margin: dssNum(reco.margin),
+			strategyPrior: dssStr(prior.kind)
+				? { kind: prior.kind as string, probability: dssNum(prior.probability), confidence: dssNum(prior.confidence), tier: dssStr(prior.tier) }
+				: null,
+			bestBlocked: dssStr(blocked.coa_id)
+				? { coaId: blocked.coa_id as string, closeness: dssNum(blocked.closeness), missing: dssStrList(blocked.missing), unblockAction: dssStr(blocked.unblock_action) }
+				: null,
+			// the structured public-safety floor (osint_common Recommendation.public_safety_floor);
+			// anything but the three merged modes reads null
+			publicSafetyFloor:
+				reco.public_safety_floor === 'hold' || reco.public_safety_floor === 'verify' || reco.public_safety_floor === 'none'
+					? reco.public_safety_floor
+					: null,
+			evoi: dssNum(voi.evoi),
+			adviseGather: typeof voi.advise_gather === 'boolean' ? (voi.advise_gather as boolean) : null,
+			evoiWhy: dssStr(voi.why),
+			dissent: dssStr(reco.dissent),
+			decision: dssStr(reco.decision),
+		},
+		provenance: {
+			feeds: dssStrList(prov.feeds),
+			publishers: dssStrList(prov.publishers),
+			simRunIds: dssStrList(prov.sim_run_ids),
+			modelTiers: dssStrList(prov.model_tiers),
+			wargameMethod: dssStr(prov.wargame_method),
+			brainDegraded: typeof prov.brain_degraded === 'boolean' ? (prov.brain_degraded as boolean) : null,
+		},
+		labels: dssStrList(r.labels),
+	};
+}
+
+/** The refusal code of a 409 body when it names a frozen code, else 'refused'; detail kept verbatim. */
+function refusalOf(bodyText: string, codes: readonly string[]): { refusal: string; detail: string | null } {
+	const { detail } = parseDecisionRefusal(bodyText);
+	return { refusal: detail && (codes as readonly string[]).includes(detail) ? detail : 'refused', detail };
+}
+
+/** What a decision-support decision came back with (the card prints refusals verbatim). */
+export interface DssDecisionOutcome {
+	ok: boolean;
+	status: number;
+	dssId: string | null;
+	state: string | null;
+	coaId: string | null;
+	officer: string | null;
+	decidedAt: string | null;
+	promotedEventId: string | null;
+	dispatchIds: string[];
+	nextSteps: { verb: string; home: string | null; label: string }[];
+	refusal: string | null;
+	detail: string | null;
+}
+
+/**
+ * POST /api/v1/decision-support/{dss_id}/decision — CITY WRITER (C-U). The
+ * officer approves exactly ONE course of action (or rejects / defers with a
+ * note); the oracle promotes the report and files the dispatch REQUESTS, not
+ * this client. A 409 code comes back with the oracle's own sentence.
+ * Smokes NEVER fire this (R8).
+ */
+export async function decideDecisionSupport(
+	dssId: string,
+	input: { decision: 'approve' | 'reject' | 'defer'; coaId?: string; note?: string },
+	actor: string,
+): Promise<DssDecisionOutcome> {
+	const id = safePathId(dssId);
+	if (!id) throw new ApiDown(`invalid decision-support id: ${dssId}`);
+	const officer = officerField(requireActor('decision-support decision', actor));
+	const body: Record<string, unknown> = { decision: input.decision, officer };
+	if (input.coaId) body['coa_id'] = input.coaId;
+	if (input.note) body['note'] = input.note.slice(0, 500);
+	const ctrl = new AbortController();
+	const timer = setTimeout(() => ctrl.abort(), 60000);
+	let res: Response;
+	try {
+		res = await fetch(`${ORACLE_V1}/decision-support/${id}/decision`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+			signal: ctrl.signal,
+		});
+	} catch (err) {
+		throw new ApiDown(
+			err instanceof DOMException && err.name === 'AbortError'
+				? 'decision-support decision: no answer within 60 s'
+				: `decision-support decision unreachable: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	} finally {
+		clearTimeout(timer);
+	}
+	const text = await res.text().catch(() => '');
+	if (res.status === 409) {
+		const refusal = refusalOf(text, DSS_409_CODES);
+		return {
+			ok: false,
+			status: 409,
+			dssId: id,
+			state: null,
+			coaId: null,
+			officer,
+			decidedAt: null,
+			promotedEventId: null,
+			dispatchIds: [],
+			nextSteps: [],
+			refusal: refusal.refusal,
+			detail: refusal.detail,
+		};
+	}
+	if (res.status === 401 || res.status === 403) throw new SignInRequired(res.status);
+	if (res.status === 404) throw new ApiNotDeployed(404, 'decision support not found');
+	if (!res.ok) throw new ApiDown(`${res.status} ${res.statusText}: ${text.slice(0, 200)}`);
+	const r = dssRec(JSON.parse(text || '{}'));
+	return {
+		ok: true,
+		status: res.status,
+		dssId: dssStr(r.dss_id) ?? id,
+		state: dssStr(r.state),
+		coaId: dssStr(r.coa_id),
+		officer: dssStr(r.officer) ?? officer,
+		decidedAt: dssStr(r.decided_at),
+		promotedEventId: dssStr(r.promoted_event_id),
+		dispatchIds: dssStrList(r.dispatch_ids),
+		nextSteps: (Array.isArray(r.next_steps) ? r.next_steps : []).map((s) => {
+			const sr = dssRec(s);
+			return { verb: dssStr(sr.verb) ?? '', home: dssStr(sr.home), label: dssStr(sr.label) ?? '' };
+		}),
+		refusal: null,
+		detail: null,
+	};
+}
+
+/** What a promote came back with (the section prints refusals verbatim). */
+export interface PromoteOutcome {
+	ok: boolean;
+	status: number;
+	osintEventId: string | null;
+	eventId: string | null;
+	eventKind: string | null;
+	verificationState: VerificationState | null;
+	refusal: string | null;
+	detail: string | null;
+}
+
+/**
+ * POST /api/v1/osint/events/{id}/promote — CITY WRITER (C-T). The officer
+ * turns an OSINT report into a corridor event, keeping its verification
+ * state; the audit records the name. Smokes NEVER fire this (R8).
+ */
+export async function promoteOsintEvent(
+	osintEventId: string,
+	input: { note?: string; eventKind?: string },
+	actor: string,
+): Promise<PromoteOutcome> {
+	const id = safePathId(osintEventId);
+	if (!id) throw new ApiDown(`invalid osint event id: ${osintEventId}`);
+	const officer = officerField(requireActor('OSINT promote', actor));
+	const body: Record<string, unknown> = { officer };
+	if (input.note) body['note'] = input.note.slice(0, 500);
+	if (input.eventKind) body['event_kind'] = input.eventKind;
+	const ctrl = new AbortController();
+	const timer = setTimeout(() => ctrl.abort(), 30000);
+	let res: Response;
+	try {
+		res = await fetch(`${ORACLE_V1}/osint/events/${id}/promote`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+			signal: ctrl.signal,
+		});
+	} catch (err) {
+		throw new ApiDown(
+			err instanceof DOMException && err.name === 'AbortError' ? 'promote: no answer within 30 s' : `promote unreachable: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	} finally {
+		clearTimeout(timer);
+	}
+	const text = await res.text().catch(() => '');
+	if (res.status === 409) {
+		const refusal = refusalOf(text, PROMOTE_409_CODES);
+		return { ok: false, status: 409, osintEventId: id, eventId: null, eventKind: null, verificationState: null, refusal: refusal.refusal, detail: refusal.detail };
+	}
+	if (res.status === 401 || res.status === 403) throw new SignInRequired(res.status);
+	if (res.status === 404) throw new ApiNotDeployed(404, 'osint event not found');
+	if (!res.ok) throw new ApiDown(`${res.status} ${res.statusText}: ${text.slice(0, 200)}`);
+	const r = dssRec(JSON.parse(text || '{}'));
+	return {
+		ok: true,
+		status: res.status,
+		osintEventId: dssStr(r.osint_event_id) ?? id,
+		eventId: dssStr(r.event_id),
+		eventKind: dssStr(r.event_kind),
+		verificationState: pick(r.verification_state, VERIFICATION_STATES),
+		refusal: null,
+		detail: null,
+	};
+}
+
+/**
+ * POST /api/v1/decision-support/{event_urn}/generate — COMPUTE (R2
+ * compute-only; no officer, never a writer). The URN is validated with
+ * parseUrn before anything is sent; the answer is the new (or idempotent)
+ * proposed DSS.
+ */
+export async function generateDecisionSupport(
+	eventUrn: string,
+	input: { horizonMin?: number; seed?: number } = {},
+): Promise<DecisionSupport> {
+	const urn = parseUrn(eventUrn);
+	if (!urn || (urn.kind !== 'osint_event' && urn.kind !== 'event')) throw new ApiDown(`invalid decision-support subject: ${eventUrn}`);
+	const body: Record<string, unknown> = { requested_by: 'deck' };
+	if (input.horizonMin != null) body['horizon_min'] = Math.min(120, Math.max(15, Math.round(input.horizonMin)));
+	if (input.seed != null) body['seed'] = Math.round(input.seed);
+	const resp = await post<unknown>(`${ORACLE_V1}/decision-support/${urn.kind}:${urn.id}/generate`, body, 120000);
+	const parsed = parseDecisionSupport(resp);
+	if (!parsed) throw new ApiDown('decision-support generate: unparseable answer');
+	return parsed;
+}
+
+/**
+ * GET /api/v1/decision-support/{dss_id} — fetched ONLY when a unit's card
+ * opens (plan R11/X13: never a polled GET).
+ */
+export async function getDecisionSupport(dssId: string): Promise<DecisionSupport> {
+	const id = safePathId(dssId);
+	if (!id) throw new ApiDown(`invalid decision-support id: ${dssId}`);
+	const parsed = parseDecisionSupport(await request<unknown>(`${ORACLE_V1}/decision-support/${id}`));
+	if (!parsed) throw new ApiDown('decision-support: unparseable answer');
+	return parsed;
 }

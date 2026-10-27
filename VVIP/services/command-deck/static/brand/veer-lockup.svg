@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 226 64" width="226" height="64" role="img" aria-label="Veer">
+  <path d="M11 13 L32 52 L53 13" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32" cy="30" r="5.4" fill="#276EF1"/>
+  <g transform="translate(78 0)" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 21 L18 47 L30 21"/>
+    <path d="M40 34 H69 A14.5 14.5 0 1 0 64.6 44.6"/>
+    <path d="M79 34 H108 A14.5 14.5 0 1 0 103.6 44.6"/>
+    <path d="M121 47 V31 A10 10 0 0 1 131 21 H136"/>
+  </g>
+</svg>

@@ -1577,6 +1577,10 @@ ENTITY_KEYS = {
     "age_sec",
     "links",
     "props",
+    # C-T / C-C extension (OS-5): every record says its verification state
+    # and credibility (null for non-OSINT rows)
+    "verification_state",
+    "credibility",
 }
 FEED_KEYS = {
     "id",
@@ -1589,6 +1593,9 @@ FEED_KEYS = {
     "source",
     "severity",
     "props",
+    # C-T / C-C extension (OS-5)
+    "verification_state",
+    "credibility",
 }
 
 
@@ -1881,7 +1888,9 @@ class TestEntities:
         assert anom["id"] == "900" and anom["props"]["count_15m"] == 2
         j1 = next(e for e in body["entities"] if e["urn"] == "junction:1")
         assert j1["label"] == "Lal Darwaja" and j1["props"]["name_gu"] == "લાલ દરવાજા"
-        assert j1["state"] in ("green", "lost") and "active_phase" in j1["props"]
+        # HON-10: the phase is the signal program's, planned — never a bare live "green"
+        assert j1["state"] in ("planned_green", "planned_lost") and "active_phase" in j1["props"]
+        assert j1["props"]["phase_status"] == "planned (signal program)" and j1["props"]["live_phase"] is False
         j2 = next(e for e in body["entities"] if e["urn"] == "junction:2")
         assert j2["state"] == "unsignalled"
 
@@ -2734,6 +2743,124 @@ class TestCoordinationStub:
         assert len(CITY_PATHS) == 5
 
 
+# ─── OSINT kinds (contract C-T, C-C extension — OS-5) ───────────────────────
+
+OSINT_ID = "0b7e3c2a-4444-4d1e-9a8b-5c6d7e8f9a0b"
+
+
+class TestOsintKinds:
+    """The router accepts the new kinds; an unmigrated store answers as before."""
+
+    def test_vocabulary_and_ids(self):
+        assert common.ENTITY_KINDS[-2:] == ("osint_event", "place")
+        assert {"osint_event", "place", "segment"} <= set(common.DOSSIER_KINDS)
+        assert common.FEED_KINDS[-1] == "osint"
+        assert common.parse_entity_id("osint_event", OSINT_ID.upper()) == OSINT_ID
+        assert common.parse_entity_id("place", "karnavati_club_sg_highway_106") == "karnavati_club_sg_highway_106"
+        for kind, bad in (("osint_event", "rath_yatra"), ("place", "Karnavati"), ("place", "a b"),
+                          ("place", "_x"), ("place", "x" * 65), ("place", "../etc")):
+            with pytest.raises(ValueError):
+                common.parse_entity_id(kind, bad)
+        assert common.place_slug("Karnavati Club (SG Highway)", 106) == "karnavati_club_sg_highway_106"
+        assert common.place_slug("ઓઢવ", 7) == "place_7"  # nothing ASCII left: still a valid slug
+        assert common.PLACE_SLUG_RE.fullmatch(common.place_slug("x" * 200, 123456789))
+        assert common.place_gaz_id("karnavati_club_sg_highway_106") == 106
+        assert common.place_gaz_id("karnavati_club_sg_highway") is None
+
+    def test_the_two_coercion_points_accept_osint_and_flatten_anything_else(self):
+        now = datetime.now(timezone.utc)
+        for src, want in (("osint", "osint"), ("emulated", "emulated"), ("live", "live"),
+                          ("OSINT", "live"), (None, "live"), ("brain", "live")):
+            assert common.city_entity("event", "x", "x", 1, 1, now=now, source=src)["source"] == want
+            assert common.feed_item("i", now, "event", [], actor=None, actor_kind="system", text="t",
+                                    source=src)["source"] == want
+        e = common.city_entity("event", "x", "x", 1, 1, now=now, verification_state="BOGUS", credibility=2)
+        assert (e["verification_state"], e["credibility"]) == (None, None)
+        f = common.feed_item("i", now, "osint", [], actor=None, actor_kind="machine", text="t",
+                             source="osint", verification_state="NEWS-REPORTED", credibility=0.65000001)
+        assert (f["verification_state"], f["credibility"]) == ("NEWS-REPORTED", 0.65)
+        resolved = common.ResolvedSubjects(events={"m": ["a", "b"]}, sources={"a": "live", "b": "osint"})
+        assert resolved.source_of("m") == "osint"  # never passes for live
+
+    def test_kinds_filters_accept_the_new_kinds_on_an_unmigrated_store(self):
+        body = call(make_app(valkey=city_valkey()), "/api/v1/city/entities?kinds=osint_event,place").json()
+        assert body["entities"] == [] and set(body["feeds"]) == {"osint_event", "place"}
+        assert body["feeds"]["osint_event"]["held_social"] == 0
+        r = call(make_app(), "/api/v1/city/feed?kinds=osint")
+        assert r.status_code == 200 and r.json()["items"] == [] and r.json()["sources"] == {}
+        assert call(make_app(), "/api/v1/city/entities?kinds=osint").status_code == 422
+
+    def test_osint_dossiers_are_404_before_021_and_422_when_malformed(self):
+        app = make_app(valkey=city_valkey())
+        assert call(app, f"/api/v1/city/entity/osint_event/{OSINT_ID}").status_code == 404
+        assert call(app, "/api/v1/city/entity/place/karnavati_club_sg_highway_106").status_code == 404
+        for bad in ("osint_event/not-a-uuid", "place/Bad%20Slug", "place/_x"):
+            r = call(app, "/api/v1/city/entity/" + bad)
+            assert r.status_code == 422, bad
+
+    def test_osint_event_and_place_dossiers(self):
+        import asyncio as _asyncio
+
+        from test_city_snapshot import OsintCity, _gazetteer_entries, _ingest
+
+        from fixtures.osint.signals import new_tag
+        from traffic_oracle.osint import store as osint_store
+
+        city = OsintCity()
+
+        async def seed():
+            async with city.osint_pool.acquire() as conn:
+                async with conn.transaction():
+                    await osint_store.sync_gazetteer(conn, _gazetteer_entries())
+            return await _ingest(city.osint_pool, new_tag())
+
+        ids = _asyncio.run(seed())
+        # the canned city knows neither segment 1045 nor junction 11: let it
+        h = city.city_pool.conn.handlers
+        base_segments, base_junctions = h[dos._SQL_DOSSIER_SEGMENTS], h[dos._SQL_DOSSIER_JUNCTIONS]
+        h[dos._SQL_DOSSIER_SEGMENTS] = lambda sids: base_segments(sids) + [
+            {"segment_id": 1045, "road_name": "SG Highway (Prahlad Nagar)", "road_class": "trunk",
+             "lanes": 3, "speed_limit_kmh": 60, "oneway": False, "lon": 72.507, "lat": 23.01,
+             "length_m": 900.0} for s in sids if s == 1045
+        ]
+        h[dos._SQL_DOSSIER_JUNCTIONS] = lambda jids: base_junctions(jids) + [
+            {**city.city_pool.conn.t["junctions"][1], "junction_id": 11, "lon": 72.673, "lat": 23.025,
+             "doc": json.dumps({"junction_id": 11, "name": "Odhav Ring Road Circle"})}
+            for j in jids if j == 11
+        ]
+        city.db.events[ids["odhav"]]["corroborates_live_urn"] = f"event:{E_PURSUIT}"
+        city.db.events[ids["sg"]]["promoted_event_id"] = E_ZONE
+        app = city.app()
+
+        sg = call(app, f"/api/v1/city/entity/osint_event/{ids['sg']}").json()
+        rel: dict[str, list[str]] = {}
+        for item in sg["related"]:
+            assert set(item["entity"]) == ENTITY_KEYS
+            rel.setdefault(item["relation"], []).append(item["entity"]["urn"])
+        assert rel["reported_at"] == ["place:karnavati_club_sg_highway_106"]
+        assert rel["on_road"] == ["segment:1045"] and rel["promoted_to"] == [f"event:{E_ZONE}"]
+        assert sg["entity"]["source"] == "osint" and sg["entity"]["state"] == "promoted"
+        assert any(i["id"] == f"resolved_events:{ids['sg']}" for i in sg["audit"])
+        odhav = call(app, f"/api/v1/city/entity/osint_event/{ids['odhav']}").json()
+        rel = {}
+        for item in odhav["related"]:
+            rel.setdefault(item["relation"], []).append(item["entity"]["urn"])
+        assert rel["at_junction"] == ["junction:11"] and rel["corroborates"] == [f"event:{E_PURSUIT}"]
+        assert rel["reported_at"] == ["place:odhav_ring_road_circle_sp_ring_road_11"]
+        # a held situation is never an entity
+        assert call(app, f"/api/v1/city/entity/osint_event/{ids['social']}").status_code == 404
+        place = call(app, "/api/v1/city/entity/place/karnavati_club_sg_highway_106").json()
+        assert place["entity"]["kind"] == "place" and place["entity"]["source"] == "osint"
+        assert [x["entity"]["urn"] for x in place["related"] if x["relation"] == "reported_at"] == [
+            f"osint_event:{ids['sg']}"
+        ]
+        assert place["entity"]["props"]["osint_event_count"] == 1
+        # a bare name slug resolves too (one place by that name)
+        bare = call(app, "/api/v1/city/entity/place/karnavati_club_sg_highway")
+        assert bare.status_code == 200 and bare.json()["entity"]["id"] == "karnavati_club_sg_highway_106"
+        assert call(app, "/api/v1/city/entity/place/no_such_place_9").status_code == 404
+
+
 # ─── LIVE SCHEMA (scratch clone only; everything rolled back) ───────────────
 
 LIVE_DSN = os.environ.get("VVIP_TEST_DATABASE_URL")
@@ -2791,15 +2918,40 @@ class _OneConnPool:
 
 
 #: Statements over another package's not-yet-landed table: prepared only
-#: when that table exists (WP-03's 012 creates corridor.cameras).
-_OPTIONAL_RELATIONS = {"traffic_oracle.city.cameras._SQL_CAMERA_REGISTRY": "corridor.cameras"}
+#: when that table exists (WP-03's 012 creates corridor.cameras; OS-5: the
+#: OSINT reads need migration 021's osint schema, the decision-support ones
+#: 022's decision schema — exactly as the readers' guards pick them).
+_OSINT = "osint.resolved_events"
+_DECISION = "decision.decision_support"
+_OPTIONAL_RELATIONS = {
+    "traffic_oracle.city.cameras._SQL_CAMERA_REGISTRY": "corridor.cameras",
+    "traffic_oracle.city.entities._SQL_OSINT_SURFACED": _OSINT,
+    "traffic_oracle.city.entities._SQL_OSINT_HELD_SOCIAL": _OSINT,
+    "traffic_oracle.city.entities._SQL_OSINT_MEMBER_TOPONYMS": _OSINT,
+    "traffic_oracle.city.entities._SQL_OSINT_PLACES_BY_NAME": _OSINT,
+    "traffic_oracle.city.entities._SQL_DSS_LATEST": _DECISION,
+    "traffic_oracle.city.dossier._SQL_DOSSIER_OSINT_EVENT": _OSINT,
+    "traffic_oracle.city.dossier._SQL_DOSSIER_PLACE_EVENTS": _OSINT,
+    "traffic_oracle.city.dossier._SQL_DOSSIER_PLACE": _OSINT,
+    "traffic_oracle.city.dossier._SQL_DOSSIER_PLACE_NAMES": _OSINT,
+    "traffic_oracle.city.feed._SQL_FEED_OSINT_SURFACED": _OSINT,
+    "traffic_oracle.city.feed._SQL_FEED_OSINT_PROMOTED": _OSINT,
+    "traffic_oracle.city.feed._SQL_FEED_DSS_DECISIONS": "decision.dss_decision_log",
+}
 
 #: Statements that read an additive migration's column (WP-19: 018's
 #: superseded_at, 015's display_geom) — prepared only where the column is
 #: in, exactly as the readers pick them (city/common.column_exists).
 _SUPERSEDE = ("events.event_routes", "superseded_at")
 _DISPLAY = ("corridor.road_segments", "display_geom")
+#: Migration 021's provenance columns on events.corridor_events (OS-1's
+#: event reads, and the city readers' 021 variants — OS-5).
+_PROVENANCE = ("events.corridor_events", "verification_state")
 _OPTIONAL_COLUMNS = {
+    "events._ACTIVE_EVENTS_SQL": _PROVENANCE,
+    "traffic_oracle.events._SQL_EVENTS_HISTORY": _PROVENANCE,
+    "traffic_oracle.city.entities._SQL_LIVE_EVENTS_PROVENANCE": _PROVENANCE,
+    "traffic_oracle.city.dossier._SQL_DOSSIER_EVENTS_PROVENANCE": _PROVENANCE,
     "traffic_oracle.events._SQL_EVENT_ROUTES_CURRENT": _SUPERSEDE,
     "traffic_oracle.events._SQL_EVENT_ROUTE_HISTORY": _SUPERSEDE,
     "traffic_oracle.events._SQL_CURRENT_ROUTES_FOR_UPDATE": _SUPERSEDE,

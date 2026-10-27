@@ -7,7 +7,7 @@
 > watchlist/ANPR backbone that carries a stolen-vehicle report from FIR to
 > interception plan on the same rails. This document is the library of event
 > families the engine must express — each entry carrying the documented reality
-> it models, why it recurs in a Viksit Bharat governance frame, and exactly how
+> it models, why it recurs as a public-governance problem, and exactly how
 > it is expressed in the running system today. The God's-eye canvas
 > (`docs/GODS_EYE_INTEGRATION.md`) is the shared picture both families
 > render onto.
@@ -16,12 +16,13 @@
 traffic along the corridor is frozen 15–45 minutes at each major junction
 though the passage itself occupies it for seconds; coordination runs by
 phone, radio and WhatsApp across five hierarchies with no shared picture
-(`PROBLEM_STATEMENT_GUJARAT.md:11-29`) — and **every other use case below is
+(press record named under Sources: ToI Ahmedabad 2009, Vibes of India 2022,
+Pune Mirror) — and **every other use case below is
 this same failure mode in a different costume: a corridor whose occupancy
 must be scheduled, predicted and released.**
 
 The Blue Book itself demands that traffic be *"regulated, not stopped"*
-(`PROBLEM_STATEMENT_GUJARAT.md:62-69`). The gap has never been policy. It is
+(the MHA Blue Book protocol principle). The gap has never been policy. It is
 that no tooling exists to execute the policy at the precision it demands —
 for a Z+ state-capital run, a 14 km procession, a marathon, a stadium emptying
 itself, or a flood evacuation column.
@@ -40,7 +41,7 @@ pursuit with a ranked interception plan. Each entry has three parts:
 
 - **Reality** — the documented, citable event class in the world (sources
   named inline; where a figure could not be verified, the entry says so).
-- **Why it recurs (Viksit Bharat relevance)** — the governance case: how often
+- **Why it recurs (public relevance)** — the governance case: how often
   this corridor class occurs and why a national traffic platform must be able
   to express it.
 - **In the engine** — how the case is expressed *today* as a runnable
@@ -89,19 +90,18 @@ one morning.)*
 **Reality.** The problem the system was born from: when a protected person
 moves by road, traffic along the corridor is frozen 15–45 minutes at each
 major junction though the passage itself occupies it for seconds
-(`PROBLEM_STATEMENT_GUJARAT.md:13-15`); coordination runs by phone, radio and
+(ToI Ahmedabad 2009; Pune Mirror); coordination runs by phone, radio and
 WhatsApp across five hierarchies — traffic police, district administration,
 SPG/state security, municipal signal teams, 108 dispatch — with no shared
 picture, on the ~25 km Ahmedabad–Gandhinagar corridor that leadership travels
-continuously and that events like the Vibrant Gujarat summit multiply
-(`PROBLEM_STATEMENT_GUJARAT.md:11-29`). The Blue Book itself demands traffic
-be *"regulated, not stopped"* — the gap is tooling, not policy
-(`PROBLEM_STATEMENT_GUJARAT.md:62-69`).
+continuously and that events like the Vibrant Gujarat summit multiply. The
+MHA Blue Book itself demands traffic be *"regulated, not stopped"* — the
+gap is tooling, not policy.
 
-**Why it recurs.** This is the base case the problem statement quantifies for
-Viksit Bharat governance: 15–45 min blanket holds per junction against a
-Gujarat 108 fleet of ~585 ambulances averaging ~5 emergency trips each per
-day (`PROBLEM_STATEMENT_GUJARAT.md:56-60`) — every blanket hold is a lottery
+**Why it recurs.** This is the base case, and it is quantifiable: 15–45 min
+blanket holds per junction against a Gujarat 108 fleet of ~585 ambulances
+averaging ~5 emergency trips each per day (GVK EMRI public figures) — every
+blanket hold is a lottery
 ticket against one of those trips.
 
 **In the engine** — `scenario_id: vvip_convoy_base` (category `baseline`):
@@ -308,8 +308,8 @@ Kalupur Bridge was shut for bullet-train pillar installation. Unlike every
 other use case, here the "event" is a standing capacity haircut: the
 management problem is diversion publishing, night-time logistics convoys,
 and holding commute corridors below gridlock for a season — which is
-precisely the G3 citizen-advisory and G5 measurement loop of the problem
-statement (`PROBLEM_STATEMENT_GUJARAT.md:77-79`).
+precisely the citizen-advisory and after-action measurement loop the
+platform carries.
 
 **Why it recurs.** Months-long published lane losses are already routine on
 the seeded corridor — Kankaria Road's 3 Jul–30 Sep metro closure with
@@ -403,8 +403,8 @@ API on the running stack:
    with a mandatory officer identity (the signed-in officer, forwarded by
    the deck) approves the sighting and appends to the append-only audit
    tail — the authorised basis for a pursuit. Every pending→approved
-   transition carries the officer who made it: a signed-in human in the
-   judged demo; an unattended script's approval is recorded under the
+   transition carries the officer who made it: a signed-in human when an
+   operator runs the demo; an unattended script's approval is recorded under the
    label `Scripted demo officer (showcase script)`, never as a person.
 5. **Pursuit (operator-initiated, C6)** — `POST /api/v1/events` opens a
    `vehicle_pursuit` corridor event whose metadata carries `vehicle_id`
@@ -426,8 +426,8 @@ API on the running stack:
    God's-eye canvas vehicle-traces layer (the pursuit view of the
    flagship screenshots).
 8. **Units to the chokes** — a duty officer approves a dispatch to
-   interception choke #1; the unit travels to that junction (it is never
-   "arrived" at t=0) and is released when the pursuit closes.
+   interception choke #1; the emulated unit travels to that junction (it is
+   never "arrived" at t=0) and is released when the pursuit closes.
 
 **Ethics rails (contracts C6 + C-N), enforced in schema and validators —
 not convention:** vehicles only, via ANPR plates — no face, no person, no
@@ -436,8 +436,10 @@ vehicle's owner; every earmark carries a lawful basis and a capped
 retention horizon, with sightings reaped past retention **in the read
 path**; plates are masked on every surface until a named officer is
 signed in; the emulated badge is carried on every row and rendered on
-the canvas; and agencies are dispatchable actors through the same
-audited, human-approved channel (migration `011_city_coordination.sql`; Jan Rakshak is
+the canvas; and a dispatch to an agency is a request a named officer
+approves and Veer records through one audited channel — there is no
+agency CAD or radio integration, and the units on the map are emulated
+(migration `011_city_coordination.sql`; Jan Rakshak is
 first-class — `traffic_oracle/units/agencies.py`). The full rails are
 written up in **[`docs/GODS_EYE_INTEGRATION.md`](GODS_EYE_INTEGRATION.md)**.
 
@@ -445,7 +447,7 @@ written up in **[`docs/GODS_EYE_INTEGRATION.md`](GODS_EYE_INTEGRATION.md)**.
 
 ## The God's-eye canvas — one picture across both families
 
-The mentor's paradigm shift, rendered: if the city's traffic police,
+The premise, rendered: if the city's traffic police,
 police control, 108 dispatch, fire and Jan Rakshak all act on the same
 live picture, the picture itself becomes the platform. The God's-eye
 canvas (`services/command-deck/src/lib/gods-eye/`) is a CesiumJS city —
@@ -470,7 +472,7 @@ split extended to ANPR and dispatch projection, and the ethics rails:
 
 ## The flagship: "God's Eye Morning" — the whole platform on one morning
 
-The submission's flagship demonstration (`scripts/showcase_run.sh`, no
+The flagship demonstration (`scripts/showcase_run.sh`, no
 arguments) is a **composite of the library** that spans both mission
 families: 09:20 on the real 148th Rath Yatra morning of 27 June 2025 —
 three chariots crawling Gandhi Road and Relief Road with lakhs on the
@@ -486,8 +488,8 @@ refused (409), the named officer's approval of a sighting opening the
 pursuit. The engine's answer for the **public** procession
 (`protection_class: none`): **signal hold at 45 s advance — "regulated,
 not stopped"** — threading a medical convoy between a festival and the
-weather, while the watchlist chain runs alongside. In the judged demo a
-signed-in human makes every approval live on `/ops`.
+weather, while the watchlist chain runs alongside. When an operator runs
+the demo, a signed-in human makes every approval live on `/ops`.
 
 **Run live on the deployed stack on the night of 2026-10-23/24 — SHOWCASE
 PASS three times** (once alone at 23:51 IST, then twice under the
@@ -497,7 +499,8 @@ The artifacts on disk are the gate's last round, one run
 on 2026-10-24 — `passed: true`, no failed assertion;
 `showcase/pursuit_chain.json` the same run). Every approval in it was made
 unattended by the script and is recorded as `Scripted demo officer
-(showcase script)`; in the judged demo a signed-in human approves.
+(showcase script)`; when an operator runs the demo, a signed-in human
+approves.
 
 | Assertion | Measured (the live run, 2026-10-24 00:00 IST) |
 |---|---|
@@ -510,7 +513,7 @@ unattended by the script and is recorded as `Scripted demo officer
 | Pursuit chain | earmark `lawful_basis=stolen_vehicle_fir`, retention 30 d → 6 emulated ANPR reads this run (EM-CAM-01..04, EM-J01B, EM-J05 at 95–115 km/h, `source=emulated_anpr`) → 6 evidence-only `R_STOLEN_SIGHTING`, 0 penal recommendations ("… sighted at EM-CAM-03 — e-challan withheld, vehicle reported stolen") → an e-challan approval on the plate refused, **409** → the newest sighting approved by the scripted officer → operator-opened `vehicle_pursuit` event → interception plan: **10 choke junctions ranked** off the latest sighting (top: junction 15, Kalupur — Relief Road / Station Road, unsignalised, score 0.008683) → a 12-position live trace (its 24 h window held these 6 reads and the 23:51 run's 6) → the scripted pursuit closed at run end (its approval spent: one approval, one pursuit). No fine anywhere |
 | Jan Rakshak dispatch | JR-EM-01 to the segment-1013 spillover: requested → approved → en_route → on_scene, every transition audited |
 | Signal-policy guard | city band plan (AMBER) for 11 junctions; the C7 shadow-eval guard **refused the commit** (`twin_not_calibrated` — the calibration replay is `no_data`: 0 field hourly aggregates in the last 72 h, the feed being synthetic) — fail-closed by design, 0 committed; the refusal reported as the oracle's last plan (`showcase/signal_policy.json`), nothing written |
-| Screenshots | the hero shots, recaptured on 2026-10-24 01:25–01:26 IST on the live stack in its staged judging state — the operator views in photorealistic 3D: the God's-eye city at rest, the pursuit trace (pins `STOLEN · NO FINE · APPROVED` and the pre-rule e-challan's `SUPERSEDED · STOLEN`) and the `/ops` wall; plus the public citizen advisory on its keyless map (no pursuit, no plate) — each proven non-blank at the pixel level (SwiftShader WebGL, ≥ 8 distinct colours) |
+| Screenshots | the hero shots, recaptured on 2026-10-24 01:25–01:26 IST on the live stack in its staged demo state — the operator views in photorealistic 3D: the God's-eye city at rest, the pursuit trace (pins `STOLEN · NO FINE · APPROVED` and the pre-rule e-challan's `SUPERSEDED · STOLEN`) and the `/ops` wall; plus the public citizen advisory on its keyless map (no pursuit, no plate) — each proven non-blank at the pixel level (SwiftShader WebGL, ≥ 8 distinct colours) |
 
 The artifacts before this run (2026-10-18) were recorded on the schematic
 network of the time and *before* the stolen-vehicle rule: that pursuit was
@@ -518,7 +521,7 @@ opened from a penal e-challan the script had approved on the stolen plate
 under a cast officer name ("Duty Officer R. Mehta (God's Eye Morning)") —
 exactly what the platform now refuses. That approval stays in the store
 as superseded audit history (the canvas pin reads `SUPERSEDED · STOLEN`),
-and its pursuit was cancelled before judging.
+and its pursuit was cancelled by the demo reset.
 
 ---
 
@@ -554,8 +557,8 @@ and its pursuit was cancelled before judging.
    crossings as the twin schedules them); every **pending→approved
    transition** in that run was the
    showcase script's, recorded under the honest label `Scripted demo
-   officer (showcase script)`; in the judged demo a signed-in human
-   approves. Live injections ride the same APIs as a real
+   officer (showcase script)`; when an operator runs the demo, a
+   signed-in human approves. Live injections ride the same APIs as a real
    feed, and the provenance rides in the rows themselves — the showcase
    plane's rows on their own subject, every one labelled `data_quality`
    SYNTHETIC, never REAL; replays carry one more tell, the
@@ -591,10 +594,14 @@ and its pursuit was cancelled before judging.
 
 ## Sources
 
-**Problem base**: `PROBLEM_STATEMENT_GUJARAT.md` §1–§2 (with its §6 source
-list: ToI Ahmedabad 2009; Vibes of India 2022; Free Press Journal Sept 2022;
-Kanchipuram 2018; Agartala Feb 2026; GVK EMRI fleet figures; MHA Blue Book
-protocol summary). **Rath Yatra**: NDTV 26 Jun 2025; utsav.gov.in; Gujarat
+**Base case**: Times of India (Ahmedabad), Oct 2009 — "VIP movement halts
+city traffic"; Vibes of India, Oct 2022 (the Chief Minister's convoy stuck
+~15 min in Ahmedabad); Pune Mirror (J.M. Road convoy hold); Free Press
+Journal, Sept 2022 (ambulance held 5–10 min, Mumbai); Kanchipuram 2018
+(national press: a death after a ~20 min ambulance hold); Tripura press,
+Feb 2026 (Agartala); GVK EMRI / 108 Gujarat public materials (fleet ~585,
+~5 trips per ambulance per day); the MHA Blue Book protocol principle
+"regulated, not stopped". **Rath Yatra**: NDTV 26 Jun 2025; utsav.gov.in; Gujarat
 Samachar Jul 2026. **Kumbh**: Wikipedia / UP government figures (2019: 240 M;
 2025: ~660 M visits). **Marathon**: ahmedabadmarathon.com; Olympics.com;
 ThePrint; Times of India 5 May 2024. **Republic Day**: Gujarat CMO 25–26 Jan

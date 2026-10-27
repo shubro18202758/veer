@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * journeys.mjs — the judge's journeys J1–J7 (WP-15 T7), end to end through ONE deck origin: every
+ * journeys.mjs — the operator journeys J1–J7 (WP-15 T7), end to end through ONE deck origin: every
  * call goes through the deck's own proxy (the operator gate, the verified x-veer-officer header and
  * the loopback pinning all in the path), signed in ONCE through the shared helper
  * (scripts/lib/deck_session.mjs) as the officer 'Journey check (automated)'.
@@ -295,8 +295,9 @@ async function j1() {
 	const bad = Object.entries(feeds).filter(([, f]) => f?.status !== 'ok');
 	ok('every city feed answers (no error behind a ⚠)', ent.status === 200 && Object.keys(feeds).length > 0 && bad.length === 0, bad.length ? bad.map(([k, f]) => `${k}:${f?.status}`).join(' ') : Object.keys(feeds).join(','));
 	const ents = ent.json?.entities ?? [];
-	const labelled = ents.filter((e) => e.source === 'live' || e.source === 'emulated').length;
-	ok('every entity carries its source (live | emulated)', ents.length > 0 && labelled === ents.length, `${labelled}/${ents.length}`);
+	// osint: a reported event (and its place) from public sources, labelled as such on every surface
+	const labelled = ents.filter((e) => e.source === 'live' || e.source === 'emulated' || e.source === 'osint').length;
+	ok('every entity carries its source (live | emulated | osint)', ents.length > 0 && labelled === ents.length, `${labelled}/${ents.length}`);
 	const cams = ents.filter((e) => e.kind === 'camera');
 	ok('the ANPR cameras are labelled EMULATED', cams.length > 0 && cams.every((c) => c.source === 'emulated'), `${cams.length} cameras`);
 	for (const kind of ['unit', 'sighting']) {
@@ -709,13 +710,15 @@ async function j5() {
 		}
 		const chip = await waitFor(async () => ((await page.$$('[data-testid="agent-chip"]')).length > 0 ? true : null), 240_000, 1000);
 		const meta = chip ? await page.$eval('[data-testid="agent-chip"]', (el) => ({ verb: el.dataset.verb, text: (el.textContent ?? '').replace(/\s+/g, ' ').trim() })) : null;
-		ok('the streamed directive shows as an AI-suggests chip', !!chip && /AI suggests/.test(meta?.text ?? ''), meta ? `${meta.verb}: ${meta.text.slice(0, 110)}` : 'no chip');
+		// the chip's wording: "AI suggests …" (v2) or "Proposed on the map · …" (the V3 shell)
+		ok('the streamed directive shows as an AI-suggests chip', !!chip && /AI suggests|Proposed on the map/.test(meta?.text ?? ''), meta ? `${meta.verb}: ${meta.text.slice(0, 110)}` : 'no chip');
 		// Esc on City Command is layered (palette → dossier → EXIT): only ever with a palette open
 		if (await page.$('[data-testid="palette-input"]')) await page.keyboard.press('Escape').catch(() => undefined);
 		const before = await snap(page);
 		await sleep(1500);
 		const still = await snap(page);
-		ok('never auto-applied: the camera waits for the human', !!before?.camera && !!still?.camera && Math.abs(before.camera.lon - still.camera.lon) < 1e-6);
+		// nothing flew to the proposal's object before the click (an idle orbit may still turn the camera)
+		ok('never auto-applied: the camera waits for the human', !!before?.camera && !!still?.camera && still.selection?.flyOutcome !== 'landed', `selection ${still?.selection?.urn ?? 'none'} · fly ${still?.selection?.flyOutcome ?? 'none'}`);
 		await waitFor(async () => (streams.length ? true : null), 30_000, 500);
 		events = streams.length ? parseNdjson(streams[0]) : null;
 		if (events && !events.some((e) => e.type === 'done')) events = null; // body not kept: ask at the API
@@ -808,7 +811,7 @@ async function j6() {
 			const laterRow = await page.$eval(`[data-testid="citizen-later"] .later-row[data-event="${later.id}"]`, (e) => ({ when: e.querySelector('.later-when')?.textContent?.trim() ?? '' })).catch(() => null);
 			const body = await page.evaluate(() => document.body.innerText);
 			ok(`/citizen ${code}: <html lang> = ${code}`, htmlLang === code, htmlLang);
-			ok(`/citizen ${code}: the card is badged '${EMU_BADGE[code]}', never LIVE`, badge.includes(EMU_BADGE[code]) && !(await page.$(`${card} [data-source-badge="live"]`)), badge.trim() || 'no badge');
+			ok(`/citizen ${code}: the card is badged '${EMU_BADGE[code]}', never LIVE`, badge.toLowerCase().includes(EMU_BADGE[code].toLowerCase()) && !(await page.$(`${card} [data-source-badge="live"]`)), badge.trim() || 'no badge');
 			ok(`/citizen ${code}: the 3 h plan sits under '${LATER_TITLE[code]}' with its date`, !!laterRow && body.includes(LATER_TITLE[code]) && laterRow.when.length > 0, laterRow?.when ?? 'no Later row');
 			ok(`/citizen ${code}: no plate on the page`, !PLATE_RE.test(body));
 			await shot(page, `J6-citizen-${code}`);

@@ -39,7 +39,7 @@
  * AND the photoreal 3D tiles (the keyless-era 2 m lines were buried under
  * real Ahmedabad), at the bottom of the ground draw order — spines, traces
  * and the pursuit paint over it. Widths read at 1920×1080 from the 1.5–3 km
- * judge view: a coloured segment is a 6 px line — a 3.5 px ramp-coloured
+ * overview: a coloured segment is a 6 px line — a 3.5 px ramp-coloured
  * core inside a dark 1.25 px casing on each side (legible on aerial
  * imagery and on the dark raster alike); a
  * schematic chord's dashes alternate with the same dark casing colour; a
@@ -53,6 +53,16 @@
  *   · ≤0.8 act (heavy) · >0.8 band-red (severe) — the template ladder,
  *   expressed entirely in existing token slots.
  *
+ * CHROME V2 (SPEC §2.3–2.4, §5.3): the operator map's ramp is NEUTRAL —
+ * luminance and width, never hue (congestion is a measure, not a state that
+ * asks for an action): flowStyle(flowStop(c)) from the design tokens, free
+ * roads thin and dim (1.5 px --v-flow-1 at 55 %), jammed roads thick and
+ * white (4.5 px --v-flow-5) with a --v-map-casing casing from stop 3 up. A
+ * NO DATA road is a 1 px trace dimmer than "free". Under a selection the
+ * whole layer drops to 60 % and 0.5 px thinner (hud/map/view.ts flowDim).
+ * The pick text says the same facts in plain words, with no stacked status
+ * words. The legacy chrome draws exactly as before.
+ *
  * Pick ids `seg:<segmentId>` → URN `segment:<id>`.
  */
 
@@ -62,13 +72,15 @@ import { createPollGate } from '$lib/ops/client';
 import type { GodsEyeLayer, GodsEyeLayerContext, GodsEyeLayerInstance } from '../registry';
 import { cssVar, withAlpha } from '../theme';
 import { DRAPE_Z, drapeAudit, drapedPolyline, groundPath } from './draping';
+import { chromeOf, flowDim, kindShown, viewOf } from '../hud/map/view';
+import { flowInk, flowStop, inkAlpha } from '../hud/map/symbols';
 
 export const TRAFFIC_FLOW_PICK_PREFIX = 'seg:';
 
 /** An observation older than this no longer colours its segment. */
 export const STALE_OBS_SEC = 300;
 
-/** Draped widths (px) — legible at 1920×1080 from the 1.5–3 km judge view. */
+/** Draped widths (px) — legible at 1920×1080 from the 1.5–3 km overview. */
 export const FLOW_WIDTH = { coloured: 6, casing: 1.25, noData: 2 } as const;
 
 interface LiveObservation {
@@ -110,6 +122,76 @@ function rampColor(idx: number): string {
 	return cssVar(stop) ?? 'cornflowerblue';
 }
 
+/**
+ * Draped widths of the v2 ramp's extras (the casing each side, the NO DATA
+ * trace, px), its alphas, and how long a reading that changes the picture
+ * may wait for a draped build still in flight (ms).
+ */
+export const FLOW_V2 = { casing: 1.25, noData: 1, freeAlpha: 0.55, alpha: 0.9, noDataAlpha: 0.35, deferMaxMs: 45_000 } as const;
+
+/**
+ * Chrome v2: one segment on the neutral ramp (flowStyle(flowStop(c))) — its
+ * draped width and material; dimmed and thinned under a selection.
+ */
+function v2Line(
+	cesium: CesiumGlobal,
+	obs: LiveObservation | undefined,
+	schematic: boolean,
+	dim: { alpha: number; thinPx: number },
+): { width: number; material: unknown } {
+	if (!obs) {
+		const trace = flowInk(0);
+		return { width: FLOW_V2.noData, material: cesium.Color.fromCssColorString(inkAlpha(trace.color, FLOW_V2.noDataAlpha * dim.alpha)) };
+	}
+	const ramp = flowInk(obs.congestion_idx);
+	const alpha = (ramp.stop === 1 ? FLOW_V2.freeAlpha : FLOW_V2.alpha) * dim.alpha;
+	const core = Math.max(1, ramp.width - dim.thinPx);
+	const color = cesium.Color.fromCssColorString(inkAlpha(ramp.color, alpha));
+	const casing = ramp.casing ? cesium.Color.fromCssColorString(inkAlpha(ramp.casing, Math.min(1, 0.85 * dim.alpha))) : null;
+	if (schematic) {
+		// a chord is not the road's true shape: dashed, its gaps the casing (or clear)
+		return { width: core, material: new cesium.PolylineDashMaterialProperty({ color, gapColor: casing ?? undefined, dashLength: 12 }) };
+	}
+	if (casing && cesium.PolylineOutlineMaterialProperty) {
+		return {
+			width: core + 2 * FLOW_V2.casing,
+			// the outline material's width is both edges together (interior = width − outlineWidth)
+			material: new cesium.PolylineOutlineMaterialProperty({ color, outlineColor: casing, outlineWidth: 2 * FLOW_V2.casing }),
+		};
+	}
+	return { width: core, material: new cesium.ColorMaterialProperty(color) };
+}
+
+/** Chrome v2: the segment's pick text in plain words (no stacked status words). */
+function v2Description(
+	name: string,
+	schematic: boolean,
+	obs: LiveObservation | undefined,
+	raw: LiveObservation | undefined,
+	ageSec: number | null,
+	emulated: boolean,
+	live: LiveObservation | undefined,
+): string {
+	const basis = schematic ? ' Drawn as a straight chord between junctions, not the road’s true shape.' : '';
+	if (!obs) {
+		return raw
+			? `${name}: no current reading (the last one is ${ageSec} s old, past the ${STALE_OBS_SEC} s limit).${basis}`
+			: `${name}: no reading in the hot cache.${basis}`;
+	}
+	const source = emulated
+		? 'emulated run, simulated feed'
+		: obs.data_quality === 'synthetic'
+			? 'simulated feed'
+			: obs.data_quality === 'anomalous'
+				? 'flagged anomalous'
+				: `source ${obs.source ?? 'unknown'}`;
+	const ingest =
+		emulated && live
+			? ` The ingest plane reads ${live.speed_kmh.toFixed(1)} km/h, ${(live.congestion_idx * 100).toFixed(0)} %.`
+			: '';
+	return `${name}: ${obs.speed_kmh.toFixed(1)} km/h, congestion ${(obs.congestion_idx * 100).toFixed(0)} % (${source}, ${ageSec} s ago).${ingest}${basis}`;
+}
+
 function createTrafficFlowLayer(): GodsEyeLayerInstance {
 	let ctx: GodsEyeLayerContext | null = null;
 	let active = false;
@@ -123,6 +205,16 @@ function createTrafficFlowLayer(): GodsEyeLayerInstance {
 	let obsFeed: 'ok' | 'empty' | 'down' = 'empty';
 	let hint = 'loading';
 	let lastSignature = '';
+	/** The picture last drawn (the segments' styles): the geometry is rebuilt only when it changes. */
+	let lastPicture = '';
+	/** …its structure (segments, basis, dim, filter, inks), whether it had data, and when it was drawn (ms). */
+	let lastStructure = '';
+	let lastHadData = false;
+	let lastRedrawAt = 0;
+	/** Each drawn segment's pick text (rewritten in place when only the reading moved). */
+	const descriptions = new Map<string, string>();
+	/** Each drawn segment's look (its ramp step) as drawn: a waiting picture never rewrites a text its line contradicts. */
+	const drawnStyles = new Map<string, string>();
 	let detail: Record<string, number> = {};
 
 	/** Fixed-endpoint POST to the oracle hot cache (ids come from the
@@ -154,6 +246,17 @@ function createTrafficFlowLayer(): GodsEyeLayerInstance {
 	/** Gated: never overlaps itself, never runs while the tab is hidden. */
 	const poll = () => void gate('flow', pollObservations);
 
+	/**
+	 * Redraw on a data change (the observations, the segment set, the view).
+	 * The GEOMETRY is rebuilt only when the PICTURE changes — a segment's
+	 * style (its ramp step, its basis, whether it has data), the view's dim,
+	 * the kind filter or the theme's inks. A reading that moves without
+	 * changing the picture (a speed, an age, a provenance) only rewrites the
+	 * pick texts in place: removing and re-adding every segment made Cesium
+	 * rebuild the draped primitives, and it DISCARDS a primitive still being
+	 * built when the next change lands, so on a loaded box an 8 s poll could
+	 * keep the network off the map for tens of seconds (review r1).
+	 */
 	function draw() {
 		if (!ctx || !active) return;
 		const { cesium, viewer } = ctx;
@@ -169,32 +272,48 @@ function createTrafficFlowLayer(): GodsEyeLayerInstance {
 				o.data_quality ?? '',
 				fresh(o),
 			]);
+		const view = chromeOf(ctx) === 'v2' ? viewOf(ctx) : null;
+		const dim = view ? flowDim(view) : null;
+		// v2: a kind filter that leaves roads out hides the whole network (SPEC §5.3)
+		const hidden = !!view && !kindShown(view, 'segment');
 		const sig = JSON.stringify([
 			segments.map((s) => `${s.segmentId}${s.geometryBasis === 'schematic' ? 's' : ''}`),
 			planeSig(obsById),
 			planeSig(emuById),
+			dim ? [dim.alpha, dim.thinPx] : null,
+			hidden,
 		]);
 		if (sig === lastSignature) return;
 		lastSignature = sig;
 
-		for (const id of entityIds) viewer.entities.removeById(id);
-		entityIds.length = 0;
-
 		const neutral = withAlpha(cssVar('--v-ink-4') ?? 'slategray', 0.75);
 		// the dark casing / dash gap: the canvas ink, slightly translucent
-		const casing = cesium.Color.fromCssColorString(withAlpha(cssVar('--v-canvas') ?? 'black', 0.85));
+		const casingCss = withAlpha(cssVar('--v-canvas') ?? 'black', 0.85);
+		// the ramp's inks, read once per draw (a theme switch changes the picture)
+		const bands = new Map<number, string>();
+		const legacyInk = (idx: number) => {
+			const band = idx <= 0.2 ? 0 : idx <= 0.4 ? 1 : idx <= 0.6 ? 2 : idx <= 0.8 ? 3 : 4;
+			let css = bands.get(band);
+			if (css === undefined) bands.set(band, (css = rampColor(idx)));
+			return css;
+		};
+		const stops = new Map<number, ReturnType<typeof flowInk>>();
+		const v2Ink = (idx: number) => {
+			const stop = flowStop(idx);
+			let ink = stops.get(stop);
+			if (!ink) stops.set(stop, (ink = flowInk(idx)));
+			return ink;
+		};
 		let coloured = 0;
 		let simulated = 0;
 		let emulatedCount = 0;
 		let stale = 0;
 		let osmCount = 0;
 		let schematicCount = 0;
+		const rows: Array<{ seg: (typeof segments)[number]; obs: LiveObservation | undefined; schematic: boolean; style: unknown; description: string }> = [];
 
 		for (const seg of segments) {
 			if (seg.coordinates.length < 2) continue;
-			// ground positions: the draped line takes its height from the surface
-			const positions = groundPath(cesium, seg.coordinates);
-
 			const liveRaw = obsById.get(seg.segmentId);
 			const emuRaw = emuById.get(seg.segmentId);
 			const live = fresh(liveRaw) ? liveRaw : undefined;
@@ -209,16 +328,6 @@ function createTrafficFlowLayer(): GodsEyeLayerInstance {
 			const schematic = seg.geometryBasis === 'schematic';
 			if (schematic) schematicCount++;
 			else osmCount++;
-			const width = obs ? FLOW_WIDTH.coloured : FLOW_WIDTH.noData;
-			const colour = cesium.Color.fromCssColorString(obs ? rampColor(obs.congestion_idx) : neutral);
-			// A schematic chord is not the road's true shape: dashed, never solid
-			// (its gaps carry the dark casing so the rhythm reads on aerial
-			// imagery); a coloured real road wears the casing as an outline.
-			const material = schematic
-				? new cesium.PolylineDashMaterialProperty({ color: colour, gapColor: obs ? casing : undefined, dashLength: 14 })
-				: obs && cesium.PolylineOutlineMaterialProperty
-					? new cesium.PolylineOutlineMaterialProperty({ color: colour, outlineColor: casing, outlineWidth: FLOW_WIDTH.casing })
-					: colour;
 			if (obs) coloured++;
 			if (synthetic) simulated++;
 			if (emulated) emulatedCount++;
@@ -240,20 +349,105 @@ function createTrafficFlowLayer(): GodsEyeLayerInstance {
 				emulated && live
 					? ` · ingest plane: ${live.speed_kmh.toFixed(1)} km/h, ${(live.congestion_idx * 100).toFixed(0)}% (${planeProvenance(live)})`
 					: '';
-			const description = obs
-				? `${road} · ${obs.speed_kmh.toFixed(1)} km/h · congestion ${(obs.congestion_idx * 100).toFixed(0)}% · ${provenance} · ${ageSec}s ago${besides}`
-				: raw
-					? `${road} · NO DATA — last observation ${ageSec}s ago (older than ${STALE_OBS_SEC}s, neutral)`
-					: `${road} · NO DATA — no observation in the hot cache (neutral)`;
-
-			const entity = viewer.entities.add({
-				id: `${TRAFFIC_FLOW_PICK_PREFIX}${seg.segmentId}`,
-				polyline: drapedPolyline(cesium, { positions, width, material, z: DRAPE_Z.flow }),
-				description,
-			});
-			entityIds.push(entity.id);
+			const description = dim
+				? v2Description(name, schematic, obs, raw, ageSec, emulated, live)
+				: obs
+					? `${road} · ${obs.speed_kmh.toFixed(1)} km/h · congestion ${(obs.congestion_idx * 100).toFixed(0)}% · ${provenance} · ${ageSec}s ago${besides}`
+					: raw
+						? `${road} · NO DATA — last observation ${ageSec}s ago (older than ${STALE_OBS_SEC}s, neutral)`
+						: `${road} · NO DATA — no observation in the hot cache (neutral)`;
+			// what the segment LOOKS like: its ink (the ramp step), its basis, whether it has data
+			let style: unknown = null;
+			if (obs) {
+				if (dim) {
+					const ink = v2Ink(obs.congestion_idx);
+					style = [ink.stop, ink.color, ink.casing, ink.width];
+				} else style = legacyInk(obs.congestion_idx);
+			}
+			rows.push({ seg, obs, schematic, style, description });
 		}
 
+		// the STRUCTURE (segments, basis, the view's dim, the filter, the inks) and the PICTURE (+ each segment's step)
+		const structure = JSON.stringify([rows.map((r) => [r.seg.segmentId, r.schematic ? 1 : 0]), dim ? [dim.alpha, dim.thinPx] : null, hidden, neutral, casingCss]);
+		const picture = JSON.stringify([structure, rows.map((r) => r.style)]);
+		// Chrome v2: a READING that changes the picture waits while a draped build is
+		// still in flight (Cesium's own signal: the data sources are not all updated),
+		// so a loaded box finishes the build it has instead of throwing it away on
+		// every poll; at most FLOW_V2.deferMaxMs after the last redraw. A change of
+		// structure, the first picture with data, and the legacy chrome never wait.
+		const defer =
+			!!view &&
+			!hidden &&
+			picture !== lastPicture &&
+			structure === lastStructure &&
+			lastHadData &&
+			viewer.clockViewModel?.canAnimate === false &&
+			now - lastRedrawAt < FLOW_V2.deferMaxMs;
+		if ((picture === lastPicture || defer) && !hidden) {
+			// the same picture (or one that waits): the pick texts move in place (one collection event, no rebuild);
+			// while a new picture waits, a segment whose step changed keeps the text of the step it still shows
+			if (defer) lastSignature = ''; // look again on the next tick
+			viewer.entities.suspendEvents?.();
+			try {
+				for (const r of rows) {
+					const id = `${TRAFFIC_FLOW_PICK_PREFIX}${r.seg.segmentId}`;
+					if (descriptions.get(id) === r.description) continue;
+					if (drawnStyles.get(id) !== JSON.stringify(r.style)) continue;
+					const entity = viewer.entities.getById(id) as { description?: unknown } | undefined;
+					if (entity) entity.description = r.description;
+					descriptions.set(id, r.description);
+				}
+			} finally {
+				viewer.entities.resumeEvents?.();
+			}
+		} else {
+			lastPicture = picture;
+			lastStructure = structure;
+			lastHadData = rows.some((r) => r.obs);
+			lastRedrawAt = now;
+			for (const id of entityIds) viewer.entities.removeById(id);
+			entityIds.length = 0;
+			descriptions.clear();
+			drawnStyles.clear();
+			if (!hidden) {
+				const casing = cesium.Color.fromCssColorString(casingCss);
+				for (const { seg, obs, schematic, style, description } of rows) {
+					// ground positions: the draped line takes its height from the surface
+					const positions = groundPath(cesium, seg.coordinates);
+					let width: number;
+					let material: unknown;
+					if (dim) {
+						({ width, material } = v2Line(cesium, obs, schematic, dim));
+					} else {
+						width = obs ? FLOW_WIDTH.coloured : FLOW_WIDTH.noData;
+						const colour = cesium.Color.fromCssColorString(obs ? legacyInk(obs.congestion_idx) : neutral);
+						// A schematic chord is not the road's true shape: dashed, never solid
+						// (its gaps carry the dark casing so the rhythm reads on aerial
+						// imagery); a coloured real road wears the casing as an outline.
+						material = schematic
+							? new cesium.PolylineDashMaterialProperty({ color: colour, gapColor: obs ? casing : undefined, dashLength: 14 })
+							: obs && cesium.PolylineOutlineMaterialProperty
+								? new cesium.PolylineOutlineMaterialProperty({ color: colour, outlineColor: casing, outlineWidth: FLOW_WIDTH.casing })
+								: colour;
+					}
+					const entity = viewer.entities.add({
+						id: `${TRAFFIC_FLOW_PICK_PREFIX}${seg.segmentId}`,
+						polyline: drapedPolyline(cesium, { positions, width, material, z: DRAPE_Z.flow }),
+						description,
+					});
+					entityIds.push(entity.id);
+					descriptions.set(entity.id, description);
+					drawnStyles.set(entity.id, JSON.stringify(style));
+				}
+			}
+		}
+
+		if (hidden) {
+			// the count stays the truth about the feed; nothing is drawn
+			detail = { coloured, segments: 0, filtered: rows.length };
+			hint = `${coloured}/${rows.length} segments on the congestion ramp · hidden by the kind filter`;
+			return;
+		}
 		detail = {
 			coloured,
 			segments: entityIds.length,
@@ -297,12 +491,23 @@ function createTrafficFlowLayer(): GodsEyeLayerInstance {
 			if (ctx) for (const id of entityIds) ctx.viewer.entities.removeById(id);
 			entityIds.length = 0;
 			lastSignature = '';
+			lastPicture = '';
+			lastStructure = '';
+			lastHadData = false;
+			descriptions.clear();
+			drawnStyles.clear();
 			detail = {};
 		},
 		refresh() {
+			// a refresh redraws the whole picture
 			lastSignature = '';
+			lastPicture = '';
+			lastStructure = '';
 			void godsEye.pollSegments(true);
 			poll();
+			draw();
+		},
+		restyle() {
 			draw();
 		},
 		handlePick(pickId) {
@@ -336,5 +541,6 @@ export const trafficFlowLayer: GodsEyeLayer = {
 	requiresKeyId: null,
 	pickPrefix: TRAFFIC_FLOW_PICK_PREFIX,
 	defaultOn: true,
+	group: 'traffic',
 	create: createTrafficFlowLayer,
 };

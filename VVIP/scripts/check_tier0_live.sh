@@ -85,8 +85,8 @@ PLAN_TIMEOUT="${TIER0_LIVE_PLAN_TIMEOUT:-240}"
 SKIP_DRIFT="${TIER0_LIVE_SKIP_DRIFT:-0}"
 
 # The gate pair: the re-anchored Lal Darwaja → SVPI Airport (WP-20); MUST
-# equal probe_tier0_live.py GATE_BODY (its --verify-corpus rebuilds this
-# state doc to recall the feeder's decision doc).
+# equal probe_tier0_live.py GATE_BODY (its --verify-corpus searches with this
+# body's state doc, scoped to the movement, to recall the feeder's decision doc).
 BODY='{"origin":[72.5813,23.0264],"destination":[72.6221,23.072],"vvip_class":"Z","planned_departure":"2030-01-01T00:00:00Z"}'
 # (b): a genuinely different corridor ON the network (Drive-In Road →
 # Prahlad Nagar, west Ahmedabad; = probe_tier0_live.py DIFFERENT_POI_BODY).

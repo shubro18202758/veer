@@ -6,16 +6,21 @@ and public-projection modules), so this module has two rungs:
 * SOURCE CONTRACT (pure python, no node): the authority-pinning refusal
   exists and runs BEFORE the upstream fetch (the live-confirmed open proxy:
   /api/convoy//127.0.0.1:8091/health once fetched the traffic-oracle through
-  the brain rule), the upstream targets stay pinned loopback literals, and
-  the WebSocket 501 answer precedes any proxying.
+  the brain rule), the upstream targets stay pinned loopback literals, the
+  WebSocket 501 answer precedes any proxying, and the R26 machine-ingest
+  refusal (POST /api/v1/osint/signals, 403) precedes both the gate and the
+  upstream fetch.
 * BEHAVIOUR (node): bundles tests/ops-guard.entry.ts with the vendored
   esbuild and runs it — authority pinning, 501-on-upgrade, header hygiene,
   the nonce CSP, the opt-in VEER_OPERATOR_PIN gate (default-deny on the
   canonical, once-decoded path: %-encoded operator feeds, the interception
-  plan and the raw events feed refused; the anonymous ambulance request
-  capped per client) and its /api/session sign-in, the public projection's
-  allowlist and hold provenance, the doctrine window timing, and the C-D
-  chat parser. The suite stubs fetch, so nothing leaves the process.
+  plan, the raw events feed and one event row by id refused; the anonymous
+  ambulance request capped per client) and its /api/session sign-in, the
+  public projection's allowlist and hold provenance, the driver status
+  OSINT firewall failing CLOSED (an unreadable event row 503, an absent or
+  OSINT-sourced one not-found, never the dispatch body; a failed read
+  cached for the poll window), the doctrine window timing, and the C-D chat
+  parser. The suite stubs fetch, so nothing leaves the process.
   Equivalent manual run from services/command-deck:
 
       node_modules/.bin/esbuild tests/ops-guard.entry.ts --bundle \\
@@ -89,6 +94,32 @@ def test_upgrade_answered_before_proxying() -> None:
     assert upgrade_at < proxy_at, "the 501 upgrade answer must precede proxying"
 
 
+def test_machine_ingest_refused_before_gate_and_fetch() -> None:
+    """R26: the deck edge refuses the loopback machine-ingest path.
+
+    osint-ingress posts ``POST /api/v1/osint/signals`` to the oracle directly,
+    never through the deck; the deck proxies all of /api/v1, so a browser could
+    otherwise post a fabricated "official" signal. The refusal must sit in
+    handle() BEFORE the operator gate (so it holds gate on or off, signed in or
+    not) and BEFORE any upstream fetch.
+    """
+    source = HOOKS_TS.read_text(encoding="utf-8")
+    assert "const MACHINE_INGEST_PATH = '/api/v1/osint/signals';" in source, (
+        "hooks.server.ts lost the machine-ingest path constant (R26)"
+    )
+    assert "'machine ingest: loopback only'" in source, (
+        "hooks.server.ts lost the R26 refusal detail"
+    )
+    handle_at = source.index("export const handle")
+    refuse_at = source.index("isMachineIngestWrite(event.request.method, event.url.pathname)", handle_at)
+    gate_at = source.index("gateDecision(event.request.method", handle_at)
+    proxy_at = source.index("await proxy(event, rule", handle_at)
+    assert refuse_at < gate_at, "the R26 refusal must precede the operator gate"
+    assert refuse_at < proxy_at, "the R26 refusal must precede the upstream fetch"
+    # checked on the canonical (once-decoded) path as well as the raw one
+    assert "canonicalGatePath(pathname)" in source[: source.index("export const handle")]
+
+
 def test_guard_bundle_behaviour(tmp_path: Path) -> None:
     node = shutil.which("node")
     if node is None or not ESBUILD.exists():
@@ -133,13 +164,27 @@ def test_guard_bundle_behaviour(tmp_path: Path) -> None:
         "ok gate on, anonymous POST /api/v1/enforcement",
         "ok gate on, anonymous GET /api/v1/%76ehicles → 403",
         "ok gate on, anonymous GET /api/v1/events/4508d86d-566b-438f-8414-b3d67fd7e6e4/interception-plan → 403",
+        "ok gate on, anonymous GET /api/v1/events/4508d86d-566b-438f-8414-b3d67fd7e6e4 → 403",
         "ok gate on: anonymous ambulance requests capped per client",
         "ok gate on: malformed session cookie → 403, never 500",
         "ok session: right PIN",
         "ok projection: vehicle_pursuit never projected",
         'ok feed: oracle "baseline" params stay labelled baseline',
+        "ok driver status: polling drivers share one upstream read set per 2 s",
+        "ok driver status: the event row is read by id (GET /events/{id})",
+        "ok driver status: event read failing → 503 temporarily unavailable, never the dispatch body",
+        "ok driver status: a failed event read is cached for the poll window too",
+        "ok driver status: an oracle without GET /events/{id} → 503, never the dispatch body",
+        "ok driver status: event absent (404 'event … not found') → 'no such ambulance request'",
+        "ok driver status: OSINT event (source_kind 'osint') → 'no such ambulance request'",
+        "ok driver status: OSINT event (metadata.source 'osint') → 'no such ambulance request'",
         "ok window: unit beyond one window",
         "ok writer: no citizen all-clear for a pursuit",
         "ok C-D: tool_call",
+        "ok R26: gate off, anonymous POST /api/v1/osint/signals → 403 machine ingest",
+        "ok R26: gate on, anonymous POST /api/v1/osint/signals → 403 machine ingest",
+        "ok R26: gate on, signed in, POST /api/v1/osint/signals → 403 machine ingest",
+        "ok R26: gate off the other /api/v1/osint/* GETs still proxy",
+        "ok R26: gate on, signed in: the other /api/v1/osint/* GETs still proxy",
     ):
         assert marker in run.stdout, f"guard suite never reached: {marker}"

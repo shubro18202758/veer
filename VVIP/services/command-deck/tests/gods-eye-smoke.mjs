@@ -48,6 +48,12 @@
  *   #  the PIN, the session secret and the ion token never reach it (point
  *   #  the smoke at an already-running keyed deck for the ion-keyed checks)
  *
+ * Final pins (UI-S7B, SPEC §12.4): the 3D layer control is the LayerTree row
+ * `[data-layer]`; the /ops h2 titles are the rebuilt sections', compared
+ * case-insensitively; the guided-tour control is found by its text, tooltip
+ * or label; and the layer tree carries the OSINT ids `osint` and `places`
+ * under "Reported events" (presence only, plan X14).
+ *
  * Exits 0 with `ok <name> — <detail>` lines (showcase style); exit 1 on any
  * assertion failure. Screenshot artifact: tests/artifacts/gods-eye-smoke.png
  */
@@ -59,6 +65,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deckFetch, puppeteerCookies, signIn, signOut } from './lib/operator-session.mjs';
+import { COPY, SEL, ensureLayers, textHas, tourControl } from './lib/tolerant.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DECK = path.resolve(HERE, '..');
@@ -395,8 +402,14 @@ try {
 		}
 		// the 3D chip: unconfigured keyless, configured when keyed
 		const p3d = probe.layerStats?.['photoreal-3d'] ?? null;
+		// the V3 Analyst city map keeps its layer tree in a sheet that is closed by default: open it (the
+		// toolbar's Layers control) when the 3D row is not on the page yet
+		if (!(await page.$(SEL.layer('photoreal-3d')))) {
+			await page.evaluate(() => [...document.querySelectorAll('.ge-hud .toolbar button')].find((b) => /layers/i.test(b.getAttribute('aria-label') ?? ''))?.click());
+			await page.waitForSelector(SEL.layer('photoreal-3d'), { timeout: 10_000 }).catch(() => null);
+		}
 		const chipTitle = await page
-			.$eval('button.chip.layer[data-layer="photoreal-3d"]', (el) => el.getAttribute('title') ?? '')
+			.$eval(SEL.layer('photoreal-3d'), (el) => el.getAttribute('title') ?? '')
 			.catch(() => null);
 		if (keyed) {
 			ok('ion-keyed: 3D chip configured', p3d?.configured === 1, JSON.stringify(p3d));
@@ -427,6 +440,23 @@ try {
 			};
 		});
 		ok("'© OpenStreetMap contributors' visible on the canvas's credit plate", credit.osm && credit.visible, JSON.stringify(credit));
+
+		// The OSINT layers exist in the layer tree under "Reported events"
+		// (UI-S7B, plan X14: presence, never a count).
+		await ensureLayers(page, { timeout: 10000 });
+		const osintLayers = await page.evaluate(() => {
+			const groups = [...document.querySelectorAll('[data-map="layer-tree"] .group')];
+			const intel = groups.find((g) => /Reported events/i.test(g.querySelector('.group-head')?.textContent ?? ''));
+			return {
+				intel: !!intel,
+				rows: intel ? [...intel.querySelectorAll('[data-layer]')].map((r) => r.getAttribute('data-layer')) : null,
+			};
+		});
+		ok(
+			'layer tree: the osint and places layers exist under "Reported events"',
+			osintLayers.intel && !!osintLayers.rows && osintLayers.rows.includes('osint') && osintLayers.rows.includes('places'),
+			`group present=${osintLayers.intel} · rows=[${(osintLayers.rows ?? []).join(',')}]`,
+		);
 
 		mkdirSync(path.join(HERE, 'artifacts'), { recursive: true });
 		await page.screenshot({ path: path.join(HERE, 'artifacts', 'gods-eye-smoke.png') });
@@ -501,12 +531,8 @@ try {
 			counters: document.querySelectorAll('[data-prim="data-tile"]').length,
 			decisionCards: document.querySelectorAll('[data-prim="decision-card"]').length,
 			auditRows: document.querySelectorAll('[data-prim="audit-row"], [data-prim="feed-item"]').length,
-			amaCard: Array.from(document.querySelectorAll('h2')).some((h) =>
-				h.textContent?.includes('Active Movement Adaptation'),
-			),
-			gateCard: Array.from(document.querySelectorAll('h2')).some((h) =>
-				h.textContent?.includes('City Signal Plans'),
-			),
+			// the h2 titles, compared case-insensitively below (§12.4: 'Active Movement Adaptation' → 'Active movement adaptation')
+			h2s: Array.from(document.querySelectorAll('h2')).map((h) => h.textContent ?? ''),
 			// Band chips render through the ONLY legal band renderer.
 			bandChips: document.querySelectorAll('[data-prim="band-chip"]').length,
 			// The pursuit-overlay smoke hook is published (count may be 0 when
@@ -526,8 +552,8 @@ try {
 		`decision-cards=${opsProbe.decisionCards}`,
 	);
 	ok('/ops audit stream rows render', opsProbe.auditRows > 0, `rows=${opsProbe.auditRows}`);
-	ok('/ops AMA card surfaced', opsProbe.amaCard, 'Active Movement Adaptation card');
-	ok('/ops signal gate card surfaced', opsProbe.gateCard, 'City Signal Plans gate');
+	ok('/ops AMA card surfaced', opsProbe.h2s.some((t) => textHas(t, COPY.amaTitle)), 'Active Movement Adaptation card');
+	ok('/ops signal gate card surfaced', opsProbe.h2s.some((t) => textHas(t, COPY.gateTitle)), 'City Signal Plans gate');
 	ok('/ops band chips route through BandChip', opsProbe.bandChips > 0, `chips=${opsProbe.bandChips}`);
 	ok('/ops pursuit hook published', opsProbe.pursuitEntities === 'number', `pursuitEntities=${opsProbe.pursuitEntities}`);
 	ok('/ops duty-officer gate present', opsProbe.officerGate, 'C6 identity input');
@@ -541,10 +567,9 @@ try {
 		await sleep(2000);
 		const geHook = await page.evaluate(() => ({
 			pursuitEntities: typeof window.__GODS_EYE__?.pursuitEntities,
-			tourButton: Array.from(document.querySelectorAll('button.chip')).some((b) =>
-				b.textContent?.includes('TOUR'),
-			),
 		}));
+		// the tour control by its text, tooltip or label ('▶ TOUR' today), case-insensitively
+		geHook.tourButton = await page.evaluate(tourControl);
 		ok('/gods-eye pursuit hook published', geHook.pursuitEntities === 'number', `type=${geHook.pursuitEntities}`);
 		ok('/gods-eye guided tour control present', geHook.tourButton, 'TOUR chip in the HUD');
 	}

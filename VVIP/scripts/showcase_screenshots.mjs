@@ -91,7 +91,10 @@ async function main() {
       .then(async (r) => ({ status: r.status, events: r.ok ? ((await r.json()).events || []) : [] }))
       .catch((e) => ({ status: 0, events: [], error: String(e) }));
     const board = await ops.evaluate(() => ({
-      eventRows: document.querySelectorAll('.event-card, .board .event, article[data-event]').length,
+      // UI-S7B: the wall's board rows are the event-card test id (the legacy
+      // `.board .event` / `article[data-event]` markup is gone; `.event-card` on
+      // /citizen is a public class and stays — SPEC §12.4)
+      eventRows: document.querySelectorAll('[data-testid="event-card"]').length,
       band: document.querySelector('[data-prim="band-masthead"]')?.getAttribute('data-band') ?? null,
     }));
     results.dashboardLiveEvents = { http: feed.status, active: feed.events.length, ids: feed.events.map((e) => e.event_id), ...board };

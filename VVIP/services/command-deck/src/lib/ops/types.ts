@@ -15,7 +15,13 @@ export type ProtectionClass = 'Z+' | 'Z' | 'Y' | 'X' | 'none';
 
 export type CrowdClass = 'LOW' | 'MODERATE' | 'HIGH' | 'EXTREME';
 
-/** Corridor-event archetypes (the eight templates + the two watchlist-anpr event kinds the oracle persists: vehicle_pursuit, crime_incident — metadata doc, migration 010). */
+/**
+ * Corridor-event archetypes (the eight templates + the two watchlist-anpr event kinds the oracle persists:
+ * vehicle_pursuit, crime_incident — migration 010 — + the six OSINT reported-situation kinds of migration 021).
+ * Contract C3 lockstep with the 021 CHECKs, traffic_oracle events.EVENT_KINDS and the emulator's
+ * profiles.EVENT_KINDS. The OSINT kinds are REPORTED situations a named officer promoted for response; an OSINT
+ * report is never a crime_incident (ANPR/watchlist origin).
+ */
 export type EventKind =
 	| 'protected_movement'
 	| 'procession'
@@ -26,7 +32,31 @@ export type EventKind =
 	| 'emergency_evacuation'
 	| 'work_zone'
 	| 'vehicle_pursuit'
-	| 'crime_incident';
+	| 'crime_incident'
+	| 'reported_crime'
+	| 'public_disorder'
+	| 'road_accident'
+	| 'hazard'
+	| 'flooding'
+	| 'infra_failure';
+
+/**
+ * The honest label an event or a decision-support output carries (migration 021, contract C-T). CONFIRMED is
+ * reserved: nothing in this programme sets it yet.
+ */
+export type VerificationState =
+	| 'EMULATED'
+	| 'SIMULATED'
+	| 'UNVERIFIED-OSINT'
+	| 'NEWS-REPORTED'
+	| 'OFFICIAL-VERIFIED'
+	| 'CONFIRMED';
+
+/**
+ * Who created a corridor event (corridor_events.source_kind, migration 021): provenance, not the fetch source —
+ * see EventSource, which this does not widen.
+ */
+export type SourceKind = 'operator' | 'brain' | 'emulator' | 'osint';
 
 /** Lifecycle state of a corridor event. */
 export type EventPhaseState = 'planned' | 'active' | 'completed' | 'cancelled';
@@ -94,6 +124,18 @@ export interface CorridorEvent {
 	 * drawn dimmed as 'superseded', never as the live corridor.
 	 */
 	routeHistory?: RouteSpine[];
+
+	// ── additive (migration 021, contract C-T) — null before 021 and on rows that never set them ──
+	/** Who created the event (wire `source_kind`); null unless the creator said so (no inference). */
+	sourceKind?: SourceKind | null;
+	/** Credibility 0..1 (wire `credibility`); an OSINT-promoted event carries its report's. */
+	credibility?: number | null;
+	/** The honest label (wire `verification_state`), e.g. NEWS-REPORTED. */
+	verificationState?: VerificationState | null;
+	/** Provenance document (source feeds, publishers, geocoder, …): no person field, ever. */
+	provenance?: Record<string, unknown> | null;
+	/** The event's resolved point (wire `geotag`), null when it has none. */
+	geotag?: { lon: number; lat: number } | null;
 }
 
 /** One labelled route spine of a corridor event (wire `routes[]`). */

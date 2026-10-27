@@ -3,14 +3,15 @@
 # proves it is actually working, and says so in a readiness table.
 #
 # Usage (from anywhere, as the user that owns the stack — never root/sudo):
-#   scripts/veer_up.sh                    bring-up: preflight → model units → compose
-#                                         up -d → PostGIS healthy → migrate → seed if
-#                                         empty (+ the OpenStreetMap road network
-#                                         step when it changes or the store is not
-#                                         on that network, the post-seed repairs and
-#                                         the display file when they change) →
+#   scripts/veer_up.sh                    bring-up: preflight → model units → (--build:
+#                                         build images) → PostGIS alone up -d → healthy
+#                                         → migrate → seed if empty (+ the
+#                                         OpenStreetMap road network step when it
+#                                         changes or the store is not on that network,
+#                                         the post-seed repairs and the display file
+#                                         when they change) → every service up -d →
 #                                         after a network step, restart the services
-#                                         that cache the network → converge →
+#                                         that cached the old network → converge →
 #                                         readiness table
 #   scripts/veer_up.sh --status           READ-ONLY readiness table (exit 0 iff all READY)
 #   scripts/veer_up.sh --install-units    write ~/.config/veer/veer.env (if absent), link
@@ -19,7 +20,11 @@
 # The model hosts run only as those systemd --user units: a bring-up that
 # manages them needs --install-units done once (or --no-models).
 # Flags:
-#   --build           rebuild images (compose up -d --build; fetches the t0 artifact first)
+#   --build           rebuild the service images (compose build, before anything is
+#                     recreated; fetches the t0 artifact first). The PostGIS image is NOT
+#                     rebuilt — a new one would recreate the store container.
+#   --rebuild-postgis --build, and rebuild the PostGIS image too (recreates the store
+#                     container; its data stays on the postgis_data volume)
 #   --demo            demo mode: city signal-plan writer (VVIP_SIGNAL_POLICY_WRITER=1) and
 #                     living-city emulation (EMULATOR_LIVING_CITY=1); persisted as VEER_DEMO=1
 #                     in veer.env so reboots keep it. --no-demo switches it off again.
@@ -49,6 +54,22 @@
 # One bring-up runs at a time (lock in $VEER_RUN_DIR): a second one is
 # refused, --boot waits for it.
 #
+# VEER_OSINT (veer.env; 0 by default — plan R7): with VEER_OSINT=1 the
+# compose invocation also names infra/compose.osint-ingress.yml
+# (scripts/veer_env.sh) and the table gains a 12th component, osint
+# (vvip-argus-osint-ingress, loopback :8093), gated like the others and
+# checked in the preflight's port list. Its readiness never depends on the
+# internet: READY = GET /health answers AND reports the oracle reachable,
+# whatever the connectors say (no egress at a venue, a GDELT 429, Reddit
+# refusing the box: shown in DETAIL, "READY · offline cache only · 4 of 4
+# connectors failing …"); DEGRADED = /health answers but the oracle is not
+# reachable from it; DOWN = /health does not answer. With the flag at 0 the
+# stack is exactly its 11 components and 3 compose files, and a bring-up
+# stops and removes a stale vvip-argus-osint-ingress container an earlier
+# VEER_OSINT=1 bring-up left (one docker rm -f; nothing when absent), so a
+# flag rollback cannot leave it fetching and posting. Set it with
+# scripts/veer_env.sh --set VEER_OSINT 1 (or 0).
+#
 # The road network (seed()): services/corridor-store/seed/reanchor_osm_network.sql
 # — generated, idempotent, one transaction — is applied when the store is
 # empty, when the file differs from its run-dir stamp, AND whenever a
@@ -59,14 +80,17 @@
 # a reboot onto one is converted again, never left on the schematic network.
 # The postgis readiness row names the basis ('network osm 49/49 · 34
 # junctions') and is DEGRADED while the store is not on the generated one.
-# compose up starts the services BEFORE the migrations and the seed, so a
-# network step that ran in THIS bring-up (also under --boot) restarts, once,
-# right after the seed, the containers that cache the network: the
-# traffic-oracle (segment names, geometry basis, unit paths), the
+# The services are (re)created only after the migrations and the seed (the
+# store comes up alone first), but a container that was already running and
+# is not recreated keeps what it cached: after a network step in THIS
+# bring-up (also under --boot) each of the containers that cache the network
+# — the traffic-oracle (segment names, geometry basis, unit paths), the
 # event-emulator (segment anchors and paths) and the command-deck (citizen
-# facts); a bring-up that fails between the step and that restart leaves
+# facts) — that started before the step is restarted once; a bring-up that
+# fails between the step and that restart leaves
 # $VEER_RUN_DIR/seed/network_readers.restart, so the next one (or the boot
-# retry) restarts them. Nothing is restarted when the network did not change;
+# retry) restarts them. (At boot Docker's restart policy starts every
+# container before this script runs: the order above applies to bring-ups.) Nothing is restarted when the network did not change;
 # --status never writes. Each seed file is one transaction and runs quietly: a file
 # that opens its own (BEGIN; … COMMIT;) is not wrapped in a second one, so
 # psql prints no 'transaction in progress' warnings.
@@ -83,6 +107,7 @@ VEER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 MODE=up
 BUILD=0
+REBUILD_POSTGIS=0
 DEMO_FLAG=""
 RETIRE=0
 NO_MODELS=0
@@ -94,6 +119,7 @@ while [ $# -gt 0 ]; do
         --install-units) MODE=install ;;
         --boot)          MODE=boot ;;
         --build)         BUILD=1 ;;
+        --rebuild-postgis) BUILD=1; REBUILD_POSTGIS=1 ;;
         --demo)          DEMO_FLAG=on ;;
         --no-demo)       DEMO_FLAG=off ;;
         --retire-legacy) RETIRE=1 ;;
@@ -116,8 +142,63 @@ die()  { printf '[veer_up] ERROR: %s\n' "$1" >&2; exit "${2:-2}"; }
 # and home, and ss reporting docker-proxy as the owner of every published
 # port (a "conflict" on each one).
 if [ "$(id -u)" = 0 ]; then
-    die "run as the user that owns the stack, not root/sudo: the model hosts are that user's systemd --user units, veer.env lives in its home and port owners are judged by its processes"
+    die "run as the user that owns the stack, not root/sudo: the model hosts are that user's systemd --user units, veer.env lives in its home and port owners are matched against its processes"
 fi
+
+# The ports this script probes, preflights and builds the DSN from are the
+# ones compose actually binds: read from the rendered compose files (no
+# interpolation, so no value from veer.env is ever rendered), never from a
+# shell that exported ORACLE_PORT & co. for a sandbox or a dev deck. A
+# shell value that differs is reported and ignored. The model hosts' ports
+# (systemd units) are not in compose and keep veer_env.sh's values.
+compose_ports() {  # → KEY=VALUE lines for the compose-bound host ports
+    veer_compose config --no-interpolate --format json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    services = json.load(sys.stdin)["services"]
+except Exception:
+    sys.exit(0)
+def env(name):
+    e = (services.get(name) or {}).get("environment") or {}
+    if isinstance(e, list):
+        e = dict(item.split("=", 1) if "=" in item else (item, None) for item in e)
+    return e
+def published(name, target):
+    for p in (services.get(name) or {}).get("ports") or []:
+        if isinstance(p, dict) and int(p.get("target", 0)) == target and p.get("published"):
+            return str(p["published"])
+    return None
+want = {
+    "POSTGIS_HOST_PORT": published("postgis", 5432),
+    "VALKEY_HOST_PORT": published("valkey", 6379),
+    "NATS_HOST_PORT": published("nats", 4222),
+    "NATS_MON_PORT": published("nats", 8222),
+    "ORACLE_PORT": env("traffic-oracle").get("PORT"),
+    "BRAIN_PORT": env("convoy-brain").get("PORT"),
+    "DECK_PORT": env("command-deck").get("PORT"),
+    "EMULATOR_PORT": env("event-emulator").get("PORT"),
+    "OSINT_PORT": env("osint-ingress").get("PORT"),
+}
+for key, value in want.items():
+    if value and str(value).isdigit():
+        print(f"{key}={value}")
+' 2>/dev/null || true
+}
+
+sync_compose_ports() {
+    local line key value seen=0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        key="${line%%=*}"; value="${line#*=}"; seen=$((seen + 1))
+        if [ "${!key:-}" != "$value" ]; then
+            warn "$key=${!key:-<unset>} in this environment, but compose binds $value — probing $value"
+            printf -v "$key" '%s' "$value"
+            export "${key?}"
+        fi
+    done < <(compose_ports)
+    [ "$seen" -gt 0 ] || warn "could not read the host ports from the compose files (docker compose config) — probing veer_env.sh's values"
+}
+sync_compose_ports
 
 PG_DSN="postgresql://corridor_admin:${POSTGIS_PASSWORD:-dev_changeme}@127.0.0.1:${POSTGIS_HOST_PORT}/corridor_db"
 UNITS=(veer-llama.service veer-decider.service veer-embed.service veer-models.target veer-up.service veer.target)
@@ -269,7 +350,11 @@ model_supervision() {  # <unit> <port> → how the host on <port> is supervised
 
 # ─── readiness checks ───────────────────────────────────────────────────────
 
-ORDER=(postgis valkey nats signal-ingress oracle brain deck emulator decider gemma embeddings)
+ORDER=(postgis valkey nats signal-ingress oracle brain deck emulator)
+# VEER_OSINT=1 (plan R7): the 12th component, after the emulator (its cousin
+# for real open signals); with the flag at 0 the 11 components are unchanged
+if [ "$VEER_OSINT" = 1 ]; then ORDER+=(osint); fi
+ORDER+=(decider gemma embeddings)
 declare -A STATE DETAIL ENDPOINT
 INFO=()
 
@@ -357,12 +442,20 @@ check_oracle() {
 
 check_brain() {
     ENDPOINT[brain]="127.0.0.1:$BRAIN_PORT"
-    local body; body="$(http_body "http://127.0.0.1:$BRAIN_PORT/health")"
-    if [ "$(jget status <<<"$body")" = ok ]; then
-        mark brain READY "strategic $(jget strategic_tier.model_host <<<"$body") · tactical $(jget tactical_tier.llama_server <<<"$body")"
-    else
-        mark brain DOWN "/health not ok"
-    fi
+    local body st tiers
+    body="$(http_body "http://127.0.0.1:$BRAIN_PORT/health")"
+    st="$(jget status <<<"$body")"
+    tiers="strategic $(jget strategic_tier.model_host <<<"$body") · tactical $(jget tactical_tier.llama_server <<<"$body")"
+    case "$st" in
+        ok) mark brain READY "$tiers" ;;
+        # the brain answers but a model tier is loading / unreachable (or the
+        # decider is degraded): up, not DOWN — the reason is shown
+        degraded)
+            local why; why="$(jget strategic_tier.degraded_reason <<<"$body")"
+            mark brain DEGRADED "/health degraded · $tiers${why:+ · $why}" ;;
+        "") mark brain DOWN "/health unreachable" ;;
+        *)  mark brain DOWN "/health status '$st'" ;;
+    esac
 }
 
 DECK_SCOPE="" DECK_GATE="" DECK_GATE_OPEN_ON_LAN=0
@@ -411,6 +504,71 @@ check_emulator() {
     fi
 }
 
+osint_summary() {  # osint-ingress /health JSON on stdin → the DETAIL text after the state
+    # counts, names and short connector errors only (never a signal's text)
+    python3 -c '
+import json, sys
+from datetime import datetime, timezone
+try:
+    h = json.load(sys.stdin)
+except Exception:
+    print("?"); sys.exit(0)
+def ago(ts):
+    try:
+        t = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        s = max(0, int((datetime.now(timezone.utc) - t).total_seconds()))
+    except Exception:
+        return None
+    return f"{s} s ago" if s < 120 else (f"{s // 60} min ago" if s < 7200 else f"{s // 3600} h ago")
+out = ["live" if h.get("mode") == "live" else "offline cache only"]
+lc = h.get("last_cycle") if isinstance(h.get("last_cycle"), dict) else {}
+when = ago(lc.get("at")) if lc.get("at") else None
+if when:
+    n_sig, n_acc = lc.get("signals", 0), lc.get("accepted", 0)
+    out.append(f"last cycle {when} · {n_sig} signals · {n_acc} accepted")
+else:
+    out.append("no cycle yet")
+conns = h.get("connectors") if isinstance(h.get("connectors"), dict) else {}
+on = {n: c for n, c in conns.items() if isinstance(c, dict) and c.get("enabled")}
+bad = {n: c for n, c in on.items() if c.get("error")}
+if not on:
+    out.append("no connector enabled")
+elif bad:
+    # the reason before "; serving the cached entry" (the cached sample is noted once, below)
+    why = ", ".join("%s (%s)" % (n, str(c.get("error")).split(";")[0][:44]) for n, c in list(bad.items())[:3])
+    more = f" +{len(bad) - 3} more" if len(bad) > 3 else ""
+    cached = sum(1 for c in bad.values() if c.get("fetch_mode") == "cached-sample")
+    note = f" — {cached} serving their cached sample" if cached else ""
+    out.append(f"{len(bad)} of {len(on)} connectors failing: {why}{more}{note}")
+else:
+    out.append(f"{len(on)} connectors ok")
+o = h.get("oracle") if isinstance(h.get("oracle"), dict) else {}
+post = o.get("last_post_status")
+out.append(f"last post {post}" if post else "no post yet")
+print(" · ".join(out))
+' 2>/dev/null || echo "?"
+}
+
+check_osint() {  # VEER_OSINT=1 only; READY never depends on the internet (plan R7)
+    ENDPOINT[osint]="127.0.0.1:$OSINT_PORT"
+    local body st sup="container $OSINT_CONTAINER"
+    body="$(http_body "http://127.0.0.1:$OSINT_PORT/health")"
+    st="$(container_status "$OSINT_CONTAINER")"
+    [ "$st" = running ] || sup="container $OSINT_CONTAINER $st"
+    if [ -z "$body" ] || [ -z "$(jget status <<<"$body")" ]; then
+        mark osint DOWN "/health unreachable · $sup"
+        return
+    fi
+    local summary; summary="$(osint_summary <<<"$body")"
+    if [ "$(jget oracle.reachable <<<"$body")" = true ]; then
+        # connector failures (no egress, a 429, a source refusing the box) are
+        # shown, never gating: the emulator's "READY · reason shown" pattern
+        mark osint READY "$summary · $sup"
+    else
+        mark osint DEGRADED "oracle $(jget oracle.host <<<"$body") NOT reachable from osint-ingress (signals stay in its cache outbox) · $summary · $sup"
+    fi
+}
+
 check_decider() {
     ENDPOINT[decider]="127.0.0.1:$MODEL_HOST_PORT"
     local body; body="$(http_body "http://127.0.0.1:$MODEL_HOST_PORT/decider/health")"
@@ -450,8 +608,10 @@ check_embeddings() {
 collect_info() {  # non-gating facts shown under the table
     INFO=()
     local port scope exposed=""
-    for port in "$POSTGIS_HOST_PORT" "$VALKEY_HOST_PORT" "$NATS_HOST_PORT" "$NATS_MON_PORT" \
-                "$EMULATOR_PORT" "$ORACLE_PORT" "$BRAIN_PORT" "$MODEL_HOST_PORT" "$LLAMA_PORT" "$EMBEDDING_PORT"; do
+    local internal=("$POSTGIS_HOST_PORT" "$VALKEY_HOST_PORT" "$NATS_HOST_PORT" "$NATS_MON_PORT"
+                    "$EMULATOR_PORT" "$ORACLE_PORT" "$BRAIN_PORT" "$MODEL_HOST_PORT" "$LLAMA_PORT" "$EMBEDDING_PORT")
+    if [ "$VEER_OSINT" = 1 ]; then internal+=("$OSINT_PORT"); fi
+    for port in "${internal[@]}"; do
         scope="$(bind_scope "$port")"
         case "$scope" in exposed:*) exposed="$exposed :$port(${scope#exposed:})" ;; esac
     done
@@ -473,11 +633,17 @@ collect_info() {  # non-gating facts shown under the table
     else
         INFO+=("boot      systemd units NOT installed — not reboot-proof (scripts/veer_up.sh --install-units)")
     fi
+    if [ "$VEER_OSINT" != 1 ]; then
+        local osint_st; osint_st="$(container_status "$OSINT_CONTAINER")"
+        [ "$osint_st" = absent ] || INFO+=("osint     VEER_OSINT=$VEER_OSINT but $OSINT_CONTAINER exists ($osint_st) — the next bring-up removes it (docker rm -f $OSINT_CONTAINER)")
+    fi
 }
 
 run_checks() {
     check_postgis; check_valkey; check_nats; check_ingress; check_oracle; check_brain
-    check_deck; check_emulator; check_decider; check_gemma; check_embeddings
+    check_deck; check_emulator
+    if [ "$VEER_OSINT" = 1 ]; then check_osint; fi
+    check_decider; check_gemma; check_embeddings
 }
 
 gating() {  # components that must be READY (model hosts excluded by --no-models)
@@ -559,6 +725,7 @@ preflight() {
         "$ORACLE_PORT:$ORACLE_CONTAINER" "$BRAIN_PORT:$BRAIN_CONTAINER"
         "$DECK_PORT:$DECK_CONTAINER" "$EMULATOR_PORT:$EMULATOR_CONTAINER"
     )
+    if [ "$VEER_OSINT" = 1 ]; then specs+=("$OSINT_PORT:$OSINT_CONTAINER"); fi
     [ "$NO_MODELS" = 1 ] || specs+=("$MODEL_HOST_PORT:unit" "$LLAMA_PORT:unit" "$EMBEDDING_PORT:unit")
     local spec port expect legacy_models="" legacy_emulator="" conflicts=""
     for spec in "${specs[@]}"; do
@@ -703,14 +870,51 @@ apply_demo_mode() {
     fi
 }
 
-compose_up() {
-    local args=(up -d)
-    if [ "$BUILD" = 1 ]; then
-        bash "$VEER_ROOT/scripts/fetch_t0.sh" || die "t0 artifact unavailable (oracle image bakes models-local/t0)" 3
-        args+=(--build)
-    fi
-    say "docker compose -p $VEER_COMPOSE_PROJECT ${args[*]}"
-    veer_compose "${args[@]}" || die "compose up failed" 3
+remove_stale_osint() {  # VEER_OSINT=0: nothing of the OSINT service may keep running
+    # An earlier VEER_OSINT=1 bring-up left vvip-argus-osint-ingress; compose
+    # run with the three files no longer knows it (an orphan it only warns
+    # about), so it would keep fetching the sources and posting to the oracle.
+    # A no-op when absent (the case before the flag is ever set).
+    [ "$VEER_OSINT" = 1 ] && return 0
+    [ "$(container_status "$OSINT_CONTAINER")" = absent ] && return 0
+    say "VEER_OSINT=$VEER_OSINT — removing the stale $OSINT_CONTAINER container an earlier VEER_OSINT=1 bring-up left"
+    docker rm -f "$OSINT_CONTAINER" >/dev/null \
+        || warn "could not remove $OSINT_CONTAINER — remove it by hand: docker rm -f $OSINT_CONTAINER"
+}
+
+built_services() {  # → the compose services with a build section (postgis only with --rebuild-postgis)
+    local skip=postgis
+    [ "$REBUILD_POSTGIS" = 1 ] && skip=""
+    veer_compose config --no-interpolate --format json 2>/dev/null | python3 -c '
+import json, sys
+services = json.load(sys.stdin)["services"]
+skip = set(sys.argv[1].split())
+print(" ".join(sorted(n for n, s in services.items() if "build" in s and n not in skip)))
+' "$skip"
+}
+
+build_images() {  # --build: rebuild the service images BEFORE anything is recreated
+    [ "$BUILD" = 1 ] || return 0
+    bash "$VEER_ROOT/scripts/fetch_t0.sh" || die "t0 artifact unavailable (oracle image bakes models-local/t0)" 3
+    local svcs; svcs="$(built_services)" || die "could not list the compose services (docker compose config)" 3
+    [ -n "$svcs" ] || die "no buildable compose service found (docker compose config)" 3
+    # PostGIS is never rebuilt by --build alone: a new image would recreate
+    # the store container (the corridor data lives on its volume, but the
+    # store would restart under every service). --rebuild-postgis asks.
+    [ "$REBUILD_POSTGIS" = 1 ] || say "PostGIS image kept (--rebuild-postgis rebuilds it)"
+    say "docker compose -p $VEER_COMPOSE_PROJECT build $svcs"
+    # shellcheck disable=SC2086  # one word per service name
+    veer_compose build $svcs || die "compose build failed" 3
+}
+
+store_up() {  # the store only, so the schema is migrated before any service (re)starts
+    say "docker compose -p $VEER_COMPOSE_PROJECT up -d postgis"
+    veer_compose up -d postgis || die "compose up (postgis) failed" 3
+}
+
+services_up() {  # every service, after migrate + seed (images already built by build_images)
+    say "docker compose -p $VEER_COMPOSE_PROJECT up -d"
+    veer_compose up -d || die "compose up failed" 3
 }
 
 wait_postgis() {  # <timeout_s>
@@ -859,17 +1063,29 @@ warn_open_event_routes() {  # after a network step: open events whose current sp
     warn "${rows%% *} current route(s) of open events (${rows#* }) are no longer legal paths on the road network — re-plan those events or close them (recorded routes are history and are not rewritten)"
 }
 
+started_epoch() {  # <container> → its last start as epoch seconds ('' when unknown)
+    local t; t="$(docker inspect -f '{{.State.StartedAt}}' "$1" 2>/dev/null)" || return 0
+    date -u -d "$t" +%s 2>/dev/null || true
+}
+
 restart_network_readers() {  # after a network step in this bring-up (seed() sets NETWORK_CHANGED)
-    # compose_up started these BEFORE the migrations and the seed: each may
-    # hold the previous network in a cache — the traffic-oracle (segment
-    # names, geometry basis, unit paths), the event-emulator (segment anchors
-    # and paths), the command-deck (citizen facts). One restart reads the
-    # new one; convergence below waits for them.  A bring-up that applied
-    # the step and then failed leaves the mark: the next one restarts them.
+    # The services start after the migrations and the seed, but one that was
+    # already running (and not recreated by services_up) may hold the previous
+    # network in a cache — the traffic-oracle (segment names, geometry basis,
+    # unit paths), the event-emulator (segment anchors and paths), the
+    # command-deck (citizen facts). Each one started BEFORE the network step
+    # (the mark's mtime) is restarted once; one started after it already read
+    # the new network. Convergence below waits for them. A bring-up that
+    # applied the step and then failed leaves the mark: the next one restarts
+    # them.
     [ "$NETWORK_CHANGED" = 1 ] || [ -f "$NETWORK_RESTART_MARK" ] || return 0
-    local c names=()
+    local c names=() step started
+    step="$(stat -c %Y "$NETWORK_RESTART_MARK" 2>/dev/null || true)"
     for c in "$ORACLE_CONTAINER" "$EMULATOR_CONTAINER" "$DECK_CONTAINER"; do
-        [ "$(container_status "$c")" != absent ] && names+=("$c")
+        [ "$(container_status "$c")" != absent ] || continue
+        started="$(started_epoch "$c")"
+        if [ -n "$step" ] && [ -n "$started" ] && [ "$started" -gt "$step" ]; then continue; fi
+        names+=("$c")
     done
     [ "${#names[@]}" -gt 0 ] || { rm -f "$NETWORK_RESTART_MARK"; return 0; }
     say "road network step applied — restarting ${names[*]} once (they may have cached the network as it was before it)"
@@ -977,10 +1193,16 @@ if [ "$NO_MODELS" != 1 ] && [ "$MODE" != boot ]; then start_models; fi
 warn_unpersisted
 apply_demo_mode
 ensure_postgis_image
-compose_up
+remove_stale_osint
+# Order: images first (nothing recreated yet), then the store alone, the
+# migrations and the seed, and only then the services — none of them ever
+# (re)starts against a schema older than its code.
+build_images
+store_up
 wait_postgis 180
 run_migrations
 seed
+services_up
 restart_network_readers
 
 if converge "$TIMEOUT"; then

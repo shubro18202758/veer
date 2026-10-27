@@ -21,6 +21,8 @@ import { corridorEventsLayer } from './corridor-events';
 import { dispatchLayer } from './dispatch';
 import { enforcementLayer } from './enforcement';
 import { photoreal3dLayer } from './photoreal-3d';
+import { osintLayer } from './osint';
+import { placesLayer } from './place';
 import { signalNetworkLayer } from './signal-network';
 import { trafficFlowLayer } from './traffic-flow';
 import { vehicleTracesLayer } from './vehicle-traces';
@@ -36,6 +38,8 @@ export const GODS_EYE_LAYERS: ReadonlyArray<GodsEyeLayer> = validateLayers([
 	convoyLayer,
 	camerasLayer,
 	anomaliesLayer,
+	osintLayer,
+	placesLayer,
 	photoreal3dLayer,
 ]);
 

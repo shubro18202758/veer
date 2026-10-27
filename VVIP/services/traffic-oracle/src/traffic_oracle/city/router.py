@@ -13,6 +13,13 @@ before it reaches SQL (uuid kinds, positive ints, bounded slugs → 422 on
 anything else); an unknown entity or event is a 404 ``{detail}``.  The
 Valkey-backed sources (patrol units, convoy GPS, brain decisions) degrade
 to a labelled ``unavailable`` when no client is wired — never a 500.
+
+OSINT (contract C-T, C-C extension): ``kinds=`` accepts ``osint_event``
+and ``place``, the dossier resolves ``osint_event/<uuid>`` and
+``place/<slug>`` (``^[a-z0-9][a-z0-9_]{0,63}$``), and the feed's ``kinds=``
+accepts ``osint``.  Every OSINT record says ``source: "osint"`` with its
+verification state; on a database without migrations 021 / 022 these
+surfaces answer exactly as before (no OSINT entity, row or source).
 """
 
 from __future__ import annotations
@@ -128,7 +135,8 @@ async def city_entity_dossier(
     request: Request,
     audit_limit: int = Query(default=50, ge=1, le=200),
 ) -> dict:
-    """One entity's dossier: itself, 1-hop related entities, audit trail."""
+    """One entity's dossier: itself, 1-hop related entities, audit trail
+    (``osint_event`` and ``place`` included: C-T)."""
     if kind not in DOSSIER_KINDS:
         raise HTTPException(
             status_code=422, detail=f"kind must be one of {list(DOSSIER_KINDS)}"

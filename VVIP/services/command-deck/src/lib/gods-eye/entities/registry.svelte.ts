@@ -20,6 +20,12 @@
  * kind is not served (gods-eye store); kinds that exist only here
  * (recommendations, dispatches, convoys, anomalies, sightings) render an
  * honest "city fusion API unavailable" state instead.
+ *
+ * The snapshot is ONE GET /city/entities with no kinds filter (plan R11):
+ * OSINT reports (`osint_event`) and places ride on it like every other kind.
+ * `seed()` applies a snapshot without polling (the /design harnesses; never
+ * a route page), so the workspace's object model reads fixtures through the
+ * same indexes as the live picture.
  */
 
 import { createPollGate, withinBlipGrace } from '$lib/ops/client';
@@ -47,6 +53,8 @@ class CityRegistry {
 	tookMs = $state<number | null>(null);
 
 	private snap: CitySnapshot | null = null;
+	/** The snapshot came from seed() (a harness), not a poll. */
+	private seeded = false;
 	private byUrn = new Map<string, CityEntity>();
 	private kindIndex = new Map<string, CityEntity[]>();
 	/** urn → urns that link TO it (the reverse of `links`). */
@@ -92,6 +100,7 @@ class CityRegistry {
 		try {
 			const snap = await fetchCitySnapshot(AbortSignal.timeout(8000));
 			this.apply(snap);
+			this.seeded = false;
 			this.status = 'ok';
 			this.note = null;
 			this.updatedAt = Date.now();
@@ -181,6 +190,39 @@ class CityRegistry {
 	get size(): number {
 		void this.version;
 		return this.byUrn.size;
+	}
+
+	/** Every entity of the current snapshot (the workspace's object model reads it). */
+	entities(): readonly CityEntity[] {
+		void this.version;
+		return this.snap?.entities ?? [];
+	}
+
+	/**
+	 * Apply a snapshot without polling — the /design harnesses only (fictional
+	 * or sandbox data). A running poller would replace it on its next answer.
+	 */
+	seed(snap: CitySnapshot, note: string | null = null) {
+		this.apply(snap);
+		this.seeded = true;
+		this.status = 'ok';
+		this.note = note;
+		this.updatedAt = Date.now();
+	}
+
+	/**
+	 * Drop a seeded snapshot (a harness unmounting): back to an empty, idle
+	 * picture until a poller's next answer, so fixture objects never outlive
+	 * the harness. A no-op when the snapshot is a real one.
+	 */
+	unseed() {
+		if (!this.seeded) return;
+		this.seeded = false;
+		this.apply({ asOf: null, entities: [], feeds: {}, tookMs: null });
+		this.status = 'idle';
+		this.note = null;
+		this.updatedAt = 0;
+		if (this.timer) void this.refresh();
 	}
 }
 

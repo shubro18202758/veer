@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml-stylesheet title="XSL_formatting" type="text/xsl" href="feed.xsl"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Gujarat: CAP Disaster Alert Feeds</title>
+    <description>CAP Integrated Alert System Warning Updates</description>
+    <language>en</language>
+    <link>https://sachet.ndma.gov.in/cap_public_website/rss/rss_gujarat.xml</link>
+    <atom:link href="https://sachet.ndma.gov.in/cap_public_website/rss/rss_gujarat.xml" rel="self" type="application/rss+xml"/>
+    <copyright>public domain</copyright>
+    <pubDate>Fri, 16 Oct 2026 09:04:44 GMT</pubDate>
+    <item>
+      <title>Light Rain is very likely to occur at isolated places over Diu, Amreli, Arvalli, Banas Kantha, Chhotaudepur, Dahod, Gir Somnath, Kachchh, Narmada, Sabar Kantha, Tapi, The Dangs in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1792488633241020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1792488633241020</guid>
+      <pubDate>Tue, 20 Oct 2026 09:42:22 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light Rain is very likely to occur at isolated places over Chhotaudepur, Narmada, Tapi in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1792386245026020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1792386245026020</guid>
+      <pubDate>Mon, 19 Oct 2026 05:06:41 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light Rain is very likely to occur at isolated places over Ahmedabad, Amreli, Anand, Bhavnagar, Botad, Chhotaudepur, Dahod, Devbhumi Dwarka, Junagadh, Narmada, Porbandar, Rajkot, Tapi, The Dangs in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1792319796429020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1792319796429020</guid>
+      <pubDate>Sun, 18 Oct 2026 10:42:15 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light Rain with light thunderstorms and low probability of cloud to ground lightning is very likely to occur at isolated places over Diu, Amreli, Gir Somnath, Junagadh in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1790861421726020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1790861421726020</guid>
+      <pubDate>Thu, 01 Oct 2026 13:37:48 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light Rain is very likely to occur at isolated places over Dadra And Nagar Haveli, Daman, Diu, Amreli, Bhavnagar, Devbhumi Dwarka, Gir Somnath, Jamnagar, Junagadh, Narmada, Navsari, Porbandar, Rajkot, Tapi, The Dangs, Valsad in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1790850534385020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1790850534385020</guid>
+      <pubDate>Thu, 01 Oct 2026 10:30:59 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light Rain accompanied with light Thunderstorm with low probability of cloud to ground lightning is very likely to occur at isolated places over Narmada, Navsari, Surat, Tapi, The Dangs, Valsad, Dadra And Nagar Haveli, Daman in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1790785576918020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1790785576918020</guid>
+      <pubDate>Wed, 30 Sep 2026 17:07:02 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light Rain accompanied with light Thunderstorm with low probability of cloud to ground lightning is very likely to occur at isolated places over Amreli, Bhavnagar, Navsari, Rajkot, The Dangs, Valsad, Dadra And Nagar Haveli, Daman in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1790776330684020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1790776330684020</guid>
+      <pubDate>Wed, 30 Sep 2026 13:53:45 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light Rain is very likely to occur at isolated places over Dadra And Nagar Haveli, Daman, Diu, Amreli, Bhavnagar, Botad, Devbhumi Dwarka, Gir Somnath, Jamnagar, Junagadh, Morbi, Navsari, Porbandar, Rajkot, Tapi, The Dangs, Valsad in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1790764222397020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1790764222397020</guid>
+      <pubDate>Wed, 30 Sep 2026 10:35:15 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light Thunderstorm with surface wind is very likely to occur at isolated places over Dadra And Nagar Haveli, Daman, Diu, Amreli, Banas Kantha, Bhavnagar, Devbhumi Dwarka, Gir Somnath, Jamnagar, Junagadh, Kachchh, Navsari, Patan, Porbandar, Rajkot, Surat, Tapi, The Dangs, Valsad in next 24 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1790754614468020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1790754614468020</guid>
+      <pubDate>Wed, 30 Sep 2026 10:33:04 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light Rain with light thunderstorms and low probability of cloud to ground lightning is very likely to occur at isolated places over Dadra And Nagar Haveli, Daman, Navsari, Tapi, The Dangs, Valsad in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1790689323165020</link>
+      <author>controlroom@ndma.gov.in (IMD Ahmedabad)</author>
+      <guid isPermaLink="false">1790689323165020</guid>
+      <pubDate>Tue, 29 Sep 2026 13:44:07 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

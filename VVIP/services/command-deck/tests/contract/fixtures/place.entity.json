@@ -1,0 +1,35 @@
+{
+	"urn": "place:odhav_ring_road_circle_sp_ring_road_11",
+	"kind": "place",
+	"id": "odhav_ring_road_circle_sp_ring_road_11",
+	"label": "Odhav Ring Road Circle (SP Ring Road)",
+	"lon": 72.673118,
+	"lat": 23.02496,
+	"state": "junction",
+	"band": null,
+	"source": "osint",
+	"verification_state": null,
+	"credibility": null,
+	"t": "2026-10-20T10:15:00.000Z",
+	"age_sec": 472013.2,
+	"links": [
+		"osint_event:879c34c9-7e40-4e7f-a259-906983944396",
+		"junction:11"
+	],
+	"props": {
+		"feature_type": "junction",
+		"canonical_name": "Odhav Ring Road Circle (SP Ring Road)",
+		"surface_forms": [
+			"odhav",
+			"odhav ring road circle",
+			"odhav ring road circle sp ring road",
+			"ओढव",
+			"ઓઢવ",
+			"ઓઢવ રિંગ રોડ સર્કલ",
+			"ઓઢવ રિંગ રોડ સર્કલ એસ પી રિંગ રોડ"
+		],
+		"segment_id": null,
+		"junction_id": 11,
+		"osint_event_count": 1
+	}
+}

@@ -75,7 +75,7 @@ import { ORACLE_V1, POLL_MS } from '$lib/ops/endpoints';
 import { feedError, godsEye } from '../store.svelte';
 import { displayText } from '../plates';
 import type { GodsEyeLayer, GodsEyeLayerContext, GodsEyeLayerInstance } from '../registry';
-import { cssVar, withAlpha } from '../theme';
+import { canvasFont, cssVar, withAlpha } from '../theme';
 import {
 	DRAPE_Z,
 	clampedDot,
@@ -87,6 +87,9 @@ import {
 	groundPath,
 } from './draping';
 import { labelPlate } from './labels';
+import { eventKindIcon } from '$lib/design/icons';
+import { chromeOf, kindShown, kindsSignature, markerStyle, viewOf, type MapView } from '../hud/map/view';
+import { inkAlpha, mapInk, markerBillboard, tagMarker, type MarkerMeta } from '../hud/map/symbols';
 
 export const CORRIDOR_EVENTS_PICK_PREFIX = 'evt:';
 
@@ -126,7 +129,7 @@ const LABEL_FAR = { live: 40_000, fixture: 12_000 } as const;
 const FAN_STEP_M = 45;
 const FAN_PER_RING = 5;
 const LABEL_STACK_PX = 15;
-/** Judge-view titles stay short (the pick card carries the whole title). */
+/** Overview titles stay short (the pick card carries the whole title). */
 const LABEL_MAX_CHARS = 32;
 
 type SpineStyle = 'recommended' | 'alternate' | 'plain';
@@ -167,6 +170,23 @@ function ringToCoords(ring: unknown): Array<[number, number]> {
 		if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') out.push([c[0], c[1]]);
 	}
 	return out;
+}
+
+/** An event's own time (its window start, epoch ms) for the v2 window fade; null without one. */
+function eventTime(ev: CorridorEvent): number | null {
+	const t = ev.windowStart ? Date.parse(ev.windowStart) : Number.NaN;
+	return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * What the v2 view changes in one event's drawing: its opacity (selected,
+ * related, protected, in or out of the window, dimmed under a selection).
+ * The redraw keys on this per drawn event — never on the whole related or
+ * protected set, so a read or a recommendation elsewhere never rebuilds the
+ * draped spines and zones.
+ */
+function eventAlpha(ev: CorridorEvent, view: MapView): number {
+	return markerStyle({ urn: `event:${ev.eventId}`, kind: 'event', t: eventTime(ev) }, view).alpha;
 }
 
 /** Emulator-injected rows (additive `emulated` flag on the event row). */
@@ -320,7 +340,8 @@ function createCorridorEventsLayer(): GodsEyeLayerInstance {
 					eventId: String(id),
 					state,
 					ring: rings[0],
-					color: stateColor(state),
+					// the legacy zone's state colour; v2 draws zones in --v-map-* only (never --v-act / --v-data)
+					color: chromeOf(ctx) === 'v2' ? '' : stateColor(state),
 				});
 			}
 			zoneRows = next;
@@ -336,6 +357,7 @@ function createCorridorEventsLayer(): GodsEyeLayerInstance {
 		const { cesium, viewer } = ctx;
 		const segmentMap = godsEye.segmentById;
 		const officer = ops.officerOn;
+		const view = chromeOf(ctx) === 'v2' ? viewOf(ctx) : null;
 		// One row per event id (a live row wins over a fixture with the same
 		// id): every entity id below derives from the event id, and Cesium
 		// throws on a duplicate entity id.
@@ -367,6 +389,7 @@ function createCorridorEventsLayer(): GodsEyeLayerInstance {
 			godsEye.segments.map((s) => s.segmentId),
 			zoneRows.map((z) => [z.eventId, z.state, Array.isArray(z.ring) ? z.ring.length : 0]),
 			officer,
+			view ? [kindsSignature(view), events.map((e) => eventAlpha(e, view).toFixed(3))] : null,
 		]);
 		if (sig === lastSignature) return;
 
@@ -374,7 +397,8 @@ function createCorridorEventsLayer(): GodsEyeLayerInstance {
 		entityIds.length = 0;
 
 		try {
-			drawEvents(cesium, viewer, events, segmentMap, officer);
+			if (view) drawEventsV2(cesium, viewer, events, segmentMap, officer, view);
+			else drawEvents(cesium, viewer, events, segmentMap, officer);
 			lastSignature = sig; // only a complete draw is cached
 		} catch (err) {
 			// The ids drawn so far are tracked, so the next tick clears the
@@ -407,6 +431,180 @@ function createCorridorEventsLayer(): GodsEyeLayerInstance {
 		if (style === 'recommended') return state === 'active' ? 13 : 11;
 		if (style === 'alternate') return 3;
 		return state === 'active' ? 5 : 3.5;
+	}
+
+	/**
+	 * Chrome v2 (SPEC §2.4, §5.3): corridor events are VIOLET (--v-map-event)
+	 * — spines, zones and a marker with the event kind's glyph; a protected
+	 * movement's route is the convoy's TURQUOISE (--v-map-route). The
+	 * recommended spine wears a casing, alternates are dashed, a closed
+	 * event recedes; no stacked status words on the map (the RECOMMENDED tag
+	 * is the legacy chrome's). The time window and a selection dim them by
+	 * the view's rules; protected events never fade.
+	 */
+	function drawEventsV2(
+		cesium: CesiumGlobal,
+		viewer: CesiumViewer,
+		events: CorridorEvent[],
+		segmentMap: Map<number, SegmentGeometry>,
+		officer: boolean,
+		view: MapView,
+	) {
+		let spineCount = 0;
+		let recommended = 0;
+		let alternates = 0;
+		const drawn = new Set<string>();
+		const casingInk = mapInk('casing');
+		// a kind filter that leaves events out hides their spines, old routes and
+		// zones here and their markers in the canvas's pass (SPEC §5.3)
+		const lines = kindShown(view, 'event');
+		for (const ev of events) {
+			const live = ev.source !== 'offline-fixture';
+			const urn = `event:${ev.eventId}`;
+			const t = eventTime(ev);
+			const route = ev.eventKind === 'protected_movement';
+			const ink = mapInk(route ? 'route' : 'event');
+			const closed = ev.state === 'completed' || ev.state === 'cancelled';
+			const alpha = eventAlpha(ev, view) * (closed ? 0.4 : 1) * (live ? 1 : 0.5);
+			const title = displayText(ev.name, officer);
+			const describe = (what: string) =>
+				`${title}: ${ev.eventKind.replace(/_/g, ' ')}, ${ev.state}. ${what}${isEmulated(ev) ? ' Emulated.' : !live ? ' Offline preview.' : ''}`;
+			const styles = segmentStyles(ev);
+			for (const [segId, { style, label }] of lines ? styles : []) {
+				const seg = segmentMap.get(segId);
+				if (!seg || seg.coordinates.length < 2) continue;
+				spineCount++;
+				drawn.add(ev.eventId);
+				if (style === 'recommended') recommended++;
+				else if (style === 'alternate') alternates++;
+				const color = cesium.Color.fromCssColorString(inkAlpha(ink, alpha));
+				const material =
+					style === 'recommended' && cesium.PolylineOutlineMaterialProperty
+						? new cesium.PolylineOutlineMaterialProperty({
+								color,
+								outlineColor: cesium.Color.fromCssColorString(inkAlpha(casingInk, 0.85 * alpha)),
+								outlineWidth: 3.5, // both edges: a 3.5 px core in a 7 px casing
+							})
+						: style === 'alternate'
+							? new cesium.PolylineDashMaterialProperty({ color, dashLength: 12 })
+							: new cesium.ColorMaterialProperty(color);
+				const entity = viewer.entities.add({
+					id: `${CORRIDOR_EVENTS_PICK_PREFIX}spine-${ev.eventId}-${segId}`,
+					polyline: drapedPolyline(cesium, {
+						positions: groundPath(cesium, seg.coordinates),
+						width: style === 'recommended' ? 7 : style === 'alternate' ? 2 : 2.5,
+						material,
+						z: spineZ(style, live),
+					}),
+					description: describe(
+						`${style === 'recommended' ? 'Recommended route' : style === 'alternate' ? `Alternate route ${label}` : 'Route'}, segment ${segId}${
+							seg.roadName ? ` (${seg.roadName})` : ''
+						}.`,
+					),
+				});
+				entityIds.push(entity.id);
+			}
+			const current = new Set(styles.keys());
+			for (const old of live && lines ? (ev.routeHistory ?? []) : []) {
+				for (const segId of old.segmentIds) {
+					if (current.has(segId)) continue;
+					const seg = segmentMap.get(segId);
+					if (!seg || seg.coordinates.length < 2) continue;
+					current.add(segId);
+					const entity = viewer.entities.add({
+						id: `${CORRIDOR_EVENTS_PICK_PREFIX}old-${ev.eventId}-${segId}`,
+						polyline: drapedPolyline(cesium, {
+							positions: groundPath(cesium, seg.coordinates),
+							width: 1.5,
+							material: new cesium.PolylineDashMaterialProperty({
+								color: cesium.Color.fromCssColorString(inkAlpha(mapInk('marker'), 0.5 * alpha)),
+								dashLength: 10,
+							}),
+							z: DRAPE_Z.superseded,
+						}),
+						description: describe(`A superseded route, segment ${segId}: not the live corridor.`),
+					});
+					entityIds.push(entity.id);
+				}
+			}
+			const anchor = anchorOf(ev, segmentMap);
+			if (anchor) {
+				drawn.add(ev.eventId);
+				const meta: MarkerMeta = {
+					urn,
+					kind: 'event',
+					glyph: eventKindIcon(ev.eventKind),
+					shape: 'disc',
+					role: route ? 'route' : 'event',
+					cluster: true,
+					t,
+					label: [{ text: title.length > 40 ? `${title.slice(0, 39)}…` : title }],
+					labelWhen: 'hover',
+				};
+				const entity = viewer.entities.add({
+					id: `${CORRIDOR_EVENTS_PICK_PREFIX}mark-${ev.eventId}`,
+					position: ground(cesium, anchor[0], anchor[1]),
+					billboard: markerBillboard(cesium, meta),
+					description: describe(`${styles.size} route segments${ev.windowStart ? `, window from ${ev.windowStart}` : ''}.`),
+				});
+				tagMarker(entity, meta);
+				entityIds.push(entity.id);
+			}
+		}
+		const byId = new Map(events.map((e) => [e.eventId, e]));
+		const zoned = new Set<string>();
+		zoneCount = 0;
+		for (const z of lines ? zoneRows : []) {
+			const ev = byId.get(z.eventId);
+			if (!ev || zoned.has(z.eventId)) continue;
+			zoned.add(z.eventId);
+			const coords = ringToCoords(z.ring);
+			if (coords.length < 3) continue;
+			zoneCount++;
+			drawn.add(z.eventId);
+			const ink = mapInk(ev.eventKind === 'protected_movement' ? 'route' : 'event');
+			const alpha = eventAlpha(ev, view);
+			const description = `${displayText(ev.name, officer)}: the event's zone (${z.state}).`;
+			const fill = viewer.entities.add({
+				id: `${CORRIDOR_EVENTS_PICK_PREFIX}zone-${z.eventId}`,
+				polygon: drapedPolygon(cesium, {
+					positions: groundPath(cesium, coords),
+					material: cesium.Color.fromCssColorString(inkAlpha(ink, 0.15 * alpha)),
+					z: DRAPE_Z.zone,
+				}),
+				description,
+			});
+			entityIds.push(fill.id);
+			const closedRing = coords[0][0] === coords[coords.length - 1][0] && coords[0][1] === coords[coords.length - 1][1];
+			const rim = viewer.entities.add({
+				id: `${CORRIDOR_EVENTS_PICK_PREFIX}rim-${z.eventId}`,
+				polyline: drapedPolyline(cesium, {
+					positions: groundPath(cesium, closedRing ? coords : [...coords, coords[0]]),
+					width: 2,
+					material: cesium.Color.fromCssColorString(inkAlpha(ink, alpha)),
+					z: DRAPE_Z.zone,
+				}),
+				description,
+			});
+			entityIds.push(rim.id);
+		}
+		eventsDrawn = drawn.size;
+		const drawnRows = [...drawn].map((id) => byId.get(id)).filter((e): e is CorridorEvent => !!e);
+		const liveDrawn = drawnRows.filter((e) => e.source !== 'offline-fixture').length;
+		detail = {
+			live: liveDrawn,
+			preview: eventsDrawn - liveDrawn,
+			emulated: drawnRows.filter((e) => e.source !== 'offline-fixture' && isEmulated(e)).length,
+			active: drawnRows.filter((e) => e.source !== 'offline-fixture' && e.state === 'active').length,
+			spines: spineCount,
+			recommended,
+			alternates,
+		};
+		const offCanvas = events.length - eventsDrawn;
+		hint =
+			godsEye.segmentsFeed.status === 'ok'
+				? `${eventsDrawn} events on canvas (${liveDrawn} live) · ${spineCount} spine segments · ${zoneCount} zones${offCanvas > 0 ? ` · ${offCanvas} without geometry` : ''}`
+				: `segments ${godsEye.segmentsFeed.status} — ${events.length} events (no spines)`;
 	}
 
 	function drawEvents(
@@ -534,7 +732,7 @@ function createCorridorEventsLayer(): GodsEyeLayerInstance {
 						position: ground(cesium, c[0], c[1]),
 						label: clampedLabel(cesium, {
 							text: recommendedTag(ev),
-							font: '600 13px monospace',
+							font: canvasFont('600 13px var(--v-font-ui)'),
 							fillColor: actInk,
 							outlineColor: canvasInk,
 							outlineWidth: 3,
@@ -571,7 +769,7 @@ function createCorridorEventsLayer(): GodsEyeLayerInstance {
 					}),
 					label: clampedLabel(cesium, {
 						text: labelText(ev, officer),
-						font: live ? '13px monospace' : '12px monospace',
+						font: canvasFont(live ? '13px var(--v-font-ui)' : '12px var(--v-font-ui)'),
 						fillColor: labelInk,
 						outlineColor: canvasInk,
 						outlineWidth: 2,
@@ -691,6 +889,9 @@ function createCorridorEventsLayer(): GodsEyeLayerInstance {
 			void pollZones();
 			draw();
 		},
+		restyle() {
+			draw();
+		},
 		handlePick(pickId) {
 			return pickId.startsWith(CORRIDOR_EVENTS_PICK_PREFIX);
 		},
@@ -766,5 +967,6 @@ export const corridorEventsLayer: GodsEyeLayer = {
 	requiresKeyId: null,
 	pickPrefix: CORRIDOR_EVENTS_PICK_PREFIX,
 	defaultOn: true,
+	group: 'corridors',
 	create: createCorridorEventsLayer,
 };

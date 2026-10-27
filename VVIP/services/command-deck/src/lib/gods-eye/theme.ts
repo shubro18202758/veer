@@ -60,6 +60,17 @@ export function withAlpha(css: string, alpha: number): string {
 }
 
 /**
+ * A canvas font (Cesium label `font`, CanvasRenderingContext2D.font) written
+ * through the type tokens: canvas text cannot resolve var(), so the token's
+ * family list is substituted here — `canvasFont('600 13px var(--v-font-ui)')`
+ * → '600 13px Inter, -apple-system, …'. Without the token (no DOM) the
+ * generic family stands in.
+ */
+export function canvasFont(css: string): string {
+	return css.replace(/var\(\s*(--v-font-(?:ui|display))\s*\)/g, (_m, name: string) => cssVar(name) ?? 'sans-serif');
+}
+
+/**
  * Resolve a token with a caller-supplied Cesium fallback colour object —
  * used only where Cesium requires a Color instance and null is impossible
  * (e.g. entity outlines). The fallback is a Cesium default, never a new

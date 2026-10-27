@@ -15,11 +15,26 @@ Ethics rails (C6) enforced by construction:
       (``GJ27EM•••1``); the raw plate travels only in ``props.plate`` so
       the deck can unmask it for a named duty officer;
     * no person/face/frame field exists in either record shape;
-    * every record carries ``source`` live|emulated — the badge cannot be
-      dropped by a consumer that ignores props.  Records about an
-      adaptive / brain subject inherit the badge of the corridor events
+    * every record carries ``source`` live|emulated|osint — the badge
+      cannot be dropped by a consumer that ignores props.  Records about
+      an adaptive / brain subject inherit the badge of the corridor events
       the subject denotes (:class:`ResolvedSubjects`), so one emulated
-      scenario never carries mixed badges.
+      scenario never carries mixed badges;
+    * OSINT (contract C-C extension, C-T): ``osint_event`` and ``place``
+      entities and the ``osint`` feed rows are ALWAYS ``source: "osint"``,
+      and every record carries ``verification_state`` and ``credibility``
+      (null for non-OSINT rows), so a reported situation can never pass
+      for live data.  The two coercion points below (``city_entity`` and
+      ``feed_item``) accept exactly live|emulated|osint; anything else
+      still reads ``live`` (the pre-OSINT contract).  A corridor event an
+      officer promoted from OSINT (``metadata.source == "osint"`` or
+      ``source_kind`` 'osint') is badged ``osint`` too.
+
+The oracle core never imports ``osint_*`` (X20): the OSINT vocabulary this
+module needs (verification states, the read fragments over the ``osint``
+schema) is local, and every ``osint.*`` / ``decision.*`` read is guarded
+by the cached relation probe (an unmigrated database serves the pre-OSINT
+snapshot and feed unchanged).
 """
 
 from __future__ import annotations
@@ -39,7 +54,9 @@ from typing import Any
 # Vocabulary (contract C-C)
 # ---------------------------------------------------------------------------
 
-#: Kinds GET /api/v1/city/entities can return.
+#: Kinds GET /api/v1/city/entities can return.  ``osint_event`` (a
+#: surfaced reported situation, uuid id) and ``place`` (a gazetteer place
+#: linked to one, slug id) are the C-C extension of contract C-T.
 ENTITY_KINDS: tuple[str, ...] = (
     "event",
     "vehicle",
@@ -51,6 +68,9 @@ ENTITY_KINDS: tuple[str, ...] = (
     "dispatch",
     "recommendation",
     "anomaly",
+    # OSINT (C-T / C-C extension): places and situations, never persons
+    "osint_event",
+    "place",
 )
 
 #: Kinds GET /api/v1/city/entity/{kind}/{id} resolves (``segment`` is
@@ -58,7 +78,8 @@ ENTITY_KINDS: tuple[str, ...] = (
 #: of the snapshot: the flow layer already draws every segment).
 DOSSIER_KINDS: tuple[str, ...] = ENTITY_KINDS + ("segment",)
 
-#: FeedItem.kind values (contract C-C).
+#: FeedItem.kind values (contract C-C).  ``osint``: situations surfaced,
+#: promotions by a named officer, decision-support decisions (C-T).
 FEED_KINDS: tuple[str, ...] = (
     "event",
     "enforcement",
@@ -67,17 +88,55 @@ FEED_KINDS: tuple[str, ...] = (
     "signals",
     "ama",
     "brain",
+    "osint",
 )
 
 BANDS: tuple[str, ...] = ("GREEN", "AMBER", "RED", "BLACK")
 
-_UUID_KINDS = frozenset({"event", "vehicle", "sighting", "dispatch", "recommendation"})
+#: The ``source`` badge every record carries (contract C-C, widened by C-T):
+#: anything outside this set is coerced to ``live`` (the pre-OSINT rule).
+SOURCE_BADGES: tuple[str, ...] = ("live", "emulated", "osint")
+
+#: The honest labels (migration 021 CHECKs; a LOCAL copy of
+#: ``traffic_oracle.events.VERIFICATION_STATES`` — events imports this
+#: module, so it cannot be imported here; tests pin the two equal).
+VERIFICATION_STATES: tuple[str, ...] = (
+    "EMULATED",
+    "SIMULATED",
+    "UNVERIFIED-OSINT",
+    "NEWS-REPORTED",
+    "OFFICIAL-VERIFIED",
+    "CONFIRMED",
+)
+
+#: The words a person reads for each verification state (the deck's X2
+#: ProvenanceTag labels, EN) — the feed's text uses them.
+VERIFICATION_LABELS: dict[str, str] = {
+    "EMULATED": "Emulated",
+    "SIMULATED": "Simulated",
+    "UNVERIFIED-OSINT": "Unverified OSINT",
+    "NEWS-REPORTED": "News-reported",
+    "OFFICIAL-VERIFIED": "Official, verified",
+    "CONFIRMED": "Confirmed by officer",
+}
+
+#: What every surface says about a news- or social-tier source: its raw URL
+#: is never stored or shown (it can carry a person's name in its slug —
+#: orchestrator decision on OS-1's escalation); the publisher is shown.
+SOURCE_LINK_WITHHELD = "source link withheld — may name a person"
+
+_UUID_KINDS = frozenset(
+    {"event", "vehicle", "sighting", "dispatch", "recommendation", "osint_event"}
+)
 _INT_KINDS = frozenset({"junction", "segment", "anomaly"})
 _SLUG_KINDS = frozenset({"camera", "unit", "convoy"})
 
 #: Slug ids (camera_id, unit_id, convoy movement_id): bounded, no spaces,
 #: no path or query metacharacters.
 _SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,63}$")
+
+#: A place id (C-T): lower-case slug of a gazetteer place.
+PLACE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 
 #: Lower bound used when a caller gives no ``since``: the epoch (every
 #: source filters ``t > since``; a scoped audit wants the whole history).
@@ -107,11 +166,39 @@ def parse_entity_id(kind: str, raw: str) -> str | int:
         if not _SLUG_RE.fullmatch(str(raw)):
             raise ValueError(f"{kind} id must match {_SLUG_RE.pattern}")
         return str(raw)
+    if kind == "place":
+        if not PLACE_SLUG_RE.fullmatch(str(raw)):
+            raise ValueError(f"place id must match {PLACE_SLUG_RE.pattern}")
+        return str(raw)
     raise ValueError(f"unknown kind {kind!r}")
 
 
 def is_slug(value: Any) -> bool:
     return isinstance(value, str) and bool(_SLUG_RE.fullmatch(value))
+
+
+def name_slug(name: Any) -> str:
+    """A place name as a lower-case ASCII slug (``Karnavati Club (SG
+    Highway)`` → ``karnavati_club_sg_highway``); '' when nothing is left."""
+    text = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def place_slug(canonical_name: Any, gaz_id: Any) -> str:
+    """The ``place`` entity id of one gazetteer entry (C-T): its name slug
+    plus its ``gaz_id`` (``karnavati_club_sg_highway_106``) — unique and
+    stable without reading the rest of the gazetteer, always inside
+    :data:`PLACE_SLUG_RE`."""
+    suffix = f"_{int(gaz_id)}"
+    base = name_slug(canonical_name)[: 64 - len(suffix)].rstrip("_")
+    return f"{base}{suffix}" if base else f"place{suffix}"
+
+
+def place_gaz_id(slug: str) -> int | None:
+    """The ``gaz_id`` a :func:`place_slug` ends with (None for a bare name
+    slug, which the dossier resolves by name)."""
+    m = re.search(r"_(\d{1,18})$", slug)
+    return int(m.group(1)) if m else None
 
 
 def as_uuid(value: Any) -> _uuid.UUID | None:
@@ -252,18 +339,109 @@ def valid_lonlat(lon: Any, lat: Any) -> tuple[float, float] | None:
 # ---------------------------------------------------------------------------
 
 _MASK = "•••"
-#: Indian registration marks inside free text: state code, RTO number,
-#: optional series letters, 4-digit number (GJ27EM9001, GJ 27 EM 9001,
-#: GJ-01-AB-1234).  Only the 4-digit number is masked, last digit kept.
-_PLATE_IN_TEXT_RE = re.compile(
-    r"\b([A-Z]{2}[ -]?\d{1,2}[ -]?(?:[A-Z]{1,3}[ -]?)?)(\d{4})\b"
+
+#: The Indian state and union-territory codes a registration mark starts
+#: with — the deck's ``workspace/mask.ts`` ``STATE_CODES`` (39, incl. TG,
+#: Telangana's code since 2024; OR and DN are older codes still on the
+#: road).  Any other two letters start no mark under the any-case rule;
+#: an UPPER-case shape still masks by the superset pass (``_PLATE_UPPER_RE``).
+STATE_CODES: tuple[str, ...] = (
+    "AN", "AP", "AR", "AS", "BR", "CG", "CH", "DD", "DL", "DN", "GA", "GJ", "HP", "HR",
+    "JH", "JK", "KA", "KL", "LA", "LD", "MH", "ML", "MN", "MP", "MZ", "NL", "OD", "OR",
+    "PB", "PY", "RJ", "SK", "TG", "TN", "TR", "TS", "UK", "UP", "WB",
 )
+
+#: Up to three separator characters between the parts of a mark: a space
+#: (JavaScript's ``\s`` set, so the deck and the oracle read the same
+#: text the same way), a dot, a dash, a slash or an underscore.
+_MARK_SEP = (
+    "[\t\n\v\f\r    -     　﻿"
+    r".\-/_]{0,3}"
+)
+
+#: Indian registration marks inside free text, in ANY case and spelling
+#: (``GJ27EM9001``, ``gj27em9001``, ``GJ 27 EM 9001``, ``GJ-01-AB-1234``,
+#: ``GJ.27.EM.9001``, ``GJ/27/EM/9001``, ``GJ_27_EM_9001``): group 1 the
+#: head (kept), 2 the state code, 3 the optional series, 4 the separator
+#: after it, 5 the 4-digit number (masked, its last digit kept).  ASCII
+#: semantics (``\b``, ``\d``, case folding), as the deck's regex has.
+_PLATE_IN_TEXT_RE = re.compile(
+    r"\b((" + "|".join(STATE_CODES) + r")" + _MARK_SEP + r"\d{1,2}" + _MARK_SEP
+    + r"(?:([a-z]{1,3})(" + _MARK_SEP + r"))?)(\d{4})\b",
+    re.IGNORECASE | re.ASCII,
+)
+
+#: The pre-change rule, kept as a SUPERSET pass (fail closed): an UPPER-case
+#: mark shape whatever its first two letters (``XY12AB1234``), as the oracle
+#: always masked it.  The watchlist (``vehicles.plates.normalize_plate``)
+#: accepts any two letters, so a plate it holds never leaves the oracle raw
+#: in a reason or a title; upper-case text masks exactly as before this rule
+#: change (the deck's ``mask.ts`` leaves a non-state-code shape alone, so the
+#: oracle masks a superset of what it does).  ASCII semantics, like the any-case
+#: rule and the deck's regex (FIX-AUDIT-A): without ``re.ASCII`` Python's
+#: ``\d`` takes Arabic-Indic and other Unicode digits and ``\b`` treats them as
+#: word characters, so a mark glued to one (``WS 21019١٢``) stayed RAW here
+#: while the deck masked it (and ``DF 5941١٢`` diverged the other way).
+_PLATE_UPPER_RE = re.compile(
+    r"\b([A-Z]{2}[ -]?\d{1,2}[ -]?(?:[A-Z]{1,3}[ -]?)?)(\d{4})\b", re.ASCII
+)
+
+#: A uuid (a URN's id) is never a mark: it is held out of the mask's reach.
+_UUID_IN_TEXT_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE | re.ASCII,
+)
+
+#: A series that spells a month (any case).
+_MONTH_SERIES = frozenset(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+)
+
+_HELD = re.compile("\x00(\\d+)\x00")
+
+
+def _is_date_shape(state: str, series: str | None, sep_after: str | None) -> bool:
+    """A candidate that is a DATE, not a mark: its series spells a month and a
+    separator stands before the number ("As of 24 Oct 2026"), unless the
+    state code and the series are both upper case — a mark as the oracle and
+    operators write it ("GJ 01 MAY 1234" masks; orchestrator decision, the
+    deck's ``isDateShape``).  A series glued to its number is never a date."""
+    if not series or not sep_after or series.lower() not in _MONTH_SERIES:
+        return False
+    return not (state == state.upper() and series == series.upper())
+
+
+def _mask_mark(m: re.Match[str]) -> str:
+    if _is_date_shape(m.group(2), m.group(3), m.group(4)):
+        return m.group(0)
+    return m.group(1) + _MASK + m.group(5)[-1]
 
 
 def mask_plates_in_text(text: str | None) -> str:
+    """Every registration mark in ``text`` masked (``GJ27EM•••1``), in any case
+    and spelling — the deck's ``workspace/mask.ts`` rule: a mark starts with a
+    real state/UT code (:data:`STATE_CODES`); dates ("24 Oct 2026", "on 12 oct
+    2026"), times, years and uuids are left alone.  Then the pre-change
+    upper-case rule (:data:`_PLATE_UPPER_RE`) as a superset, so an upper-case
+    mark masks exactly as it always did, a real state code or not.  Text that
+    holds no mark comes back unchanged (the same string).  (The placeholders
+    that hold uuids out are NUL-delimited; Postgres TEXT cannot hold NUL.)"""
     if not text:
         return ""
-    return _PLATE_IN_TEXT_RE.sub(lambda m: m.group(1) + _MASK + m.group(2)[-1], text)
+    if _PLATE_IN_TEXT_RE.search(text) is None and _PLATE_UPPER_RE.search(text) is None:
+        return text
+    held: list[str] = []
+
+    def hold(m: re.Match[str]) -> str:
+        held.append(m.group(0))
+        return f"\x00{len(held) - 1}\x00"
+
+    s = _UUID_IN_TEXT_RE.sub(hold, text)
+    out = _PLATE_IN_TEXT_RE.sub(_mask_mark, s)
+    out = _PLATE_UPPER_RE.sub(lambda m: m.group(1) + _MASK + m.group(2)[-1], out)
+    if held:
+        out = _HELD.sub(lambda m: held[int(m.group(1))] if int(m.group(1)) < len(held) else "", out)
+    return text if out == text else out
 
 
 def mask_plate(plate: str | None) -> str | None:
@@ -284,23 +462,94 @@ def mask_plate(plate: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+#: Producer tags of a synthetic or simulated feed (HON-11): never a live badge.  The C-C badge vocabulary is
+#: live|emulated|osint, so a synthetic feed's record is badged ``emulated`` (not live) and keeps its
+#: ``data_quality`` / ``feed_quality`` 'synthetic' prop for the SIMULATED wording.
+_SYNTHETIC_TAG_RE = re.compile(r"synthetic|simulat|(?:^|[\s_\-.])sim(?:$|[\s_\-.])")
+
+
 def label_source(raw: Any) -> str:
-    """Map a producer source tag to the C-C badge: emulated|live."""
+    """Map a producer source tag to the C-C badge: emulated|osint|live.  An emulated tag and a synthetic or
+    simulated feed's tag ('synthetic', 'edge-synthetic', 'simulated', 'sim_feed', ...) are ``emulated`` — never
+    live (HON-11)."""
     if raw is None:
         return "live"
-    return "emulated" if "emulat" in str(raw).lower() else "live"
+    low = str(raw).strip().lower()
+    if "emulat" in low or _SYNTHETIC_TAG_RE.search(low):
+        return "emulated"
+    if low == "osint" or low.startswith("osint-") or low.startswith("osint_"):
+        return "osint"
+    return "live"
 
 
-def event_source(metadata: Mapping[str, Any] | None) -> str:
+#: The event metadata key the oracle stamps when an event's authorising
+#: evidence is emulated (HON-4: a pursuit of an emulated vehicle, opened
+#: from an emulated sighting) — whoever opened it, the event is EMULATED.
+EVIDENCE_SOURCE_KEY = "evidence_source"
+
+
+def event_source(metadata: Mapping[str, Any] | None, source_kind: Any = None) -> str:
     """Corridor events created by the emulator (or its living city) are
-    EMULATED; operator- and brain-created events are live."""
+    EMULATED, and so is an event whose authorising evidence is emulated
+    (``metadata.evidence_source``, stamped by the oracle — HON-4); an event a
+    named officer promoted from a reported OSINT situation
+    (``metadata.source == "osint"``, or the 021 ``source_kind`` 'osint') is
+    OSINT; operator- and brain-created events are live."""
     meta = metadata or {}
     src = str(meta.get("source") or "").lower()
     if src == "event-emulator" or "emulat" in src:
         return "emulated"
+    if "emulat" in str(meta.get(EVIDENCE_SOURCE_KEY) or "").lower():
+        return "emulated"
     if str(meta.get("mode") or "").lower() == "living_city":
         return "emulated"
+    if src == "osint" or str(source_kind or "").lower() == "osint":
+        return "osint"
     return "live"
+
+
+#: An FIR reference in served text ("FIR 4401/2026", "FIR No. 12/2026").
+_FIR_RE = re.compile(r"(?<![A-Za-z])(?<!demo )FIR(?=\s+(?:No\.?\s*)?[A-Za-z0-9]*\d)")
+
+
+def mark_demo_fir(value: Any) -> Any:
+    """``value`` with every FIR reference in its strings marked as a demo
+    reference ("demo FIR 4401/2026"), recursively (HON-4).  Applied to every
+    EMULATED record the oracle serves: an FIR on an emulated vehicle, its
+    sightings or a pursuit of it is a scripted demo reference, never a real
+    case.  Text without an FIR is returned unchanged (the same object)."""
+    if isinstance(value, str):
+        return _FIR_RE.sub("demo FIR", value) if "FIR" in value else value
+    if isinstance(value, Mapping):
+        return {k: mark_demo_fir(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [mark_demo_fir(v) for v in value]
+    return value
+
+
+def source_badge(source: Any) -> str:
+    """The coercion rule of both record constructors: live|emulated|osint,
+    anything else ``live`` (consumers already tolerate the three)."""
+    return source if source in SOURCE_BADGES else "live"
+
+
+def verification_state_of(value: Any) -> str | None:
+    """A verification state (021 vocabulary) or None — never a free string."""
+    return value if value in VERIFICATION_STATES else None
+
+
+def credibility_of(value: Any) -> float | None:
+    """A credibility in [0, 1] (4 decimals) or None."""
+    f = finite(value)
+    if f is None or not 0.0 <= f <= 1.0:
+        return None
+    return round(f, 4)
+
+
+def verification_label(state: Any) -> str:
+    """The words for a verification state ("News-reported"); "Open-source"
+    when there is none (the X2 ProvenanceTag fallback)."""
+    return VERIFICATION_LABELS.get(str(state), "Open-source")
 
 
 # ---------------------------------------------------------------------------
@@ -322,13 +571,24 @@ def city_entity(
     t: datetime | None = None,
     links: Iterable[str] = (),
     props: Mapping[str, Any] | None = None,
+    verification_state: str | None = None,
+    credibility: float | None = None,
 ) -> dict:
     """One CityEntity.  lon/lat are None only for dossier records of
-    entities with no known position — the snapshot never emits those."""
+    entities with no known position — the snapshot never emits those.
+
+    ``source`` is coerced to live|emulated|osint (C-C coercion point one);
+    ``verification_state`` and ``credibility`` (C-T) are null unless the
+    record is about a reported situation."""
     point = valid_lonlat(lon, lat)
     body = dict(props or {})
     if t is not None and (utc(t) - now).total_seconds() > 30.0:
         body.setdefault("future_dated", True)
+    badge = source_badge(source)
+    if badge == "emulated":
+        # HON-4: an FIR on an emulated record is a demo reference, said so
+        label = mark_demo_fir(label)
+        body = mark_demo_fir(body)
     return {
         "urn": urn(kind, ident),
         "kind": kind,
@@ -338,7 +598,9 @@ def city_entity(
         "lat": round(point[1], 6) if point else None,
         "state": state,
         "band": band if band in BANDS else None,
-        "source": source if source in ("live", "emulated") else "live",
+        "source": badge,
+        "verification_state": verification_state_of(verification_state),
+        "credibility": credibility_of(credibility),
         "t": iso_z(t),
         "age_sec": age_sec(t, now),
         "links": dedupe(links),
@@ -358,9 +620,18 @@ def feed_item(
     source: str = "live",
     severity: str = "info",
     props: Mapping[str, Any] | None = None,
+    verification_state: str | None = None,
+    credibility: float | None = None,
 ) -> dict:
     """One FeedItem (contract C-C).  ``text`` is plate-masked here, once,
-    so no source can forget to."""
+    so no source can forget to.  ``source`` is coerced to
+    live|emulated|osint (C-C coercion point two); ``verification_state``
+    and ``credibility`` (C-T) are null for non-OSINT rows.  An emulated
+    row's FIR reference is marked a demo reference (HON-4)."""
+    badge = source_badge(source)
+    if badge == "emulated":
+        text = mark_demo_fir(text)
+        props = mark_demo_fir(dict(props or {}))
     return {
         "id": item_id,
         "t": iso_z(t),
@@ -369,7 +640,9 @@ def feed_item(
         "actor": actor,
         "actor_kind": actor_kind if actor_kind in ("human", "machine", "system") else "system",
         "text": mask_plates_in_text(text)[:600],
-        "source": source if source in ("live", "emulated") else "live",
+        "source": badge,
+        "verification_state": verification_state_of(verification_state),
+        "credibility": credibility_of(credibility),
         "severity": severity if severity in ("info", "warn", "critical") else "info",
         "props": dict(props or {}),
     }
@@ -607,6 +880,157 @@ def reset_relation_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
+# OSINT (021) and decision-support (022) stores — every read is guarded
+# ---------------------------------------------------------------------------
+
+#: Every relation an OSINT read touches (migration 021).
+OSINT_RELATIONS: tuple[str, ...] = (
+    "osint.resolved_events",
+    "osint.event_sources",
+    "osint.raw_signals",
+    "osint.geocodes",
+    "osint.gazetteer",
+)
+
+#: Every relation a decision-support summary reads (migration 022).
+DECISION_RELATIONS: tuple[str, ...] = ("decision.decision_support", "decision.coa")
+
+#: The decision log the feed narrates (022).
+DECISION_LOG_RELATION = "decision.dss_decision_log"
+
+#: Migration 021's provenance columns on events.corridor_events (probed:
+#: the readers pick their SQL by it, exactly like 015 / 018).
+EVENTS_TABLE = "events.corridor_events"
+EVENT_PROVENANCE_COLUMN = "verification_state"
+
+
+async def _relations_present(conn: Any, names: Iterable[str]) -> bool:
+    """Every relation exists (relation_exists' 30-s cache, so ≤ 60 s).  A
+    probe that fails answers False: an unreadable store is absent, and the
+    pre-OSINT answer is served instead of an error."""
+    try:
+        for name in names:
+            if not await relation_exists(conn, name):
+                return False
+    except Exception:  # noqa: BLE001 — a probe never takes a reader down
+        return False
+    return True
+
+
+async def osint_store_present(conn: Any) -> bool:
+    """The 021 ``osint`` schema is in (guard of every ``osint.*`` read)."""
+    return await _relations_present(conn, OSINT_RELATIONS)
+
+
+async def decision_store_present(conn: Any) -> bool:
+    """The 022 ``decision`` schema is in (guard of every ``decision.*`` read)."""
+    return await _relations_present(conn, DECISION_RELATIONS)
+
+
+async def event_provenance_supported(conn: Any) -> bool:
+    """events.corridor_events carries 021's provenance columns."""
+    return await column_exists(conn, EVENTS_TABLE, EVENT_PROVENANCE_COLUMN)
+
+
+#: The columns of one ``osint.resolved_events`` row (alias ``r``) every
+#: OSINT reader selects (the OsintEventRow fields plus the lifecycle).
+OSINT_EVENT_COLUMNS = (
+    "r.osint_event_id, r.fused_event_id, r.event_class, r.correlated_classes, r.subtype, "
+    "r.veer_event_kind, r.veer_incident_kind, r.label, r.summary, r.rep_lon, r.rep_lat, "
+    "r.toponym, r.segment_id, r.junction_id, r.geocode_confidence, r.area_level, "
+    "r.window_start, r.window_end, r.credibility, r.verification_state, r.source_count, "
+    "r.source_tiers, r.independent_publishers, r.cross_type_corroborated, r.attach_novel, "
+    "r.corroborates_live_urn, r.second_order, r.labels, r.promoted_event_id, r.is_event, "
+    "r.held_reason, r.superseded_by, r.created_at, r.updated_at"
+)
+
+#: A SURFACED situation (C-T; the rules OsintEventRow enforces): an event,
+#: not superseded, located in the city, with its Veer kind, never general
+#: news and never a single social source (aggregate-only rule).  Held
+#: situations are counts only — no reader turns one into an entity or row.
+OSINT_SURFACED_SQL = (
+    "r.is_event AND r.superseded_by IS NULL AND r.rep_lon IS NOT NULL "
+    "AND r.rep_lat IS NOT NULL AND r.veer_event_kind IS NOT NULL "
+    "AND r.event_class <> 'general_news' "
+    "AND NOT (r.source_tiers <@ ARRAY['social_unverified']::text[] AND r.source_count < 2)"
+)
+
+#: The C-Q provenance of one situation (alias ``r``) over the member signals
+#: it STANDS ON: the feeds, the publishers (outlet domains or communities,
+#: never a person), how many news/social links are withheld (their raw URL
+#: is never stored), and the primary member's geocoding method.  A CONTEXT
+#: member (a district alert attached to a point situation; source role
+#: 'context', migration 023) is never counted there — it is context, never
+#: corroboration — and is listed apart: ``context_publishers`` and whether
+#: one of them is an official alert (``context_official``).
+OSINT_PROVENANCE_COLUMNS = (
+    "p.source_feeds, p.publishers, p.links_withheld, p.geocoder, p.context_publishers, "
+    "p.context_official"
+)
+OSINT_PROVENANCE_LATERAL = (
+    "LEFT JOIN LATERAL (SELECT array_agg(DISTINCT s.source) FILTER (WHERE es.role <> 'context') "
+    "AS source_feeds, array_agg(DISTINCT s.publisher) FILTER (WHERE s.publisher IS NOT NULL "
+    "AND es.role <> 'context') AS publishers, count(DISTINCT s.signal_id) FILTER (WHERE "
+    "s.url IS NULL AND s.source_tier <> 'official' AND es.role <> 'context') AS links_withheld, "
+    "(array_agg(g.method ORDER BY (es.role = 'primary') DESC, g.confidence DESC NULLS LAST, "
+    "es.signal_id) FILTER (WHERE g.method IS NOT NULL AND es.role <> 'context'))[1] AS geocoder, "
+    "array_agg(DISTINCT s.publisher) FILTER (WHERE s.publisher IS NOT NULL AND es.role = "
+    "'context') AS context_publishers, COALESCE(bool_or(s.source_tier = 'official') FILTER "
+    "(WHERE es.role = 'context'), FALSE) AS context_official FROM osint.event_sources es JOIN "
+    "osint.raw_signals s ON s.signal_id = es.signal_id LEFT JOIN osint.geocodes g ON "
+    "g.signal_id = es.signal_id WHERE es.osint_event_id = r.osint_event_id) p ON TRUE"
+)
+
+#: How many CONTEXT members a situation (alias ``r``) has — the scalar
+#: subquery the feed's surfaced row selects (``city/feed.py``, FIX-C) and
+#: the snapshot's ``osint_event`` entity carries as ``props.context_members``
+#: (FIX-AUDIT-A): C-T keeps ``source_count`` == every member, context
+#: included, so the REPORTS behind a situation are ``source_count`` minus
+#: this count, counted at the source — never inferred from the distinct,
+#: capped ``context_publishers`` list (two context members of one
+#: publisher are two members).
+OSINT_CONTEXT_MEMBERS_SQL = (
+    "(SELECT count(*) FROM osint.event_sources es WHERE es.osint_event_id "
+    "= r.osint_event_id AND es.role = 'context') AS context_members"
+)
+
+#: What a surface says about a situation's context members (C-Q): an area
+#: alert in effect there, never a corroborating source.
+OSINT_CONTEXT_NOTE = "District warning in effect"
+OSINT_CONTEXT_REPORT_NOTE = "District-level report in effect"
+
+
+def osint_provenance(row: Mapping[str, Any]) -> dict:
+    """``{source_feeds, publishers, geocoder, geocode_confidence,
+    links_withheld, link_note}`` (C-Q extension) from a row carrying
+    :data:`OSINT_PROVENANCE_COLUMNS` — plus ``context_publishers`` and
+    ``context_note`` when the situation has context members (an area alert
+    in effect there: listed apart, never counted as a source)."""
+    get = getattr(row, "get", None)
+
+    def field(name: str) -> Any:
+        return get(name) if callable(get) else None
+
+    withheld = int(field("links_withheld") or 0)
+    out = {
+        "source_feeds": sorted({str(s) for s in (field("source_feeds") or []) if s}),
+        "publishers": sorted({str(p) for p in (field("publishers") or []) if p})[:32],
+        "geocoder": field("geocoder"),
+        "geocode_confidence": credibility_of(field("geocode_confidence")),
+        "links_withheld": withheld,
+        "link_note": SOURCE_LINK_WITHHELD if withheld else None,
+    }
+    # additive, only when the situation has context members: listed apart, never as a source
+    context = sorted({str(p) for p in (field("context_publishers") or []) if p})[:8]
+    if context:
+        out["context_publishers"] = context
+        out["context_note"] = (
+            OSINT_CONTEXT_NOTE if field("context_official") else OSINT_CONTEXT_REPORT_NOTE
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Valkey: bounded prefix scan + batched MGET (one round trip per 100 keys)
 # ---------------------------------------------------------------------------
 
@@ -694,10 +1118,14 @@ class ResolvedSubjects:
     def source_of(self, subject_id: Any) -> str:
         """``emulated`` when ANY event the subject denotes is emulated (an
         emulated scenario's band transitions, parameter publishes and
-        brain decisions are badged like the scenario itself); ``live``
-        otherwise, including subjects that denote no corridor event."""
-        emulated = any(self.sources.get(e) == "emulated" for e in self.events_of(subject_id))
-        return "emulated" if emulated else "live"
+        brain decisions are badged like the scenario itself); else
+        ``osint`` when any is an event promoted from a reported OSINT
+        situation (it never passes for live); ``live`` otherwise,
+        including subjects that denote no corridor event."""
+        badges = {self.sources.get(e) for e in self.events_of(subject_id)}
+        if "emulated" in badges:
+            return "emulated"
+        return "osint" if "osint" in badges else "live"
 
 
 async def resolve_subjects(conn: Any, subject_ids: Iterable[Any]) -> ResolvedSubjects:
@@ -744,15 +1172,34 @@ def subject_urns(
 
 __all__ = [
     "BANDS",
+    "DECISION_LOG_RELATION",
+    "DECISION_RELATIONS",
     "DISPLAY_GEOM_COLUMN",
     "DOSSIER_KINDS",
     "ENTITY_KINDS",
     "EPOCH",
+    "EVENTS_TABLE",
+    "EVENT_PROVENANCE_COLUMN",
     "FEED_KINDS",
+    "OSINT_CONTEXT_MEMBERS_SQL",
+    "OSINT_CONTEXT_NOTE",
+    "OSINT_CONTEXT_REPORT_NOTE",
+    "OSINT_EVENT_COLUMNS",
+    "OSINT_PROVENANCE_COLUMNS",
+    "OSINT_PROVENANCE_LATERAL",
+    "OSINT_RELATIONS",
+    "OSINT_SURFACED_SQL",
+    "PLACE_SLUG_RE",
     "ROUTES_SUPERSEDE_COLUMN",
     "ROUTES_TABLE",
     "SEGMENTS_TABLE",
+    "EVIDENCE_SOURCE_KEY",
+    "SOURCE_BADGES",
+    "SOURCE_LINK_WITHHELD",
+    "STATE_CODES",
     "SQL_LAWFUL_READ",
+    "VERIFICATION_LABELS",
+    "VERIFICATION_STATES",
     "ResolvedSubjects",
     "actor_kind_of",
     "after_wire_ms",
@@ -763,8 +1210,11 @@ __all__ = [
     "city_entity",
     "clean_text",
     "column_exists",
+    "credibility_of",
+    "decision_store_present",
     "dedupe",
     "display_geom_supported",
+    "event_provenance_supported",
     "event_source",
     "feed_item",
     "find_nul",
@@ -774,23 +1224,32 @@ __all__ = [
     "iso_z",
     "json_doc",
     "label_source",
+    "mark_demo_fir",
     "mask_plate",
     "mask_plates_in_text",
     "mget_values",
+    "name_slug",
     "named_actor",
+    "osint_provenance",
+    "osint_store_present",
     "parse_bbox",
     "parse_entity_id",
     "parse_kinds",
     "parse_ts",
+    "place_gaz_id",
+    "place_slug",
     "relation_exists",
     "reset_relation_cache",
     "resolve_subjects",
     "routes_supersede_supported",
     "scan_keys",
     "scan_mget",
+    "source_badge",
     "subject_key",
     "subject_urns",
     "urn",
     "utc",
     "valid_lonlat",
+    "verification_label",
+    "verification_state_of",
 ]

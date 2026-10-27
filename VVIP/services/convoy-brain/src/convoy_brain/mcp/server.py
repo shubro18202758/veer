@@ -39,13 +39,20 @@ import asyncio
 import json
 import math
 import re
+import time
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import httpx
 import structlog
+
+from convoy_brain.config import DEFAULT_TRAFFIC_ORACLE_URL
+from convoy_brain.dss import strategy_prior
+
+if TYPE_CHECKING:  # pragma: no cover - annotation only
+    from convoy_brain.decider import DeciderBrain
 
 logger = structlog.get_logger(__name__)
 
@@ -54,16 +61,28 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Kinds GET /api/v1/city/entities serves (traffic-oracle city/common.py).
+#: ``osint_event`` (a surfaced reported situation, uuid id) and ``place``
+#: (a gazetteer place linked to one, slug id) are the C-T / C-C extension —
+#: lockstep-pinned by test_mcp_vocab.py against the oracle's source.
 _CITY_ENTITY_KINDS_DEF = (
     "event", "vehicle", "sighting", "camera", "junction", "unit", "convoy",
     "dispatch", "recommendation", "anomaly",
+    # OSINT (C-T / C-C extension): places and situations, never persons
+    "osint_event", "place",
 )
-#: FeedItem.kind values (contract C-C).
-_CITY_FEED_KINDS_DEF = ("event", "enforcement", "anpr", "dispatch", "signals", "ama", "brain")
-#: Canvas layer ids (deck gods-eye/layers/index.ts, plus WP-17's 3D tiles).
+#: FeedItem.kind values (contract C-C): ``osint`` is the situations surfaced,
+#: the promotions a named officer made and the decision-support decisions.
+_CITY_FEED_KINDS_DEF = (
+    "event", "enforcement", "anpr", "dispatch", "signals", "ama", "brain",
+    "osint",
+)
+#: Canvas layer ids (deck gods-eye/layers/index.ts, plus WP-17's 3D tiles
+#: and the OSINT layers of slice 7).
 _CANVAS_LAYERS_DEF = (
     "events", "flow", "traces", "enforcement", "signals", "units", "dispatch",
     "convoy", "cameras", "anomalies", "photoreal-3d",
+    # OSINT (C-T / C-C extension)
+    "osint", "places",
 )
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
@@ -71,8 +90,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "predict_traffic_flow",
         "description": (
             "Predict traffic speed and congestion for road segments at future time "
-            "horizons (T+5, T+10, T+15, T+30 minutes). Uses a DSTGAT spatio-temporal "
-            "graph attention network via ONNX inference."
+            "horizons (T+5, T+10, T+15, T+30 minutes). The oracle's forecaster ladder "
+            "answers — a foundation model, the DSTGAT network or the heuristic rung, "
+            "whichever is available; 'provenance.rung' names the rung that answered and "
+            "'provenance.simulated_feed' whether the inputs were the SIMULATED feed. "
+            "segment_ids must come from a tool result or the operator's message."
         ),
         "inputSchema": {
             "type": "object",
@@ -195,8 +217,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "predict_eta",
         "description": (
-            "Predict estimated travel time for a convoy route using gradient-boosted "
-            "regression. Returns ETA in seconds."
+            "Estimate travel time for a route. Returns ETA in seconds and 'model': the "
+            "trained regressor when one is fitted, else 'fallback' (route length / "
+            "speed). route_length_m and avg_predicted_speed must come from earlier tool "
+            "results (a route's length, its live or forecast speed) — a call with "
+            "invented inputs is refused, and unreported soft inputs are labelled "
+            "ASSUMED INPUTS."
         ),
         "inputSchema": {
             "type": "object",
@@ -419,19 +445,22 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "city_query_entities",
         "description": (
             "Query the fused city picture (GET /api/v1/city/entities): corridor "
-            "events, earmarked vehicles (plates masked), ANPR sightings and "
+            "events, OSINT situations (labelled UNVERIFIED-OSINT / "
+            "NEWS-REPORTED / OFFICIAL-VERIFIED, never persons), gazetteer "
+            "places, earmarked vehicles (plates masked), ANPR sightings and "
             "cameras, junction signals, emulated agency units, convoys, "
             "dispatches, e-challan recommendations and anomalies — each with "
-            "its URN, label, state, source (live / EMULATED) and position. "
-            "Use it to resolve what the operator means ('the stolen vehicle', "
-            "'units near Relief Road') before talking about or showing it."
+            "its URN, label, state, source (live / EMULATED / osint) and "
+            "position. Use it to resolve what the operator means ('the stolen "
+            "vehicle', 'units near Relief Road', 'the SG Highway situation') "
+            "before talking about or showing it."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "kinds": {
                     "type": "array",
-                    "maxItems": 10,
+                    "maxItems": 12,
                     "items": {"type": "string", "enum": list(_CITY_ENTITY_KINDS_DEF)},
                     "description": "Entity kinds to return. Omit for every kind.",
                 },
@@ -483,9 +512,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "city_feed",
         "description": (
             "The city narrative, newest first (GET /api/v1/city/feed): event "
-            "transitions, e-challan decisions, ANPR hits, dispatches, signal "
-            "plans, situation-band changes and brain checkpoints, each with "
-            "its actor and source."
+            "transitions, OSINT situations surfaced and promoted (by a named "
+            "officer), decision-support decisions, e-challan decisions, ANPR "
+            "hits, dispatches, signal plans, situation-band changes and brain "
+            "checkpoints, each with its actor and source."
         ),
         "inputSchema": {
             "type": "object",
@@ -495,7 +525,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 },
                 "kinds": {
                     "type": "array",
-                    "maxItems": 7,
+                    "maxItems": 8,
                     "items": {"type": "string", "enum": list(_CITY_FEED_KINDS_DEF)},
                     "description": "Feed kinds to return. Omit for all.",
                 },
@@ -605,6 +635,35 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    # -- decision support: compute a proposal, never decide (C-U) -----------
+    {
+        "name": "city_decision_support",
+        "description": (
+            "Compute decision support for one event (POST "
+            "/api/v1/decision-support/{urn}/generate): a ranked set of "
+            "courses of action with predicted outcomes, resource feasibility, "
+            "the value of gathering more information first and the dissent — "
+            "carrying the 27B decider's COA-strategy opinion when it answered. "
+            "When the event already has a proposal waiting on an officer, that "
+            "proposal is returned (reused), never superseded. "
+            "Read/compute only: this proposes, it never decides, dispatches "
+            "or writes anything; a NAMED duty officer decides in the deck."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "event_urn": {
+                    "type": "string",
+                    "description": (
+                        "The event to support: 'osint_event:<uuid>' (a "
+                        "surfaced OSINT situation) or 'event:<uuid>' (a "
+                        "corridor event)."
+                    ),
+                },
+            },
+            "required": ["event_urn"],
+        },
+    },
     # -- canvas verbs: directives a human applies (never HTTP, never auto) ----
     {
         "name": "canvas_fly_to",
@@ -688,8 +747,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "canvas_toggle_layer",
         "description": (
             "PROPOSE switching a canvas layer on or off: events, flow, traces, "
-            "enforcement, signals, units, dispatch, convoy, cameras, anomalies "
-            "or photoreal-3d."
+            "enforcement, signals, units, dispatch, convoy, cameras, anomalies, "
+            "photoreal-3d, osint (OSINT situations) or places."
         ),
         "inputSchema": {
             "type": "object",
@@ -988,11 +1047,17 @@ TOOL_ALIASES: dict[str, str] = {
 }
 _TOOL_ALIASES = TOOL_ALIASES  # name the routing pin test reads
 
-#: Corridor-event kinds the oracle board serves (events/__init__.py EVENT_KINDS).
+#: Corridor-event kinds the oracle board serves (events/__init__.py
+#: EVENT_KINDS — lockstep-pinned by test_mcp_vocab.py).  The six OSINT kinds
+#: are REPORTED situations promoted by a named officer for RESPONSE; OSINT
+#: never emits crime_incident.
 _EVENT_KINDS = frozenset({
     "protected_movement", "procession", "mass_gathering", "race", "ceremonial",
     "egress_surge", "emergency_evacuation", "work_zone", "crime_incident",
     "vehicle_pursuit",
+    # OSINT reported-situation additions (021, C3)
+    "reported_crime", "public_disorder", "road_accident", "hazard", "flooding",
+    "infra_failure",
 })
 #: Drafted filter values that mean "no filter".
 _WILDCARDS = frozenset({"", "all", "any", "*", "none", "null"})
@@ -1006,8 +1071,9 @@ _ETA_REQUIRED = (
 
 #: R2 read-only rail: the ONLY oracle paths the executor POSTs to — compute
 #: endpoints that read and calculate (forecast, optimise, evaluate, the live
-#: cache read, the twin). Every city tool is a GET; no write surface (event
-#: lifecycle, e-challan decisions, dispatch, earmarks) is reachable from a
+#: cache read, the twin) plus the one parameterised pattern below.  Every
+#: city tool is a GET; no write surface (event lifecycle, e-challan
+#: decisions, dispatch, earmarks, the DSS decision) is reachable from a
 #: model-chosen tool.
 POST_ALLOWLIST = frozenset({
     "/api/v1/predict/flow",
@@ -1018,6 +1084,23 @@ POST_ALLOWLIST = frozenset({
     "/api/v1/traffic/live",
     "/api/v1/simulate/twin",
 })
+#: R2 compute-only POST *patterns* — parameterised compute endpoints the
+#: fixed set above cannot express.  Exactly one today (plan §5.2, C-U): the
+#: DSS generate for a well-formed osint_event:/event: uuid.  ``/generate``
+#: ONLY: ``/decision`` (the officer's decision) and ``/promote`` stay
+#: unreachable from any tool, and nothing here writes.
+POST_ALLOWLIST_PATTERNS = (
+    re.compile(r"^/api/v1/decision-support/(osint_event|event):[0-9a-f-]{36}/generate$"),
+)
+
+
+def post_allowlisted(path: str) -> bool:
+    """True when a POST path is on the compute rail (the set or a pattern)."""
+    return path in POST_ALLOWLIST or any(
+        pattern.fullmatch(path) for pattern in POST_ALLOWLIST_PATTERNS
+    )
+
+
 #: No tool name may make the AI an actor (R2): pinned by the test suite.
 FORBIDDEN_TOOL_VERBS = re.compile(
     r"approve|decide|earmark|dispatch_request|withdraw|transition", re.IGNORECASE
@@ -1046,35 +1129,116 @@ FLY_RANGE_M = (100.0, 60_000.0)
 #: URN kinds and id grammar — a mirror of traffic-oracle city/common.py
 #: parse_entity_id, so a malformed id never reaches a path.
 URN_KINDS = _CITY_ENTITY_KINDS_DEF + ("segment",)
-_UUID_KINDS = frozenset({"event", "vehicle", "sighting", "dispatch", "recommendation"})
+_UUID_KINDS = frozenset({
+    "event", "vehicle", "sighting", "dispatch", "recommendation", "osint_event",
+})
 _INT_KINDS = frozenset({"junction", "segment", "anomaly"})
 _SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,63}$")
+#: A place id (contract C-T): a lower-case slug of a gazetteer place,
+#: optionally ending in its gazetteer id ('karnavati_club_sg_highway_106').
+_PLACE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 _STATUS_RE = re.compile(r"^[a-z_]{1,32}$")
 UNIT_AGENCIES = ("jan_rakshak", "police", "traffic", "ambulance", "fire")
 
-#: Indian registration marks inside free text (mirror of the deck's
-#: plates.ts / the oracle's masking): only the 4-digit number is masked.
-_PLATE_IN_TEXT_RE = re.compile(r"\b([A-Z]{2}[ -]?\d{1,2}[ -]?(?:[A-Z]{1,3}[ -]?)?)(\d{4})\b")
+#: Indian registration marks inside free text, in ANY case and spelling —
+#: the oracle's combined rule (traffic_oracle/city/common.py, the deck's
+#: workspace/mask.ts; FIX-B-ORACLE): a mark starts with one of the 39
+#: state/UT codes (:_PLATE_STATE_CODES_, lockstep-pinned by
+#: test_mcp_vocab.py), separators are spaces/dots/dashes/slashes/underscores,
+#: a month-series candidate that is a DATE is left alone, uuids are held out
+#: of the mask's reach, and the pre-change UPPER-case rule still masks as a
+#: SUPERSET pass (fail closed).  Groups: 1 the head (kept), 2 the state code,
+#: 3 the optional series, 4 the separator after it, 5 the 4-digit number
+#: (masked, its last digit kept).
+_PLATE_STATE_CODES = (
+    "AN", "AP", "AR", "AS", "BR", "CG", "CH", "DD", "DL", "DN", "GA", "GJ", "HP", "HR",
+    "JH", "JK", "KA", "KL", "LA", "LD", "MH", "ML", "MN", "MP", "MZ", "NL", "OD", "OR",
+    "PB", "PY", "RJ", "SK", "TG", "TN", "TR", "TS", "UK", "UP", "WB",
+)
+_MARK_SEP = (
+    "[\t\n\v\f\r    -   　﻿"
+    "\u2028\u2029"
+    r".\-/_]{0,3}"
+)
+_PLATE_IN_TEXT_RE = re.compile(
+    r"\b((" + "|".join(_PLATE_STATE_CODES) + r")" + _MARK_SEP + r"\d{1,2}" + _MARK_SEP
+    + r"(?:([a-z]{1,3})(" + _MARK_SEP + r"))?)(\d{4})\b",
+    re.IGNORECASE | re.ASCII,
+)
+#: The pre-change rule, kept as a SUPERSET pass (fail closed): an UPPER-case
+#: mark shape whatever its first two letters (``XY12AB1234``), as the oracle
+#: always masked it.
+_PLATE_UPPER_RE = re.compile(r"\b([A-Z]{2}[ -]?\d{1,2}[ -]?(?:[A-Z]{1,3}[ -]?)?)(\d{4})\b")
+#: A uuid (a URN's id) is never a mark: it is held out of the mask's reach.
+_UUID_IN_TEXT_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE | re.ASCII,
+)
+#: A series that spells a month (any case).
+_MONTH_SERIES = frozenset(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+)
+_HELD = re.compile("\x00(\\d+)\x00")
+_MASK = "•••"
+
+
+def _is_date_shape(state: str, series: str | None, sep_after: str | None) -> bool:
+    """A candidate that is a DATE, not a mark: its series spells a month and a
+    separator stands before the number ("As of 24 Oct 2026"), unless the
+    state code and the series are both upper case — a mark as the oracle and
+    operators write it ("GJ 01 MAY 1234" masks).  A series glued to its
+    number is never a date."""
+    if not series or not sep_after or series.lower() not in _MONTH_SERIES:
+        return False
+    return not (state == state.upper() and series == series.upper())
+
+
+def _mask_mark(m: re.Match[str]) -> str:
+    if _is_date_shape(m.group(2), m.group(3), m.group(4)):
+        return m.group(0)
+    return m.group(1) + _MASK + m.group(5)[-1]
 
 
 def mask_plates(text: Any) -> str:
-    """Mask every registration mark in ``text`` (GJ27EM9001 -> GJ27EM•••1)."""
+    """Mask every registration mark in ``text`` (``GJ27EM9001 -> GJ27EM•••1``),
+    in any case and spelling (``gj27em9001``, ``GJ.27.EM.9001``), leaving
+    dates, times, years and uuids alone — the oracle's rule; text without a
+    mark comes back unchanged (the same string)."""
     if not isinstance(text, str) or not text:
         return "" if text is None else str(text)
-    return _PLATE_IN_TEXT_RE.sub(lambda m: f"{m.group(1)}•••{m.group(2)[-1]}", text)
+    held: list[str] = []
+
+    def hold(m: re.Match[str]) -> str:
+        held.append(m.group(0))
+        return f"\x00{len(held) - 1}\x00"
+
+    s = _UUID_IN_TEXT_RE.sub(hold, text)
+    out = _PLATE_IN_TEXT_RE.sub(_mask_mark, s)
+    out = _PLATE_UPPER_RE.sub(lambda m: m.group(1) + _MASK + m.group(2)[-1], out)
+    if held:
+        out = _HELD.sub(
+            lambda m: held[int(m.group(1))] if int(m.group(1)) < len(held) else "", out)
+    return text if out == text else out
 
 
 def plate_label(text: Any) -> str | None:
-    """'vehicle GJ27EM•••1' from the first registration mark in ``text``; None without one."""
-    match = _PLATE_IN_TEXT_RE.search(text) if isinstance(text, str) else None
-    return f"vehicle {match.group(1)}•••{match.group(2)[-1]}" if match else None
+    """'vehicle GJ27EM•••1' from the first registration mark in ``text``
+    (dates skipped); None without one."""
+    if not isinstance(text, str):
+        return None
+    for m in _PLATE_IN_TEXT_RE.finditer(text):
+        if not _is_date_shape(m.group(2), m.group(3), m.group(4)):
+            return f"vehicle {m.group(1)}{_MASK}{m.group(5)[-1]}"
+    match = _PLATE_UPPER_RE.search(text)
+    return f"vehicle {match.group(1)}{_MASK}{match.group(2)[-1]}" if match else None
 
 
 def parse_urn(urn: Any) -> tuple[str, str] | None:
     """``'<kind>:<id>'`` -> ``(kind, canonical id)``; None when malformed.
 
     Split at the FIRST colon (slug ids may contain colons); uuid kinds are
-    lower-cased canonical, int kinds positive, slug kinds bounded.
+    lower-cased canonical, int kinds positive, place ids are the C-T
+    lower-case slug, other slug kinds bounded.
     """
     if not isinstance(urn, str) or ":" not in urn or len(urn) > 160:
         return None
@@ -1090,6 +1254,8 @@ def parse_urn(urn: Any) -> tuple[str, str] | None:
         if not ident.isdigit() or not 0 < int(ident) <= 2**62:
             return None
         return kind, str(int(ident))
+    if kind == "place":
+        return (kind, ident) if _PLACE_SLUG_RE.fullmatch(ident) else None
     return (kind, ident) if _SLUG_RE.fullmatch(ident) else None
 
 
@@ -1155,6 +1321,15 @@ _ENTITY_PROPS = {
     "recommendation": ("rule_id", "status", "decided_by", "camera_id"),
     "anomaly": ("anomaly_type", "severity", "road_name", "segment_id", "count_15m"),
     "segment": ("road_name", "road_class", "lanes", "speed_limit_kmh", "oneway", "length_m"),
+    # OSINT (C-T / C-C extension): situations and places, never persons —
+    # with the honest label and credibility an OSINT row always carries.
+    "osint_event": (
+        "event_class", "subtype", "veer_event_kind", "toponym", "geocode_confidence",
+        "area_level", "credibility", "verification_state", "source_count",
+        "independent_publishers", "cross_type_corroborated", "promoted_event_id",
+    ),
+    "place": ("feature_type", "canonical_name", "segment_id", "junction_id",
+              "osint_event_count"),
 }
 
 
@@ -1289,12 +1464,18 @@ class ToolExecutor:
 
     def __init__(
         self,
-        traffic_oracle_url: str = "http://localhost:8081",
+        traffic_oracle_url: str = DEFAULT_TRAFFIC_ORACLE_URL,
         client: Any | None = None,
+        decider_brain: DeciderBrain | None = None,
     ) -> None:
         self._oracle_url = traffic_oracle_url.rstrip("/")
         self._client = client  # injectable for tests; lazy-created otherwise
         self._owns_client = client is None
+        self._decider = decider_brain  # wires the DSS strategy opinion (C-U)
+        # the forced 27B COA-strategy checkpoint's per-subject cooldown:
+        # urn -> (monotonic time asked, situation key, the opinion or None)
+        self._dss_prior_asked: dict[str, tuple[float, str, dict | None]] = {}
+        self._clock = time.monotonic  # injectable for tests
         logger.info("tool_executor.init", oracle_url=self._oracle_url)
 
     async def _ensure_client(self):
@@ -1358,6 +1539,7 @@ class ToolExecutor:
             "get_interception_plan": self._get_interception_plan,
             "get_situation_log": self._get_situation_log,
             "list_enforcement_recommendations": self._list_recommendations,
+            "city_decision_support": self._city_decision_support,
             **{verb: self._canvas_handler(verb) for verb in CANVAS_VERBS},
         }
 
@@ -1408,14 +1590,21 @@ class ToolExecutor:
 
     # -- transport (R2: POSTs only to the compute allow-list) --------------
 
-    async def _post(self, path: str, payload: dict) -> dict:
-        """POST to an allow-listed compute endpoint (anything else refused)."""
-        if path not in POST_ALLOWLIST:
+    async def _post(self, path: str, payload: dict, *, timeout: float | None = None) -> dict:
+        """POST to an allow-listed compute endpoint (anything else refused).
+
+        ``timeout`` overrides the client's 30 s read bound for one slow
+        compute call (decision-support generation, SUS-1)."""
+        if not post_allowlisted(path):
             raise ToolExecutionError(
                 f"refused: POST {path} is not a read/compute endpoint (R2 read-only rail)",
                 retryable=False,
             )
-        resp = await self._client.post(path, json=payload)
+        if timeout is not None:
+            resp = await self._client.post(
+                path, json=payload, timeout=httpx.Timeout(timeout, connect=5.0))
+        else:
+            resp = await self._client.post(path, json=payload)
         resp.raise_for_status()
         return resp.json()
 
@@ -1689,19 +1878,22 @@ class ToolExecutor:
         return result
 
     async def _event_from_history(self, event_id: str) -> dict | None:
-        """One event from GET /api/v1/events (completed / cancelled ones too)."""
+        """One event by id — GET /api/v1/events/{id} (completed / cancelled too).
+
+        The oracle serves the row directly (F-CONN-13); the old scan of the
+        newest 200 history rows missed any older event. 404 → None.
+        """
         try:
-            resp = await self._client.get("/api/v1/events", params={"limit": 200})
+            resp = await self._client.get(f"/api/v1/events/{quote(event_id, safe='')}")
             if resp.status_code != 200:
                 return None
-            rows = (resp.json() or {}).get("events") or []
+            row = resp.json()
         except Exception as exc:  # history is a best-effort widening
             logger.info("tool_executor.event_history_unavailable", error=str(exc)[:200])
             return None
-        return next(
-            (r for r in rows if isinstance(r, dict) and str(r.get("event_id")) == event_id),
-            None,
-        )
+        if isinstance(row, dict) and str(row.get("event_id")) == event_id:
+            return row
+        return None
 
     # -- City picture (C-C, read-only) --------------------------------------
 
@@ -2033,6 +2225,129 @@ class ToolExecutor:
             "rail": "machine-proposed only — a named officer approves or rejects every one",
         }
 
+    # -- Decision support (C-U: compute a proposal, never decide) -----------
+
+    async def _city_decision_support(self, args: dict) -> dict:
+        """POST /api/v1/decision-support/{urn}/generate (compute-only, R2).
+
+        Reads the situation (its dossier GET).  When the subject already
+        carries a PROPOSED, unexpired decision support — a proposal waiting on
+        a named officer — that proposal is read back (GET) and summarised as
+        reused: generating again would supersede it under the officer.  Only
+        when none is pending (or it expired, or was decided) does it ask the
+        wired decider for one COA-strategy opinion (at most once per subject
+        per :data:`DSS_PRIOR_COOLDOWN_SEC` — the checkpoint is forced past the
+        decider's own rate limit), generate the DSS and return a MASKED
+        summary that points the operator at the decision's home.  It never
+        returns or performs a decision: ``/decision`` and ``/promote`` are not
+        reachable from any tool, and the ranking here is a proposal for the
+        named officer who decides in the deck.
+        """
+        parsed = parse_urn(args.get("event_urn"))
+        if parsed is None or parsed[0] not in _DSS_SUBJECT_KINDS:
+            raise _bad_args(
+                "city_decision_support",
+                "event_urn must be 'osint_event:<uuid>' or 'event:<uuid>'",
+            )
+        kind, ident = parsed
+        urn = f"{kind}:{ident}"
+        body = await self._read(
+            f"/api/v1/city/entity/{kind}/{quote(ident, safe='')}", subject=urn
+        )
+        if body.get("ok") is False:
+            return body
+        entity = body.get("entity") if isinstance(body.get("entity"), dict) else {}
+        situation = _dss_situation(entity)
+        props = entity.get("props") if isinstance(entity.get("props"), dict) else {}
+        pending = _pending_dss_id(props.get("dss"), datetime.now(UTC))
+        unconfirmed = None  # a pending proposal the read could not confirm either way
+        if pending is not None:
+            doc = await self._read(f"/api/v1/decision-support/{pending}", subject=urn)
+            if doc.get("ok") is False:  # 404: the dossier names a proposal the oracle cannot read
+                unconfirmed = pending
+            elif doc.get("event_urn") == urn and doc.get("state") == "proposed":
+                rec = doc.get("recommendation")
+                recorded = rec.get("strategy_prior") if isinstance(rec, dict) else None
+                summary = _dss_summary(
+                    doc, urn=urn, situation=situation,
+                    strategy_prior=recorded if isinstance(recorded, dict) else None,
+                )
+                summary["reused"] = True
+                summary["note"] = (
+                    "reused, not regenerated: this subject already has a "
+                    f"proposal ({pending}) waiting on a named officer — "
+                    "generating again would supersede it; no 27B opinion was "
+                    "asked and nothing was written"
+                )
+                return summary
+        prior, prior_note = await self._dss_prior(urn, situation)
+        payload: dict[str, Any] = {"requested_by": "brain"}
+        if prior is not None:
+            payload["strategy_prior"] = prior
+        try:
+            dss = await self._post(f"/api/v1/decision-support/{urn}/generate", payload,
+                                   timeout=DSS_GENERATE_TIMEOUT_SEC)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status == 404:
+                return {
+                    "ok": False, "not_found": True, "subject": urn,
+                    "detail": "unknown or held event — no decision support",
+                }
+            if status == 409:
+                return {
+                    "ok": False, "event_closed": True, "subject": urn,
+                    "detail": "event-closed — the event is closed; nothing to support",
+                }
+            raise
+        summary = _dss_summary(dss, urn=urn, situation=situation, strategy_prior=prior)
+        if prior_note:
+            summary["ai_pick"] += f" ({prior_note})"
+        if unconfirmed is not None and dss.get("dss_id") != unconfirmed:
+            # the dossier listed a pending proposal the read could not confirm:
+            # the oracle's generate supersedes any other proposed one — said so
+            summary["superseded"] = unconfirmed
+            summary["note"] = (
+                f"generated anew: the pending proposal {unconfirmed} could not be "
+                "read back, so generating superseded it if it was still proposed"
+            )
+        return summary
+
+    async def _dss_prior(self, urn: str, situation: dict) -> tuple[dict | None, str | None]:
+        """The 27B COA-strategy opinion for one subject, at most one forced
+        checkpoint per subject per :data:`DSS_PRIOR_COOLDOWN_SEC`: inside the
+        window the opinion already asked for the same situation is reused,
+        and a changed situation gets none (the checkpoint is not re-forced).
+        ``(prior, note)`` — the note says when the cooldown applied."""
+        if self._decider is None:
+            return None, None
+        key = json.dumps(situation, sort_keys=True, default=str)
+        now = self._clock()
+        asked = self._dss_prior_asked.get(urn)
+        if asked is not None and now - asked[0] < DSS_PRIOR_COOLDOWN_SEC:
+            ago = int(now - asked[0])
+            if asked[1] == key and asked[2] is None:
+                return None, (
+                    f"the 27B was asked {ago} s ago and gave no usable opinion; "
+                    f"it is not re-asked within {int(DSS_PRIOR_COOLDOWN_SEC)} s"
+                )
+            if asked[1] == key:
+                return asked[2], (
+                    f"the opinion asked {ago} s ago is reused — one 27B checkpoint "
+                    f"per subject per {int(DSS_PRIOR_COOLDOWN_SEC)} s"
+                )
+            return None, (
+                f"the 27B was asked about this subject {ago} s ago and the "
+                f"situation has changed since; it is not re-asked within "
+                f"{int(DSS_PRIOR_COOLDOWN_SEC)} s, so no opinion is attached"
+            )
+        prior = await strategy_prior(self._decider, situation, event_urn=urn)
+        if len(self._dss_prior_asked) >= _DSS_PRIOR_MEMO_MAX:
+            oldest = min(self._dss_prior_asked, key=lambda u: self._dss_prior_asked[u][0])
+            del self._dss_prior_asked[oldest]
+        self._dss_prior_asked[urn] = (now, key, prior)
+        return prior, None
+
     # -- Canvas verbs (directives; never HTTP) --------------------------------
 
     def _canvas_handler(self, verb: str):
@@ -2306,6 +2621,147 @@ def _event_row(event: dict) -> dict:
     if metadata.get("label"):
         row["label"] = mask_plates(metadata["label"])
     return row
+
+
+#: The event kinds city_decision_support accepts (contract C-U: a surfaced
+#: OSINT situation or a corridor event — never a person, place or vehicle).
+_DSS_SUBJECT_KINDS = frozenset({"osint_event", "event"})
+#: Where the named officer decides (the deck's decision homes: the Inbox on
+#: / and on /gods-eye, Decisions on /ops).
+_DSS_HOME = "Decide it in the Inbox (/ or /gods-eye), or in Decisions (/ops)"
+#: The forced 27B COA-strategy checkpoint asks at most once per subject in
+#: this window (the decider's own per-movement limit is bypassed by force).
+DSS_PRIOR_COOLDOWN_SEC = 300.0
+#: Wall bound of one decision-support generation (the oracle wargames every
+#: course of action; the deck itself waits 120 s). The default 30 s client
+#: bound cut generation short (SUS-1); the orchestrator gives this tool the
+#: same bound and never re-sends a generation that timed out.
+DSS_GENERATE_TIMEOUT_SEC = 90.0
+#: Subjects the cooldown remembers (oldest forgotten first).
+_DSS_PRIOR_MEMO_MAX = 256
+#: The floor modes contract C-U names (``Recommendation.public_safety_floor``).
+_DSS_FLOOR_MODES = ("hold", "verify", "none")
+
+
+def _pending_dss_id(summary: Any, now: datetime) -> str | None:
+    """The dss_id of a subject's PROPOSED, unexpired decision support (its
+    dossier ``props.dss``, a C-T ``DssSummary``), else None."""
+    if not isinstance(summary, dict) or summary.get("state") != "proposed":
+        return None
+    try:
+        dss_id = str(uuid.UUID(str(summary.get("dss_id"))))
+        expires = datetime.fromisoformat(str(summary.get("expires_at")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if expires.tzinfo is None:
+        return None
+    return dss_id if now < expires else None
+
+
+def _dss_situation(entity: dict) -> dict:
+    """One dossier entity as the DSS situation: only the whitelisted fields
+    the strategy question reads.  The oracle's dossier text is already
+    redacted (contract C-T) and the whitelist keeps any other key — a person
+    field included — out of the decider's context."""
+    props = entity.get("props") if isinstance(entity.get("props"), dict) else {}
+    return {
+        "summary": str(props.get("summary") or entity.get("label") or ""),
+        "event_class": props.get("event_class") or props.get("event_kind"),
+        "subtype": props.get("subtype"),
+        "toponym": props.get("toponym"),
+        "credibility": props.get("credibility"),
+        "verification_state": props.get("verification_state"),
+        "second_order": props.get("second_order"),
+    }
+
+
+def _first_sentence(text: Any) -> str:
+    """The first sentence of a dissent note ('' without one)."""
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    return re.split(r"(?<=[.!?])\s+", text.strip(), maxsplit=1)[0][:300]
+
+
+def _dss_summary(
+    dss: dict, *, urn: str, situation: dict, strategy_prior: dict | None
+) -> dict:
+    """One DecisionSupport as model context — a MASKED summary of the
+    proposal that points the operator at the decision's home.  A vetoed or
+    resource-infeasible COA is labelled, never hidden; nothing here decides."""
+    coa_by_id = {
+        c.get("coa_id"): c
+        for c in dss.get("coa_set") or []
+        if isinstance(c, dict) and c.get("coa_id")
+    }
+    rec = dss.get("recommendation") if isinstance(dss.get("recommendation"), dict) else {}
+    top_id = rec.get("top_coa_id")
+    top = coa_by_id.get(top_id) if isinstance(top_id, str) else None
+    voi = rec.get("value_of_information")
+    voi = voi if isinstance(voi, dict) else {}
+    blocked = rec.get("best_blocked")
+    best_blocked = None
+    if isinstance(blocked, dict) and isinstance(blocked.get("coa_id"), str):
+        best_blocked = {
+            "coa_id": blocked["coa_id"],
+            "label": mask_plates(str(blocked.get("label") or blocked["coa_id"])),
+            "closeness": blocked.get("closeness"),
+            "missing": [mask_plates(str(m)) for m in (blocked.get("missing") or [])][:8],
+            "unblock_action": blocked.get("unblock_action"),
+        }
+    floor = rec.get("public_safety_floor")
+    notes: list[str] = []
+    for coa in dss.get("coa_set") or []:
+        if not isinstance(coa, dict):
+            continue
+        label = str(coa.get("label") or coa.get("coa_id") or "a COA")
+        ethics = coa.get("ethics") if isinstance(coa.get("ethics"), dict) else {}
+        feas = coa.get("resource_feasibility")
+        feas = feas if isinstance(feas, dict) else {}
+        shortfalls = ", ".join(str(s) for s in (feas.get("shortfalls") or []))
+        if feas.get("feasible") is False:
+            notes.append(f"{label} — resource-infeasible: {shortfalls or 'no resources'}")
+        elif coa.get("coa_id") == top_id and shortfalls:
+            notes.append(f"{label} — feasible with shortfalls: {shortfalls}")
+        if ethics.get("vetoed"):
+            notes.append(f"{label} — vetoed: {ethics.get('veto_reason') or 'rule veto'}")
+    return {
+        "ok": True,
+        "dss_id": dss.get("dss_id"),
+        "event_urn": urn,
+        "state": dss.get("state"),
+        # the honest label of the situation the proposal was computed from
+        "verification_state": situation.get("verification_state"),
+        "toponym": situation.get("toponym"),
+        "situation_summary": mask_plates(situation.get("summary") or "") or None,
+        "top_coa_id": top_id,
+        "top_coa_label": mask_plates(top.get("label")) if top else None,
+        "ranking": [c for c in (rec.get("ranked_coa_ids") or []) if isinstance(c, str)][:8],
+        "feasibility_notes": [mask_plates(n) for n in notes][:8],
+        "advise_gather": voi.get("advise_gather"),
+        "advise_gather_why": mask_plates(voi.get("why")) if voi.get("why") else None,
+        "dissent": mask_plates(_first_sentence(rec.get("dissent"))),
+        # the highest-scoring course of action blocked on units, and what to
+        # request — the officer's request-units cue, never an auto-request
+        "best_blocked": best_blocked,
+        # hold | verify | none; None when the proposal predates the field
+        "public_safety_floor": floor if floor in _DSS_FLOOR_MODES else None,
+        # the honest labels the proposal carries (SIMULATED, NEWS-REPORTED, …)
+        "labels": [str(x) for x in (dss.get("labels") or []) if isinstance(x, str)][:8],
+        "reused": False,
+        "superseded": None,
+        "strategy_prior": strategy_prior,
+        "ai_pick": (
+            "27B decider strategy opinion attached (tier "
+            f"{strategy_prior['tier']}, confidence {strategy_prior['confidence']})"
+            if strategy_prior
+            else "not computed — no decider wired, degraded, or the answer was withheld"
+        ),
+        "home": _DSS_HOME,
+        "rail": (
+            "compute-only: this proposes, it never decides or dispatches — "
+            "a named duty officer decides"
+        ),
+    }
 
 
 def _bbox_arg(value: Any) -> tuple[float, float, float, float] | None:

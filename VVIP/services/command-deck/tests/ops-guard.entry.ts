@@ -34,12 +34,19 @@
  *      primary spine only, hold provenance as the oracle labels it
  *      (baseline never shown as live; params not asked when a closure plan
  *      decides), failed reads flagged `unavailable`, the graph alternate,
- *      the driver status cache + eta_at;
+ *      the driver status cache + eta_at, and the driver status OSINT
+ *      firewall failing CLOSED on the event row read by id (an unreadable
+ *      event 503, an absent or OSINT-sourced one not-found — never the
+ *      dispatch body; a failed read cached for the poll window);
  *   6. the read-model and writer: doctrine window timing (arrival- and
  *      approval-anchored), only active events hold "now", operator-only
  *      kinds get no citizen all-clear, unreadable facts are not "none";
  *   7. the chat stream contract C-D ($lib/api/client): both the C-D and the
- *      legacy brain event shapes normalise to the same callbacks.
+ *      legacy brain event shapes normalise to the same callbacks;
+ *   8. R26: the machine-ingest path POST /api/v1/osint/signals is refused at
+ *      the deck edge (403 "machine ingest: loopback only") in every spelling,
+ *      gate off, gate on anonymous and gate on signed in, with no upstream
+ *      fetch; the other /api/v1/osint/* reads still proxy.
  */
 
 import { assertSafeExternalUrl, safePathId } from '../src/lib/ops/endpoints';
@@ -312,8 +319,8 @@ for (const [rawPath, expected] of PROXY_FORWARD) {
 }
 
 // ── edge: pages — nonce CSP, per-route theme/lang, strict public policy ─────
-async function runPage(routeId: string | null, title = '<title>Citizen · Veer</title>'): Promise<{ res: Response; html: string }> {
-	const url = new URL('/x', 'http://deck.internal');
+async function runPage(routeId: string | null, title = '<title>Citizen · Veer</title>', pathname = '/x'): Promise<{ res: Response; html: string }> {
+	const url = new URL(pathname, 'http://deck.internal');
 	const template =
 		`<html lang="%veer.lang%" data-theme="%veer.theme%"><head>${title}<script>boot()</script>` +
 		'<script type="module" src="/_app/x.js"></script></head><body></body></html>';
@@ -350,6 +357,26 @@ async function runPage(routeId: string | null, title = '<title>Citizen · Veer</
 	check('page: a routed page keeps exactly its own <title>', (html.match(/<title>/g) ?? []).length === 1 && html.includes('Citizen · Veer'));
 	const notFound = await runPage(null, '');
 	check('page: an untitled document (built-in error page) gets the brand <title>', (notFound.html.match(/<title>/g) ?? []).length === 1 && notFound.html.includes('<title>Veer</title>'));
+
+	// ── V3 root flip: the CSP and the theme follow the RESOLVED route node, never the URL ──
+	// /analyst is rerouted (src/hooks.ts) to the workspace's node `/(deck)`, `/` to Home's `/(v3)/home`; the edge sees the
+	// node in event.route.id. So /analyst gets exactly the operator policy the old `/` got; Home (and every (v3) console page) the operator policy too —
+	// a client-side navigation from Home to the map or to Analyst keeps Home's document, whose CSP must allow Cesium.
+	const strip = (c: string) => c.replace(/'nonce-[^']+'/g, "'nonce-N'");
+	const cspOf = (r: { res: Response }) => r.res.headers.get('content-security-policy') ?? '';
+	const analyst = await runPage('/(deck)', '<title>Corridor · Veer</title>', '/analyst');
+	const oldRoot = await runPage('/(deck)', '<title>Corridor · Veer</title>', '/');
+	const homeRoot = await runPage('/(v3)/home', '<title>Home · Veer</title>', '/');
+	const homeAlias = await runPage('/(v3)/home', '<title>Home · Veer</title>', '/home');
+	check('flip: /analyst gets the operator CSP (Cesium eval + blob workers + the photoreal tile host)', cspOf(analyst).includes("'unsafe-eval'") && /script-src[^;]* blob:/.test(cspOf(analyst)) && cspOf(analyst).includes('tile.googleapis.com'));
+	check("flip: /analyst's CSP is byte for byte the old `/`'s (same node, nonce aside)", strip(cspOf(analyst)) === strip(cspOf(oldRoot)) && strip(cspOf(analyst)) === strip(deckCsp));
+	check('flip: /analyst renders the command theme like the old `/`', analyst.html.includes('data-theme="command"') && oldRoot.html.includes('data-theme="command"'));
+	check('flip: Home at `/` gets the operator CSP (a navigation from Home into the canvas keeps its document)', strip(cspOf(homeRoot)) === strip(deckCsp) && cspOf(homeRoot).includes("'unsafe-eval'") && /script-src[^;]* blob:/.test(cspOf(homeRoot)));
+	check('flip: Home at `/` and at `/home` carry one policy', strip(cspOf(homeRoot)) === strip(cspOf(homeAlias)));
+	const spoof = await runPage('/(v3)/home', '<title>Home · Veer</title>', '/analyst');
+	check('flip: Home and /home carry the same policy whatever the path', strip(cspOf(spoof)) === strip(cspOf(homeRoot)));
+	const spoof2 = await runPage('/(public)/citizen', '<title>Citizen · Veer</title>', '/analyst');
+	check('flip: a public node served at /analyst stays strict (the policy follows the node)', !cspOf(spoof2).includes("'unsafe-eval'") && spoof2.html.includes('data-theme="daylight"'));
 }
 
 // ── operator gate (opt-in) ───────────────────────────────────────────────────
@@ -360,10 +387,68 @@ const AMB_EVENT = '/api/v1/events/4508d86d-566b-438f-8414-b3d67fd7e6e4/dispatch'
 	check('gate off: writes proxy as before', res.status === 200 && capturedFetches.length === 1);
 }
 
+// ── R26: the machine-ingest path is loopback-only (refused at the deck edge) ──
+// osint-ingress posts POST /api/v1/osint/signals to the oracle DIRECTLY; nothing
+// legitimate sends it through the deck. Every spelling the oracle could route
+// (once-decoded canonical path, %-encoded segments and slashes, any case, a
+// trailing slash, repeated slashes, dot segments) is answered 403 BEFORE the
+// gate and before any upstream fetch — gate on or off, signed in or not.
+const INGEST_SPELLINGS = [
+	'/api/v1/osint/signals',
+	'/api/v1/osint/signals/',
+	'/API/V1/OSINT/SIGNALS',
+	'/api/v1/OSINT/Signals',
+	'/api/v1/osint%2Fsignals',
+	'/api/v1/osint%2fsignals/',
+	'/api/v1%2Fosint%2Fsignals',
+	'/api%2Fv1%2Fosint%2Fsignals',
+	'/api/v1/%6Fsint/signals',
+	'/api/v1/osint/%73ignals',
+	'/api/v1/osint%252Fsignals',
+	'/api/v1//osint//signals',
+	'/api/v1/osint/x/../signals',
+	'/api/v1/osint/%2e%2e/osint/signals',
+];
+const SIGNAL_BODY = '{"signals":[{"signal_id":"forged-1","source":"sachet_cap","title":"forged official alert"}]}';
+async function ingestRefused(label: string, headers?: Record<string, string>): Promise<void> {
+	let refused = 0;
+	let fetched = 0;
+	const bad: string[] = [];
+	for (const path of INGEST_SPELLINGS) {
+		for (const method of ['POST', 'PUT']) {
+			const res = await runProxy(path, method, { body: SIGNAL_BODY, headers: { 'content-type': 'application/json', ...headers } });
+			const body = (await res.json().catch(() => ({}))) as { detail?: string };
+			fetched += capturedFetches.length;
+			if (res.status === 403 && body.detail === 'machine ingest: loopback only' && capturedFetches.length === 0 && res.headers.get('x-content-type-options') === 'nosniff') refused++;
+			else bad.push(`${method} ${path} → ${res.status} ${body.detail ?? ''} (${capturedFetches.length} fetches)`);
+		}
+	}
+	check(`R26: ${label} POST /api/v1/osint/signals → 403 machine ingest, never fetched (${INGEST_SPELLINGS.length} spellings × POST/PUT)`, bad.length === 0 && fetched === 0, bad.slice(0, 3).join(' | ') || `${refused} refused, 0 upstream fetches`);
+}
+async function osintReadsProxied(label: string, headers?: Record<string, string>): Promise<void> {
+	const reads = [
+		'/api/v1/osint/events?bbox=72.4,22.9,72.7,23.2&limit=50',
+		'/api/v1/osint/events/4508d86d-566b-438f-8414-b3d67fd7e6e4',
+		'/api/v1/osint/gazetteer/resolve?q=SG%20Highway',
+		'/api/v1/osint/signals',
+	];
+	const bad: string[] = [];
+	for (const path of reads) {
+		const res = await runProxy(path, 'GET', { headers });
+		if (res.status !== 200 || capturedFetches.length !== 1 || !capturedFetches[0].startsWith(`${ORACLE_TARGET}/api/v1/osint/`)) bad.push(`${path} → ${res.status} (${capturedFetches.length} fetches)`);
+	}
+	check(`R26: ${label} the other /api/v1/osint/* GETs still proxy to the oracle`, bad.length === 0, bad.join(' | ') || `${reads.length} reads proxied`);
+}
+await ingestRefused('gate off, anonymous');
+await osintReadsProxied('gate off');
+
 process.env.VEER_OPERATOR_PIN = '1234';
 process.env.VEER_SESSION_SECRET = 'guard-suite-secret';
 
-// The canonical path the gate judges = what uvicorn routes on (one decode).
+// R26 with the gate on and no session: the machine-ingest refusal, not the gate's.
+await ingestRefused('gate on, anonymous');
+
+// The canonical path the gate checks = what uvicorn routes on (one decode).
 for (const [raw, want] of [
 	['/api/v1/%76ehicles', '/api/v1/vehicles'],
 	['/api/v1//vehicles', '/api/v1/vehicles'],
@@ -379,6 +464,8 @@ for (const [raw, want] of [
 
 const PURSUIT_ID = '4508d86d-566b-438f-8414-b3d67fd7e6e4';
 const DENY: Array<[string, string, string?]> = [
+	// F-CONN-11: the oracle has no /api/v1/health — it is not on the allow-list
+	['GET', '/api/v1/health'],
 	['POST', '/api/v1/enforcement/recommendations/x/decision', '{"decision":"approve","officer":"X"}'],
 	['POST', '/api/v1/dispatches/x/decision', '{}'],
 	['POST', '/api/v1/signals/plans/apply', '{}'],
@@ -412,6 +499,9 @@ const DENY: Array<[string, string, string?]> = [
 	// deck's server-side projection instead.
 	['GET', '/api/v1/events/active'],
 	['GET', '/api/v1/events/%61ctive'],
+	// …and so does one event row by id (the server-side firewall's read).
+	['GET', `/api/v1/events/${PURSUIT_ID}`],
+	['GET', `/api/v1/%65vents/${PURSUIT_ID}`],
 	['POST', AMB_EVENT, '{"agency":"police","unit_id":"P-1"}'],
 	['POST', AMB_EVENT, 'not json'],
 	['POST', `${AMB_EVENT}/`, '{"agency":"ambulance","unit_id":"108-14"}'],
@@ -424,9 +514,8 @@ for (const [method, path, body] of DENY) {
 resetPublicDispatches();
 const ALLOW: Array<[string, string, string?]> = [
 	['GET', '/api/v1/spatial/segments?min_lon=1'],
-	// Same resource upstream (uvicorn decodes once) — judged canonically.
+	// Same resource upstream (uvicorn decodes once) — checked canonically.
 	['GET', '/api/v1/spatial/%73egments?min_lon=1'],
-	['GET', '/api/v1/health'],
 	['GET', '/api/convoy/health'],
 	['GET', '/api/emulator/health'],
 	['POST', AMB_EVENT, '{"agency":"ambulance","unit_id":"108-14","requested_by":"108-driver"}'],
@@ -523,6 +612,9 @@ const DELETE_SESSION = sessionRoute.DELETE as unknown as Handler;
 	check('gate on, signed in: operator feed readable', feed.status === 200);
 	const plan = await runProxy(`/api/v1/events/${PURSUIT_ID}/interception-plan`, 'GET', { headers: { cookie: cookieHeader } });
 	check('gate on, signed in: interception plan readable', plan.status === 200);
+	// R26 signed in: a duty officer's browser cannot post a signal either.
+	await ingestRefused('gate on, signed in,', { cookie: cookieHeader });
+	await osintReadsProxied('gate on, signed in:', { cookie: cookieHeader });
 
 	// Cookies are shared by every port on a host: a malformed or foreign
 	// same-named cookie must neither 500 nor shadow the real session.
@@ -782,10 +874,13 @@ function oracleStub(routes: Record<string, unknown>, status: Record<string, numb
 	const ROW_D = { dispatch_id: D, event_id: E, agency: 'ambulance', unit_id: '108-14', status: 'approved', decided_by: 'Officer X', decision_note: 'n', approved_at: '2026-10-22T12:00:00Z', audit: [{ actor: 'Officer X' }] };
 	const ROW_P = { dispatch_id: POLICE, event_id: E, agency: 'police', unit_id: 'P-1', status: 'approved' };
 	const UNITS = { units: [{ unit_id: '108-14', dispatch_id: D, status: 'en_route', position: [72.57, 23.03], eta_sec: 41.6, arrived: false, emulated: true, source: 'emulated_dispatch_projection' }] };
+	// The dispatch's own event row (GET /events/{id}): the OSINT firewall's read.
+	const EVENT_ROW = { ...PROCESSION, source_kind: 'operator', metadata: {} };
 	// The oracle's GET /dispatches/{id} (the by-id read the driver page follows).
 	const stub = oracleStub({
 		[`/api/v1/dispatches/${D}`]: ROW_D,
 		[`/api/v1/dispatches/${POLICE}`]: ROW_P,
+		[`/api/v1/events/${E}`]: EVENT_ROW,
 		'/api/v1/units': UNITS,
 	});
 	resetPublicCaches();
@@ -798,7 +893,8 @@ function oracleStub(routes: Record<string, unknown>, status: Record<string, numb
 	const reads = stub.seen.length;
 	await publicDispatchStatus(stub.fn, D, E, NOW);
 	await publicDispatchStatus(stub.fn, D, E, NOW);
-	check('driver status: polling drivers share one upstream read pair per 2 s', stub.seen.length === reads, `${stub.seen.length - reads} extra reads`);
+	check('driver status: polling drivers share one upstream read set per 2 s', stub.seen.length === reads, `${stub.seen.length - reads} extra reads`);
+	check('driver status: the event row is read by id (GET /events/{id}), never the recent-rows list', stub.seen.includes(`/api/v1/events/${E}`) && !stub.seen.some((u) => u.startsWith('/api/v1/events?')), stub.seen.join(' | '));
 	check('driver status: no officer names, notes or audit', !/Officer X|decision_note|audit/.test(text));
 	check('driver status: read by id (GET /dispatches/{id}), not the event list', stub.seen.includes(`/api/v1/dispatches/${D}`) && !stub.seen.some((u) => u.includes('/dispatches?')));
 	const police = await publicDispatchStatus(stub.fn, POLICE, E, NOW);
@@ -831,11 +927,47 @@ function oracleStub(routes: Record<string, unknown>, status: Record<string, numb
 	resetPublicCaches();
 	const older = oracleStub({
 		'/api/v1/dispatches?': { dispatches: [ROW_D, ROW_P] },
+		[`/api/v1/events/${E}`]: EVENT_ROW,
 		'/api/v1/units': UNITS,
 	});
 	const fb = await publicDispatchStatus(older.fn, D, E, NOW);
 	check('driver status: no by-id route → the ambulance list fallback answers', fb.status === 200 && (fb.body as { dispatch: { status: string } }).dispatch.status === 'approved');
 	check('driver status: the fallback queries the ambulance agency only', older.seen.some((u) => u.includes('agency=ambulance')));
+
+	// The OSINT firewall FAILS CLOSED (audit C): only an event row that was
+	// READ and is not OSINT-sourced lets the dispatch body out.
+	const noBody = (r: { body: unknown }) => !/"dispatch"|"unit"|108-14/.test(JSON.stringify(r.body));
+	resetPublicCaches();
+	const down = oracleStub({ [`/api/v1/dispatches/${D}`]: ROW_D, '/api/v1/units': UNITS }, { '/api/v1/events': 503 });
+	const dr = await publicDispatchStatus(down.fn, D, E, NOW);
+	check('driver status: event read failing → 503 temporarily unavailable, never the dispatch body', dr.status === 503 && /temporarily unavailable/.test(JSON.stringify(dr.body)) && noBody(dr), `${dr.status} ${JSON.stringify(dr.body)}`);
+	await publicDispatchStatus(down.fn, D, E, NOW);
+	await publicDispatchStatus(down.fn, D, E, NOW);
+	const failedReads = down.seen.filter((u) => u.startsWith('/api/v1/events')).length;
+	check('driver status: a failed event read is cached for the poll window too (one read per 2 s)', failedReads === 1, `${failedReads} event reads over 3 polls`);
+	resetPublicCaches();
+	const routeless = oracleStub({ [`/api/v1/dispatches/${D}`]: ROW_D, '/api/v1/units': UNITS });
+	const rl = await publicDispatchStatus(routeless.fn, D, E, NOW);
+	check('driver status: an oracle without GET /events/{id} → 503, never the dispatch body', rl.status === 503 && noBody(rl), `${rl.status}`);
+	resetPublicCaches();
+	const absentStub = async (input: string) =>
+		input.startsWith(`/api/v1/dispatches/${D}`)
+			? new Response(JSON.stringify(ROW_D), { status: 200 })
+			: input.startsWith(`/api/v1/events/${E}`)
+				? new Response(JSON.stringify({ detail: `event ${E} not found` }), { status: 404 })
+				: new Response(JSON.stringify(UNITS), { status: 200 });
+	const ab = await publicDispatchStatus(absentStub, D, E, NOW);
+	check("driver status: event absent (404 'event … not found') → 'no such ambulance request'", ab.status === 404 && /no such ambulance request/.test(JSON.stringify(ab.body)) && noBody(ab), `${ab.status}`);
+	for (const [label, row] of [
+		["source_kind 'osint'", { ...EVENT_ROW, source_kind: 'osint', verification_state: 'NEWS-REPORTED' }],
+		["metadata.source 'osint'", { ...EVENT_ROW, metadata: { source: 'osint' } }],
+	] as Array<[string, Record<string, unknown>]>) {
+		resetPublicCaches();
+		const os = oracleStub({ [`/api/v1/dispatches/${D}`]: ROW_D, [`/api/v1/events/${E}`]: row, '/api/v1/units': UNITS });
+		const r = await publicDispatchStatus(os.fn, D, E, NOW);
+		check(`driver status: OSINT event (${label}) → 'no such ambulance request', never the dispatch body`, r.status === 404 && /no such ambulance request/.test(JSON.stringify(r.body)) && noBody(r), `${r.status}`);
+	}
+	resetPublicCaches();
 }
 
 // ── read-model + writer: window timing, holds, provenance, withholding ─────
@@ -920,7 +1052,7 @@ function oracleStub(routes: Record<string, unknown>, status: Record<string, numb
 		{ type: 'tool_result', data: { id: 'c1', name: 'get_live_traffic', ok: true, summary: '3 segments, avg 31 km/h' } },
 		{ type: 'token', data: 'Corridor is ' },
 		{ type: 'directive', data: { verb: 'focus' } },
-		{ type: 'done', data: { session_id: 's-1', tiers_used: ['decider:pplx-decider-v1-27b', 'gemma:aditi-ps18-v7h-12b'], operator_alerts: [], degraded: false } },
+		{ type: 'done', data: { session_id: 's-1', tiers_used: ['decider:pplx-decider-v1-27b', 'gemma:gemma4-12b-veer'], operator_alerts: [], degraded: false } },
 	];
 	const ends = cd.map((e) => dispatchChatEvent(e, cb));
 	const call = seen.call[0] as { callId: string; toolName: string; state: string };

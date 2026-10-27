@@ -1,246 +1,239 @@
 <script lang="ts">
 	/**
-	 * TwinComparePanel — twin shadow-eval comparison on the design system.
-	 * Behavior preserved exactly (POST /simulate/twin/compare with the
-	 * labelled two-arm fallback, cached per scenario/policies/seed, run only
-	 * on operator demand); every number renders mono.
+	 * Twin comparison (ownership UI-S5B), inside the /ops Lab and system
+	 * section: a candidate closure policy against a scenario's baseline on the
+	 * seeded corridor twin. Behaviour unchanged (POST /simulate/twin/compare,
+	 * the labelled two-arm fallback when the compare endpoint is not deployed,
+	 * cached per scenario, policies and seed, run only on the operator's
+	 * demand). The form opens as a popover (SPEC §6.3: create forms are
+	 * popover forms); the result is a table, candidate minus baseline per
+	 * metric, lower is better.
 	 */
-	import Panel from '$lib/primitives/Panel.svelte';
-	import Badge from '$lib/primitives/Badge.svelte';
-	import Button from '$lib/primitives/Button.svelte';
-	import EmptyState from '$lib/primitives/EmptyState.svelte';
-	import { ops } from '$lib/ops/store.svelte';
+	import { Button, FormGroup, HTMLSelect, Input, NonIdealState, Popover, Tag } from '$lib/ui';
+	import { fmtTime } from '$lib/ui/format/format';
 	import { t } from '$lib/i18n/strings';
-	import { tOps } from '$lib/i18n/strings.ops';
+	import '$lib/i18n/packs.wall';
+	import { ops } from '$lib/ops/store.svelte';
 	import { USE_CASES, useCaseById } from '$lib/ops/usecases';
-	import { istClock } from '$lib/ops/format';
 	import type { ClosureType } from '$lib/ops/types';
 
 	const CLOSURE_TYPES: ClosureType[] = ['full_closure', 'partial_closure', 'signal_hold'];
 
-	let selectedScenario = $state(ops.twinScenarioId);
-	let candidateAdvance = $state(ops.twinCandidate.advanceClosureSec);
-	let candidateClosure = $state<ClosureType>(ops.twinCandidate.closureType);
+	const lang = $derived(ops.lang);
+	const L = (key: string, ...args: unknown[]) => t(lang, key, ...args);
 
+	let scenario = $state(ops.twinScenarioId);
+	let advance = $state(String(ops.twinCandidate.advanceClosureSec));
+	let closure = $state<string>(ops.twinCandidate.closureType);
+
+	// the store holds the candidate the comparison runs with
 	$effect(() => {
-		// Keep the store in sync with the local form controls.
-		ops.twinScenarioId = selectedScenario;
-		ops.twinCandidate = { advanceClosureSec: candidateAdvance, closureType: candidateClosure };
+		ops.twinScenarioId = scenario;
+		ops.twinCandidate = { advanceClosureSec: Math.max(0, Math.min(1800, Math.round(Number(advance) || 0))), closureType: closure as ClosureType };
 	});
 
-	let baselinePolicy = $derived(useCaseById(selectedScenario)?.baselinePolicy ?? null);
-	let isCached = $derived(ops.twinCachedKey === ops.twinCacheKey() && ops.twinResult !== null);
+	const useCase = $derived(useCaseById(scenario));
+	const baseline = $derived(useCase?.baselinePolicy ?? null);
+	const cached = $derived(ops.twinCachedKey === ops.twinCacheKey() && ops.twinResult !== null);
+	const result = $derived(ops.twinResult);
 
-	const lang = $derived(ops.lang);
-
-	function fmt(n: number | null | undefined, digits = 1): string {
-		return n == null || !Number.isFinite(n) ? '—' : n.toFixed(digits);
-	}
-
-	function deltaCell(v: number | null | undefined, better: 'lower' | 'higher' = 'lower'): { text: string; cls: string } {
-		if (v == null || !Number.isFinite(v)) return { text: '—', cls: '' };
-		const good = better === 'lower' ? v < 0 : v > 0;
-		return { text: `${v > 0 ? '+' : ''}${fmt(v)}`, cls: v === 0 ? 'zero' : good ? 'good' : 'bad' };
-	}
-
-	const METRICS: Array<{ key: string; labelKey: string; better: 'lower' | 'higher' }> = [
-		{ key: 'disruptionVehicleHours', labelKey: 'twinDisruption', better: 'lower' },
-		{ key: 'maxQueueLengthM', labelKey: 'twinQueue', better: 'lower' },
-		{ key: 'avgClosureDurationSec', labelKey: 'twinClosureDur', better: 'lower' },
-		{ key: 'transitTimeSec', labelKey: 'twinTransit', better: 'lower' },
-		{ key: 'recoverySec', labelKey: 'twinRecovery', better: 'lower' },
-		{ key: 'ambulanceDelaySec', labelKey: 'twinAmbulance', better: 'lower' },
+	const METRICS: ReadonlyArray<{ key: string; label: string }> = [
+		{ key: 'disruptionVehicleHours', label: 'wall_twin_m_disruption' },
+		{ key: 'maxQueueLengthM', label: 'wall_twin_m_queue' },
+		{ key: 'avgClosureDurationSec', label: 'wall_twin_m_closure' },
+		{ key: 'transitTimeSec', label: 'wall_twin_m_transit' },
+		{ key: 'recoverySec', label: 'wall_twin_m_recovery' },
+		{ key: 'ambulanceDelaySec', label: 'wall_twin_m_ambulance' },
 	];
+
+	function fmt(n: number | null | undefined): string {
+		return n == null || !Number.isFinite(n) ? '—' : n.toFixed(1);
+	}
+
+	function delta(v: number | null | undefined): { text: string; cls: string } {
+		if (v == null || !Number.isFinite(v)) return { text: '—', cls: '' };
+		return { text: `${v > 0 ? '+' : ''}${v.toFixed(1)}`, cls: v === 0 ? '' : v < 0 ? 'better' : 'worse' };
+	}
+
+	function metricOf(arm: { metrics: object } | null | undefined, key: string): number | null {
+		const v = arm ? (arm.metrics as Record<string, unknown>)[key] : null;
+		return typeof v === 'number' ? v : null;
+	}
+
+	const scenarioOptions = USE_CASES.map((u) => ({ value: u.scenarioId, label: u.name }));
+	const closureOptions = $derived(CLOSURE_TYPES.map((c) => ({ value: c, label: L(`wall_closure_${c}`) })));
 </script>
 
-{#snippet headRight()}
-	{#if ops.twinResult}
-		<Badge
-			variant={ops.twinResult.source === 'compare-endpoint' ? 'live' : 'fixture'}
-			label={ops.twinResult.source === 'compare-endpoint' ? t(lang, 'twinSourceCompare') : t(lang, 'twinSourceDirect')}
-		/>
-	{/if}
-{/snippet}
-
-<Panel title={t(lang, 'twinTitle')} sub={t(lang, 'twinSub')} lang={lang} {...{ 'header-right': headRight }}>
-	<div class="controls">
-		<label>
-			<span>scenario</span>
-			<select bind:value={selectedScenario}>
-				{#each USE_CASES as u (u.id)}
-					<option value={u.scenarioId}>{u.name}</option>
-				{/each}
-			</select>
-		</label>
-		<label>
-			<span>{t(lang, 'twinAdvance')}</span>
-			<input class="mono" type="number" min="0" max="1800" step="10" bind:value={candidateAdvance} />
-		</label>
-		<label>
-			<span>{t(lang, 'twinClosure')}</span>
-			<select bind:value={candidateClosure}>
-				{#each CLOSURE_TYPES as ct (ct)}
-					<option value={ct}>{ct}</option>
-				{/each}
-			</select>
-		</label>
-		<Button variant="secondary" size="sm" busy={ops.twinRunning} onclick={() => void ops.runTwinCompare(true)}>
-			{ops.twinRunning ? t(lang, 'twinRunning') : t(lang, 'twinRun')}
-		</Button>
+<div class="twin" data-wall="twin">
+	<div class="sub-head">
+		<h3 class="h">{L('wall_twin')}</h3>
+		{#if result}
+			<Tag tooltip={result.source === 'compare-endpoint' ? null : L('wall_twin_two_arm_tip')}>{result.source === 'compare-endpoint' ? L('wall_twin_compare') : L('wall_twin_two_arm')}</Tag>
+		{/if}
+		<span class="grow"></span>
+		<Popover placement="bottom-end">
+			<Button small icon="git-merge" loading={ops.twinRunning}>{L('wall_twin_open')}</Button>
+			{#snippet content({ close })}
+				<form
+					class="form"
+					onsubmit={(e) => {
+						e.preventDefault();
+						void ops.runTwinCompare(true);
+						close();
+					}}
+				>
+					<div class="f-head">{L('wall_twin')}</div>
+					<FormGroup label={L('wall_twin_scenario')}>
+						<HTMLSelect small fill options={scenarioOptions} bind:value={scenario} />
+					</FormGroup>
+					<div class="f-row">
+						<FormGroup label={L('wall_twin_advance')}>
+							<Input small fill type="number" min="0" max="1800" step="10" bind:value={advance} />
+						</FormGroup>
+						<FormGroup label={L('wall_twin_closure')}>
+							<HTMLSelect small fill options={closureOptions} bind:value={closure} />
+						</FormGroup>
+					</div>
+					{#if baseline}
+						<p class="f-note">{L('wall_twin_baseline_line', baseline.advanceClosureSec, L(`wall_closure_${baseline.closureType}`))}</p>
+					{/if}
+					<div class="f-foot">
+						<Button small onclick={close}>{L('wall_cancel')}</Button>
+						<Button small intent="primary" type="submit" loading={ops.twinRunning}>{L('wall_twin_run')}</Button>
+					</div>
+				</form>
+			{/snippet}
+		</Popover>
 	</div>
 
-	{#if baselinePolicy}
-		<p class="policy-line mono">
-			{t(lang, 'twinBaseline')}: {baselinePolicy.advanceClosureSec}s {baselinePolicy.closureType}
-			· {t(lang, 'twinCandidate')}: {candidateAdvance}s {candidateClosure}
-			{#if useCaseById(selectedScenario)}
-				· {t(lang, 'twinReplications', useCaseById(selectedScenario)!.nReplications)}
-				· seed {useCaseById(selectedScenario)!.seed}
-			{/if}
-		</p>
-	{/if}
+	{#if ops.twinError}<p class="note strong">{ops.twinError}</p>{/if}
 
-	{#if ops.twinError}
-		<p class="error">{ops.twinError}</p>
-	{/if}
-
-	{#if ops.twinResult}
-		{#if isCached}<p class="cached mono">{t(lang, 'twinCached')}</p>{/if}
-		<table class="results">
+	{#if result}
+		<table class="wdt">
+			<colgroup><col /><col style:width="76px" /><col style:width="76px" /><col style:width="64px" /></colgroup>
 			<thead>
 				<tr>
-					<th></th>
-					<th class="num">{t(lang, 'twinBaseline')}</th>
-					<th class="num">{t(lang, 'twinCandidate')}</th>
-					<th class="num">{t(lang, 'twinDelta')}</th>
+					<th scope="col">{L('wall_twin_metric')}</th>
+					<th scope="col" class="num">{L('wall_twin_baseline')}</th>
+					<th scope="col" class="num">{L('wall_twin_candidate')}</th>
+					<th scope="col" class="num">{L('wall_twin_delta')}</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each METRICS as m (m.key)}
-					{@const d = deltaCell(ops.twinResult!.deltas[m.key], m.better)}
+					{@const d = delta(result.deltas[m.key])}
 					<tr>
-						<td class="metric">{t(lang, m.labelKey)}</td>
-						<td class="num">{fmt(ops.twinResult!.baseline.metrics[m.key as keyof typeof ops.twinResult.baseline.metrics])}</td>
-						<td class="num">{fmt(ops.twinResult!.candidate.metrics[m.key as keyof typeof ops.twinResult.candidate.metrics])}</td>
-						<td class="num delta {d.cls}">{d.text}</td>
+						<td><div class="c"><span class="ell">{L(m.label)}</span></div></td>
+						<td class="num"><div class="c">{fmt(metricOf(result.baseline, m.key))}</div></td>
+						<td class="num"><div class="c">{fmt(metricOf(result.candidate, m.key))}</div></td>
+						<td class="num"><div class="c"><span class={d.cls}>{d.text}</span></div></td>
 					</tr>
 				{/each}
 			</tbody>
 		</table>
-		<p class="meta mono">
-			{#if ops.twinResult.calibrated != null}
-				<span title={`calibrated=${String(ops.twinResult.calibrated)}`}>{tOps(ops.lang, ops.twinResult.calibrated ? 'twinCalibratedYes' : 'twinCalibratedNo')}</span> ·
-			{/if}
-			{#if ops.twinResult.forecastCoupling}
-				<span title={`forecast_coupling=${ops.twinResult.forecastCoupling}`}>{tOps(ops.lang, 'twinForecastCoupling', ops.twinResult.forecastCoupling)}</span> ·
-			{/if}
-			{istClock(ops.twinResult.fetchedAt)} IST
+		<p class="note tn">
+			{#if result.calibrated != null}{result.calibrated ? L('wall_twin_calibrated') : L('wall_twin_uncalibrated')}{' · '}{/if}{cached ? L('wall_twin_cached', fmtTime(result.fetchedAt)) : L('wall_twin_ran', fmtTime(result.fetchedAt))}
 		</p>
 	{:else if !ops.twinRunning}
-		<EmptyState title="Run a comparison to see both twin arms." />
+		<div class="empty"><NonIdealState icon="git-merge" iconSize={20} layout="horizontal" description={L('wall_twin_none')} /></div>
 	{/if}
-</Panel>
+</div>
 
 <style>
-	.controls {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--v-space-2);
-		align-items: flex-end;
-	}
-
-	.controls label {
+	.twin {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		min-width: 0;
-	}
-
-	.controls label span {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.controls select,
-	.controls input {
-		height: var(--v-ctl-sm);
-		font: inherit;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-1);
-		background: var(--v-surface-sink);
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-btn);
-		padding: 0 var(--v-space-2);
-	}
-
-	.controls input {
-		width: 76px;
-	}
-
-	.policy-line {
-		margin: 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.error {
-		margin: 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-band-red);
-	}
-
-	.cached {
-		margin: 0 0 var(--v-space-1);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.results {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: var(--v-text-2xs);
-	}
-
-	.results th {
-		text-align: right;
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-ink-3);
-		padding: var(--v-space-1) var(--v-space-2);
-		border-bottom: 1px solid var(--v-line-2);
-	}
-
-	.results td {
-		padding: var(--v-space-1) var(--v-space-2);
+		gap: 6px;
+		padding: 8px 0 12px;
 		border-bottom: 1px solid var(--v-line-1);
+		font-size: var(--v-text-xs);
+		line-height: 16px;
+	}
+
+	.sub-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		min-height: 28px;
+		padding: 0 8px 0 16px;
+	}
+
+	.h {
+		margin: 0;
+		font-size: var(--v-text-base);
+		font-weight: 600;
+		line-height: 18px;
+		white-space: nowrap;
+	}
+
+	.grow {
+		flex: 1 1 auto;
+	}
+
+	.ell {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.note {
+		margin: 0;
+		padding: 0 16px;
 		color: var(--v-ink-2);
 	}
 
-	.metric {
-		color: var(--v-ink-3);
+	.note.strong {
+		color: var(--v-ink-1);
 	}
 
-	.num {
-		text-align: right;
-		font-family: var(--v-font-mono);
+	.tn {
+		font-variant-numeric: tabular-nums;
 	}
 
-	.delta.good {
-		color: var(--v-band-green);
+	/* a change is marked by weight, never by hue (SPEC §2.4: colour is for
+	   states that ask for action); the sign says which way, the header says
+	   lower is better */
+	.better,
+	.worse {
+		color: var(--v-ink-1);
+		font-weight: 600;
 	}
 
-	.delta.bad {
-		color: var(--v-band-red);
+	.empty {
+		padding: 0 16px;
 	}
 
-	.meta {
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
+	.form {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		width: 340px;
+		padding: 12px 16px;
 	}
 
-	.mono {
-		font-family: var(--v-font-mono);
+	.f-head {
+		margin-bottom: 4px;
+		font-weight: 600;
+	}
+
+	.f-row {
+		display: grid;
+		grid-template-columns: 104px minmax(0, 1fr);
+		gap: 8px;
+	}
+
+	.f-note {
+		margin: 0;
+		color: var(--v-ink-2);
+		font-size: var(--v-text-xs);
+	}
+
+	.f-foot {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
+		margin-top: 8px;
 	}
 </style>

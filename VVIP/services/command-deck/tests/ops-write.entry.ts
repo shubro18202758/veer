@@ -25,12 +25,15 @@ import {
 	approveEscort,
 	clearEarmark,
 	clearMovement,
+	decideDecisionSupport,
 	decideDispatch,
 	decideEnforcementRecommendation,
+	decideEscortProposal,
 	earmarkVehicle,
 	openPursuitEvent,
 	parseDecisionRefusal,
 	parseSignalRefusal,
+	promoteOsintEvent,
 	requestDispatch,
 	restoreSignalPrograms,
 	transitionEventStatus,
@@ -119,6 +122,21 @@ await refuses('escort approval (reject) refuses blank officer', () =>
 	approveEscort('9775233f-ddb0-4c6b-b9c1-16e98fc760ef', { approval_id: 'ap-1', decision: 'reject', officer: '' }),
 );
 await refuses('movement CLEAR refuses blank officer', () => clearMovement('9775233f-ddb0-4c6b-b9c1-16e98fc760ef', ''));
+await refuses('escort proposal decision (C-J approvals) refuses blank officer', () =>
+	decideEscortProposal('9775233f-ddb0-4c6b-b9c1-16e98fc760ef', { approval_id: 'ap-1', decision: 'approve', officer: ' ' }),
+);
+await refuses('OSINT promote refuses blank officer', () =>
+	promoteOsintEvent('8ec6f567-9366-47ae-8fde-38aa421a3219', { note: 'response approved' }, ''),
+);
+await refuses('OSINT promote refuses a whitespace officer', () =>
+	promoteOsintEvent('8ec6f567-9366-47ae-8fde-38aa421a3219', {}, '   '),
+);
+await refuses('decision-support decision (approve) refuses blank officer', () =>
+	decideDecisionSupport('7c1427f5-3bea-4e63-9f8f-de22563be89b', { decision: 'approve', coaId: 'coa_std' }, ''),
+);
+await refuses('decision-support decision (reject) refuses blank officer', () =>
+	decideDecisionSupport('7c1427f5-3bea-4e63-9f8f-de22563be89b', { decision: 'reject', note: 'sources unverified' }, ' '),
+);
 
 // ── 1b. bidi controls in an officer name are refused; ZWJ/ZWNJ are names ──
 const RLO = '\u202e';
@@ -160,7 +178,11 @@ for (const [name, fn] of [
 	['hostile movement id rejected (escort approve)', () => approveEscort('../movements', { approval_id: 'ap-1', decision: 'approve', officer: 'Officer X' })],
 	['hostile approval id rejected (escort approve)', () => approveEscort('9775233f-ddb0-4c6b-b9c1-16e98fc760ef', { approval_id: 'ap/../x', decision: 'approve', officer: 'Officer X' })],
 	['hostile movement id rejected (clear)', () => clearMovement('x y z', 'Officer X')],
+	['hostile movement id rejected (escort proposal decision)', () => decideEscortProposal('../movements', { approval_id: 'ap-1', decision: 'approve', officer: 'Officer X' })],
+	['hostile approval id rejected (escort proposal decision)', () => decideEscortProposal('9775233f-ddb0-4c6b-b9c1-16e98fc760ef', { approval_id: 'ap/../x', decision: 'approve', officer: 'Officer X' })],
 	['hostile event id rejected (lifecycle)', () => transitionEventStatus('../../events', { toStatus: 'active', officer: 'Officer X' })],
+	['hostile osint event id rejected (promote)', () => promoteOsintEvent('../../osint/events', {}, 'Officer X')],
+	['hostile dss id rejected (decision-support decision)', () => decideDecisionSupport('../decision-support', { decision: 'approve', coaId: 'coa_std' }, 'Officer X')],
 ] as const) {
 	try {
 		await fn();

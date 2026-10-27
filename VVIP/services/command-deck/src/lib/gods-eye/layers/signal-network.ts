@@ -37,6 +37,9 @@ import type { SignalStateRecord } from '../data';
 import type { GodsEyeLayer, GodsEyeLayerContext, GodsEyeLayerInstance } from '../registry';
 import { cssColor, cssVar } from '../theme';
 import { clampedBillboard, clampedDot, drapeAudit, ground } from './draping';
+import { kindIcon } from '$lib/design/icons';
+import { chromeOf } from '../hud/map/view';
+import { markerBillboard, tagMarker, type MarkerMeta } from '../hud/map/symbols';
 
 export const SIGNAL_NETWORK_PICK_PREFIX = 'sig:';
 
@@ -149,6 +152,7 @@ function createSignalNetworkLayer(): GodsEyeLayerInstance {
 			]),
 			godsEye.signalsFeed.status,
 		]);
+		const v2 = chromeOf(ctx) === 'v2';
 		if (sig === lastSignature) return;
 		lastSignature = sig;
 
@@ -157,6 +161,42 @@ function createSignalNetworkLayer(): GodsEyeLayerInstance {
 		lostCount = 0;
 		amberCount = 0;
 		greenCount = 0;
+
+		if (v2) {
+			// SPEC §2.4: a junction is infrastructure — a small neutral dot. Its
+			// phase is a measure, not a state that asks for a decision, so it
+			// reads in the pick text and the inspector, never as a hue.
+			for (const s of signals) {
+				const share = greenShare(s);
+				const amber = isAmber(s);
+				const lost = !amber && s.phaseLost === true;
+				const noGreen = s.phaseIndex == null && !s.phaseMovements.length;
+				if (amber) amberCount++;
+				else if (lost) lostCount++;
+				if (!noGreen && !amber && !lost) greenCount++;
+				const meta: MarkerMeta = {
+					urn: `junction:${s.junctionId}`,
+					kind: 'junction',
+					glyph: kindIcon('junction'),
+					shape: 'dot',
+					r: 4.5,
+					label: [{ text: s.name ?? `Junction ${s.junctionId}` }],
+					labelWhen: 'hover',
+				};
+				const state = amber ? 'amber' : lost ? 'all-red (lost time)' : noGreen ? 'no green phase' : 'green';
+				const entity = viewer.entities.add({
+					id: `${SIGNAL_NETWORK_PICK_PREFIX}${s.junctionId}`,
+					position: ground(cesium, s.lon, s.lat),
+					billboard: markerBillboard(cesium, meta),
+					description: `${s.name ? `${s.name}: ` : ''}junction ${s.junctionId}, signal ${state}${s.activePhase ? `, phase ${s.activePhase}` : ''}${
+						s.remainingSec != null ? ` (${s.remainingSec} s left)` : ''
+					}. Green ${s.greenSec ?? '—'} s of a ${s.cycleSec ?? '—'} s cycle${share != null ? ` (${Math.round(share * 100)} %)` : ''}, source ${s.source ?? 'unknown'}.`,
+				});
+				tagMarker(entity, meta);
+				entityIds.push(entity.id);
+			}
+			return;
+		}
 
 		const red = cssVar('--v-band-red') ?? 'red';
 		const amberInk = cssVar('--v-band-amber') ?? 'orange';
@@ -279,5 +319,6 @@ export const signalNetworkLayer: GodsEyeLayer = {
 	requiresKeyId: null,
 	pickPrefix: SIGNAL_NETWORK_PICK_PREFIX,
 	defaultOn: true,
+	group: 'traffic',
 	create: createSignalNetworkLayer,
 };

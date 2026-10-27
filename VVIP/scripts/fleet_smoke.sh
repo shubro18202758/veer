@@ -115,17 +115,18 @@ fi
 
 # ─── 7. command-deck — checked when deployed (container, or an answering
 # preview on the deck port) ────────────────────────────────────────────────
-# The SvelteKit deck: GET / IS the Convoy Command cockpit (asserted by
-# tests/design-smoke.mjs: 200 + data-template="convoy-command"), with /ops
-# the situation wall beside it — so the health contract here is a bare 200
-# on / AND on /ops.
-code=$(http_code "$COMMAND_DECK_URL/")
+# The SvelteKit deck: GET /analyst IS the Convoy Command cockpit (asserted by
+# tests/design-smoke.mjs: 200 + data-template="convoy-command"; the V3 root flip
+# moved it off /, which is Home), with /ops the situation wall beside it — so the
+# health contract here is a bare 200 on /, /analyst AND /ops.
+code=$(http_code "$COMMAND_DECK_URL/analyst")
+home_code=$(http_code "$COMMAND_DECK_URL/")
 if docker inspect "$DECK_CONTAINER" >/dev/null 2>&1 || [ "$code" != "000" ]; then
     ops_code=$(http_code "$COMMAND_DECK_URL/ops")
-    if [ "$code" = "200" ] && [ "$ops_code" = "200" ]; then
-        ok "command-deck   http :${COMMAND_DECK_URL##*:} / 200 (cockpit) + /ops 200 (the SvelteKit situation deck)"
+    if [ "$code" = "200" ] && [ "$home_code" = "200" ] && [ "$ops_code" = "200" ]; then
+        ok "command-deck   http :${COMMAND_DECK_URL##*:} /analyst 200 (cockpit) + / 200 (Home) + /ops 200 (the SvelteKit situation deck)"
     else
-        fail "command-deck   deployed but http :${COMMAND_DECK_URL##*:} -> ${code:-no answer} (want 200) / /ops -> ${ops_code:-no answer} (want 200)"
+        fail "command-deck   deployed but http :${COMMAND_DECK_URL##*:} /analyst -> ${code:-no answer} (want 200) / / -> ${home_code:-no answer} (want 200) / /ops -> ${ops_code:-no answer} (want 200)"
     fi
 else
     echo "SKIP command-deck   not deployed (no $DECK_CONTAINER container, nothing on :${COMMAND_DECK_URL##*:})"

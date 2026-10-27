@@ -23,6 +23,13 @@ tables and Valkey keys that already exist (the client never simulates):
     recommendation  pending | approved e-challans                 the evidence sighting
     anomaly         traffic.anomaly_log, last 15 min, latest      the segment
                     per segment
+    osint_event     osint.resolved_events (021): SURFACED,        its representative point
+                    not superseded, last report (window_end)
+                    or first fusion (created_at) within 24 h,
+                    ≤ 200, by credibility then recency —
+                    always source "osint"
+    place           osint.gazetteer places LINKED to those        the place
+                    situations (their toponym or a member's)
 
 Every query runs on ONE connection, batched per kind (no per-row
 queries; the unit projection caches its graph paths), so the snapshot
@@ -32,13 +39,42 @@ renders — degradation is visible, never a blank 500.
 
 Entities without a known position are not emitted (they are counted in
 ``feeds[kind].unlocated``): every snapshot entity has lon/lat.
+
+OSINT (contract C-T, C-C extension; plan X13): an ``osint_event``'s props
+are the C-T ``OsintEventRow`` fields (``dss`` included) plus the C-Q
+``provenance`` block and ``context_members`` (the store's count of its
+CONTEXT members — the feed's subquery); a held situation is never an
+entity — the snapshot counts the held situations whose sources are only
+social as ``feeds.osint_event.held_social`` (``Snapshot.feed_extra``; there
+is no ``feeds.osint`` key: the feeds stay keyed by entity kind).  An ``event``
+entity gains ``props.dss`` when a decision support exists for it: the
+C-T ``DssSummary`` of the latest ``decision.decision_support`` row, its
+``state`` read with C-U's lazy-expiry rule (a stored ``proposed`` past
+``expires_at`` reads ``expired``) — the snapshot never writes that state.
+Every ``osint.*`` and ``decision.*`` read is guarded by the cached
+relation probe, so an unmigrated database serves the pre-OSINT snapshot
+unchanged (no OSINT entity, no ``dss``, no extra statement).
+
+The 24-hour rule reads ``created_at``, which is when the situation was
+FIRST fused — possibly while it was still held — not when it surfaced (021
+records no surfacing time).  A situation that surfaces late through
+reports that are themselves older than 24 h (a backfill) therefore stays
+off the picture; it is still listed by GET /osint/events and opens in the
+dossier.  (A ``surfaced_at`` column is requested for a later migration.)
+
+Defence in depth: the OSINT package registers the canonical model checks
+(:func:`register_model_check`; ``traffic_oracle.osint.store`` does it on
+import — the city core never imports ``osint_*`` itself, X20).  A stored
+row whose props fail ``OsintEventRow`` is never an entity (nor are its
+places), and a ``props.dss`` that fails ``DssSummary`` is dropped — the
+situation or event keeps its place on the picture without it.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable, Mapping
-from datetime import datetime
+from collections.abc import Callable, Iterable, Mapping
+from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
@@ -46,10 +82,20 @@ import structlog
 from traffic_oracle.city.cameras import load_cameras
 from traffic_oracle.city.common import (
     ENTITY_KINDS,
+    EVIDENCE_SOURCE_KEY,
+    OSINT_CONTEXT_MEMBERS_SQL,
+    OSINT_EVENT_COLUMNS,
+    OSINT_PROVENANCE_COLUMNS,
+    OSINT_PROVENANCE_LATERAL,
+    OSINT_SURFACED_SQL,
     as_dict,
+    as_list,
     as_uuid,
     city_entity,
+    credibility_of,
+    decision_store_present,
     display_geom_supported,
+    event_provenance_supported,
     event_source,
     finite,
     in_bbox,
@@ -59,12 +105,16 @@ from traffic_oracle.city.common import (
     label_source,
     mask_plate,
     mask_plates_in_text,
+    osint_provenance,
+    osint_store_present,
     parse_ts,
+    place_slug,
     routes_supersede_supported,
     scan_mget,
     subject_key,
     urn,
     valid_lonlat,
+    verification_state_of,
 )
 from traffic_oracle.enforcement.engine import SQL_STOLEN_EARMARK
 from traffic_oracle.enforcement.rules import CHALLAN_WITHHELD_TEXT, is_penal
@@ -141,6 +191,111 @@ _SQL_RECENT_ANOMALIES = "SELECT rs.segment_id, rs.road_name, ST_X(ST_PointOnSurf
 _SQL_RECENT_ANOMALIES_DISPLAY = _SQL_RECENT_ANOMALIES.replace(
     "ST_PointOnSurface(rs.geom)", "ST_PointOnSurface(COALESCE(rs.display_geom, rs.geom))"
 )
+
+
+def with_event_provenance(sql: str) -> str:
+    """``sql`` (a corridor_events read aliased ``e`` that selects
+    ``e.updated_at``) plus migration 021's provenance columns — the
+    variant a reader picks once common.event_provenance_supported says so."""
+    out = sql.replace(
+        "e.updated_at, ",
+        "e.updated_at, e.source_kind, e.credibility, e.verification_state, ",
+        1,
+    )
+    if out == sql:  # pragma: no cover — a constant changed shape; never silently lose it
+        raise ValueError("corridor_events read without e.updated_at")
+    return out
+
+
+#: Migration 021 (probed): live events with their first-class provenance.
+_SQL_LIVE_EVENTS_PROVENANCE = with_event_provenance(_SQL_LIVE_EVENTS)
+
+# -- OSINT (021) and decision support (022): guarded reads -------------------
+
+#: How long a surfaced situation stays on the city picture after its last
+#: report, or after it surfaced (C-T).
+OSINT_ENTITY_WINDOW = timedelta(hours=24)
+
+#: At most this many OSINT situations per snapshot (C-T).
+MAX_OSINT_EVENTS = 200
+
+#: Surfaced situations whose last report or surfacing is newer than $1,
+#: ordered by credibility then recency, with their C-Q provenance and their
+#: context-member count (the feed's own subquery, FIX-AUDIT-A).
+_SQL_OSINT_SURFACED = (
+    "SELECT " + OSINT_EVENT_COLUMNS + ", " + OSINT_PROVENANCE_COLUMNS
+    + ", " + OSINT_CONTEXT_MEMBERS_SQL
+    + " FROM osint.resolved_events r " + OSINT_PROVENANCE_LATERAL
+    + " WHERE " + OSINT_SURFACED_SQL
+    + " AND (r.window_end > $1::timestamptz OR r.created_at > $1::timestamptz)"
+    + " ORDER BY r.credibility DESC, COALESCE(r.window_end, r.created_at) DESC,"
+    + " r.osint_event_id LIMIT $2"
+)
+
+#: Held situations whose sources are only social posts (aggregate-only
+#: rule), same recency window: a COUNT, never an entity.
+_SQL_OSINT_HELD_SOCIAL = (
+    "SELECT count(*) AS n FROM osint.resolved_events r WHERE NOT r.is_event"
+    " AND r.superseded_by IS NULL AND cardinality(r.source_tiers) > 0"
+    " AND r.source_tiers <@ ARRAY['social_unverified']::text[]"
+    " AND COALESCE(r.held_reason, '') NOT LIKE 'withdrawn%'"
+    " AND (r.window_end > $1::timestamptz OR r.created_at > $1::timestamptz)"
+)
+
+#: The toponyms the member signals of these situations were geocoded to.
+_SQL_OSINT_MEMBER_TOPONYMS = "SELECT DISTINCT es.osint_event_id, g.toponym FROM osint.event_sources es JOIN osint.geocodes g ON g.signal_id = es.signal_id WHERE es.osint_event_id = ANY($1::uuid[]) AND g.toponym IS NOT NULL"  # noqa: E501
+
+#: Gazetteer places by (lower-cased) canonical name.
+_SQL_OSINT_PLACES_BY_NAME = "SELECT z.gaz_id, z.canonical_name, z.feature_type, z.surface_forms, z.segment_id, z.junction_id, ST_X(ST_PointOnSurface(z.geom)) AS lon, ST_Y(ST_PointOnSurface(z.geom)) AS lat FROM osint.gazetteer z WHERE lower(z.canonical_name) = ANY($1::text[]) ORDER BY z.gaz_id"  # noqa: E501
+
+#: The LATEST decision support per subject URN, with its top COA's label.
+_SQL_DSS_LATEST = "SELECT DISTINCT ON (d.event_urn) d.event_urn, d.dss_id, d.state, d.generated_at, d.horizon_min, d.recommendation->>'top_coa_id' AS top_coa_id, c.label AS top_coa_label FROM decision.decision_support d LEFT JOIN decision.coa c ON c.dss_id = d.dss_id AND c.coa_id = d.recommendation->>'top_coa_id' WHERE d.event_urn = ANY($1::text[]) ORDER BY d.event_urn, d.generated_at DESC, d.dss_id DESC"  # noqa: E501
+
+#: The C-T OsintEventRow fields, in contract order: an osint_event's props.
+OSINT_EVENT_ROW_FIELDS: tuple[str, ...] = (
+    "osint_event_id",
+    "urn",
+    "fused_event_id",
+    "event_class",
+    "correlated_classes",
+    "subtype",
+    "veer_event_kind",
+    "veer_incident_kind",
+    "label",
+    "summary",
+    "rep_lon",
+    "rep_lat",
+    "toponym",
+    "segment_id",
+    "junction_id",
+    "geocode_confidence",
+    "area_level",
+    "window_start",
+    "window_end",
+    "credibility",
+    "verification_state",
+    "source_count",
+    "source_tiers",
+    "independent_publishers",
+    "cross_type_corroborated",
+    "attach",
+    "second_order",
+    "labels",
+    "promoted_event_id",
+    "dss",
+)
+
+#: The C-T place props.
+PLACE_PROP_FIELDS: tuple[str, ...] = (
+    "feature_type",
+    "canonical_name",
+    "surface_forms",
+    "segment_id",
+    "junction_id",
+    "osint_event_count",
+)
+
+_SECOND_ORDER_KEYS = ("kind", "urn", "segment_id", "note")
 
 
 # ---------------------------------------------------------------------------
@@ -230,10 +385,16 @@ def event_entity(
     rank1 = next((s for s in sorted(spines, key=lambda s: s["rank"])), None)
     seg_links = [urn("segment", sid) for sid in (rank1["segment_ids"] if rank1 else [])]
     meta_links = []
-    for key, kind in (("vehicle_id", "vehicle"), ("recommendation_id", "recommendation")):
+    for key, kind in (
+        ("vehicle_id", "vehicle"),
+        ("recommendation_id", "recommendation"),
+        # an event promoted from a reported OSINT situation links back to it
+        ("osint_event_id", "osint_event"),
+    ):
         value = as_uuid(meta.get(key))
         if value is not None:
             meta_links.append(urn(kind, str(value)))
+    source_kind = row.get("source_kind")
     props = {
         "event_kind": row["event_kind"],
         "title": row["title"],
@@ -257,10 +418,14 @@ def event_entity(
         "metadata": {
             k: meta.get(k)
             for k in ("vehicle_id", "recommendation_id", "source", "scenario_id",
-                      "use_case_id", "mode", "run_id", "fir", "opened_by")
+                      "use_case_id", "mode", "run_id", "fir", "opened_by", "osint_event_id",
+                      EVIDENCE_SOURCE_KEY)
             if meta.get(k) is not None
         },
     }
+    if source_kind is not None:
+        # additive (021, C-T): who created the event, first-class
+        props["source_kind"] = source_kind
     return city_entity(
         "event",
         str(row["event_id"]),
@@ -270,10 +435,12 @@ def event_entity(
         now=now,
         state=row["status"],
         band=band,
-        source=event_source(meta),
+        source=event_source(meta, source_kind),
         t=t,
         links=[*meta_links, *links, *seg_links],
         props=props,
+        verification_state=row.get("verification_state"),
+        credibility=row.get("credibility"),
     )
 
 
@@ -378,6 +545,12 @@ def camera_entity(cam: Mapping[str, Any], now: datetime) -> dict:
     )
 
 
+#: What a junction's phase is (HON-10): the stored signal program's clock
+#: evaluated now — planned, not controller telemetry (no live controller
+#: feed exists).
+PLANNED_PHASE = "planned (signal program)"
+
+
 def junction_entity(row: Mapping[str, Any], now: datetime) -> dict:
     doc = as_dict(row.get("doc"))
     jid = int(row["junction_id"])
@@ -405,10 +578,16 @@ def junction_entity(row: Mapping[str, Any], now: datetime) -> dict:
                 # The phase is the stored program's clock evaluated now —
                 # not controller telemetry; its age is the program's age.
                 "phase_basis": "program_clock",
+                # HON-10: said in words wherever the phase is shown — a
+                # PLANNED phase from the signal program, never a live one
+                "phase_status": PLANNED_PHASE,
+                "live_phase": False,
                 "program_updated_at": iso_z(row["program_updated_at"]),
             }
         )
-        state = "lost" if phase.get("lost") else "green"
+        # the state names the plan too: "planned_green" / "planned_lost",
+        # never the bare "green" a controller reading would report
+        state = "planned_lost" if phase.get("lost") else "planned_green"
         t = row["program_updated_at"]
     label = name or f"J{jid} · {row['junction_type']}"
     return city_entity(
@@ -668,6 +847,12 @@ def anomaly_quality(details: Mapping[str, Any]) -> str | None:
 def anomaly_entity(row: Mapping[str, Any], now: datetime) -> dict:
     details = as_dict(row["details"])
     src = details.get("source")
+    quality = anomaly_quality(details)
+    # HON-11: a flag raised on the SIMULATED feed (its reading's quality 'synthetic') is never badged live —
+    # the feed name (FleetGps, ...) says which feed, not whether it is real
+    source = label_source(src) if isinstance(src, str) else "live"
+    if quality == "synthetic" and source == "live":
+        source = "emulated"
     return city_entity(
         "anomaly",
         int(row["anomaly_id"]),
@@ -676,7 +861,7 @@ def anomaly_entity(row: Mapping[str, Any], now: datetime) -> dict:
         row["lat"],
         now=now,
         state=row["severity"],
-        source=label_source(src) if isinstance(src, str) else "live",
+        source=source,
         t=row["timestamp_utc"],
         links=[urn("segment", int(row["segment_id"]))],
         props={
@@ -690,10 +875,302 @@ def anomaly_entity(row: Mapping[str, Any], now: datetime) -> dict:
             if isinstance(details.get("anomaly_flags"), list) else None,
             # additive (C-Q): the flagged reading's own quality (synthetic
             # on the simulated feed) and the feed that produced it
-            "data_quality": anomaly_quality(details),
+            "data_quality": quality,
             "feed_source": src if isinstance(src, str) else None,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# OSINT situations, places and decision-support summaries (C-T)
+# ---------------------------------------------------------------------------
+
+
+#: The canonical model checks the OSINT package registers (defence in depth,
+#: C-T): ``osint_event_row`` — an osint_event's props (DSS aside) are an
+#: ``OsintEventRow``; ``dss_summary`` — a ``props.dss`` is a ``DssSummary``.
+#: Without the package nothing is registered and the SQL rules alone apply.
+MODEL_CHECK_NAMES: tuple[str, ...] = ("osint_event_row", "dss_summary")
+MODEL_CHECKS: dict[str, Callable[[Mapping[str, Any]], bool]] = {}
+
+
+def register_model_check(name: str, check: Callable[[Mapping[str, Any]], bool]) -> None:
+    """Register the check ``name`` (one of :data:`MODEL_CHECK_NAMES`)."""
+    if name not in MODEL_CHECK_NAMES:
+        raise ValueError(f"unknown model check {name!r}")
+    MODEL_CHECKS[name] = check
+
+
+def model_ok(name: str, doc: Mapping[str, Any]) -> bool:
+    """``doc`` passes the registered check ``name`` (True when none is
+    registered); a check that raises refuses the record."""
+    check = MODEL_CHECKS.get(name)
+    if check is None:
+        return True
+    try:
+        return bool(check(doc))
+    except Exception:  # noqa: BLE001 — a broken check refuses, never serves
+        return False
+
+
+def dss_summary(row: Mapping[str, Any], now: datetime) -> dict | None:
+    """The C-T ``DssSummary`` of one ``decision.decision_support`` row.
+
+    ``expires_at = generated_at + horizon_min``; ``state`` follows C-U's
+    lazy-expiry rule: a stored ``proposed`` whose ``expires_at`` has passed
+    READS ``expired`` (the row is never written here — the decision-support
+    GET writes it).  None when the row names no top COA."""
+    top = row.get("top_coa_id")
+    generated = parse_ts(row.get("generated_at"))
+    horizon = finite(row.get("horizon_min"))
+    if not top or generated is None or horizon is None:
+        return None
+    minutes = int(horizon)
+    expires = generated + timedelta(minutes=minutes)
+    state = str(row.get("state") or "")
+    if state == "proposed" and now >= expires:
+        state = "expired"
+    label = row.get("top_coa_label")
+    return {
+        "dss_id": str(row["dss_id"]),
+        "state": state,
+        "top_coa_id": str(top),
+        "top_coa_label": (label if isinstance(label, str) and label.strip() else str(top))[:200],
+        "generated_at": iso_z(generated),
+        "horizon_min": minutes,
+        "expires_at": iso_z(expires),
+    }
+
+
+async def load_dss(conn: Any, urns: Iterable[str], now: datetime) -> dict[str, dict]:
+    """``{subject urn: DssSummary}`` for the latest decision support of each
+    subject (one batched read); {} before migration 022 (guarded).  A
+    summary that fails the registered ``dss_summary`` check is dropped
+    (logged by id): its subject is served without a ``dss``."""
+    wanted = [u for u in dict.fromkeys(urns) if u]
+    if not wanted or not await decision_store_present(conn):
+        return {}
+    out: dict[str, dict] = {}
+    for r in await conn.fetch(_SQL_DSS_LATEST, wanted):
+        summary = dss_summary(r, now)
+        if summary is None:
+            continue
+        if not model_ok("dss_summary", summary):
+            logger.warning("city.dss_refused", dss_id=summary["dss_id"][:64])
+            continue
+        out[str(r["event_urn"])] = summary
+    return out
+
+
+def _class_label(event_class: str) -> str:
+    return event_class.replace("_", " ").capitalize()
+
+
+def _positive_int(value: Any) -> int | None:
+    f = finite(value)
+    return int(f) if f is not None and f > 0 else None
+
+
+def _second_order(raw: Any) -> list[dict]:
+    out: list[dict] = []
+    for flag in as_list(raw):
+        if isinstance(flag, Mapping) and flag.get("kind") and flag.get("urn"):
+            out.append({k: flag.get(k) for k in _SECOND_ORDER_KEYS})
+    return out
+
+
+def osint_event_props(row: Mapping[str, Any], *, dss: Mapping[str, Any] | None = None) -> dict:
+    """The C-T ``OsintEventRow`` of one surfaced ``osint.resolved_events``
+    row (contract order; no person, plate, face, handle or author field).
+    Plates in the label and summary leave masked, like every city text."""
+    oid = str(row["osint_event_id"])
+    event_class = str(row["event_class"])
+    correlated = [str(c) for c in (row.get("correlated_classes") or []) if c]
+    correlated = [event_class] + [c for c in dict.fromkeys(correlated) if c != event_class]
+    state = str(row["verification_state"])
+    tiers = list(dict.fromkeys(str(t) for t in (row.get("source_tiers") or []) if t))
+    labels = list(dict.fromkeys(str(x) for x in (row.get("labels") or []) if x)) or [state]
+    live_urn = row.get("corroborates_live_urn") or None
+    promoted = row.get("promoted_event_id")
+    own_urn = urn("event", str(promoted)) if promoted is not None else None
+    if live_urn is not None and str(live_urn) == own_urn:
+        # never presented as confirming the corridor event promoted FROM it (that relation is
+        # promoted_to; the store clears such an attach on write — this covers older rows)
+        live_urn = None
+    label = row.get("label") or (
+        f"{_class_label(event_class)} · {row.get('toponym') or 'Ahmedabad district'}"
+    )
+    props = {
+        "osint_event_id": oid,
+        "urn": urn("osint_event", oid),
+        "fused_event_id": str(row["fused_event_id"]),
+        "event_class": event_class,
+        "correlated_classes": correlated,
+        "subtype": row.get("subtype"),
+        "veer_event_kind": row.get("veer_event_kind"),
+        "veer_incident_kind": row.get("veer_incident_kind"),
+        "label": mask_plates_in_text(str(label))[:240],
+        "summary": mask_plates_in_text(str(row.get("summary") or ""))[:200],
+        "rep_lon": finite(row.get("rep_lon")),
+        "rep_lat": finite(row.get("rep_lat")),
+        "toponym": row.get("toponym"),
+        "segment_id": _positive_int(row.get("segment_id")),
+        "junction_id": _positive_int(row.get("junction_id")),
+        "geocode_confidence": credibility_of(row.get("geocode_confidence")),
+        "area_level": bool(row.get("area_level")),
+        "window_start": iso_z(parse_ts(row.get("window_start"))),
+        "window_end": iso_z(parse_ts(row.get("window_end"))),
+        "credibility": credibility_of(row.get("credibility")),
+        "verification_state": state,
+        "source_count": int(row.get("source_count") or 1),
+        "source_tiers": tiers,
+        "independent_publishers": int(row.get("independent_publishers") or 0),
+        "cross_type_corroborated": bool(row.get("cross_type_corroborated")),
+        "attach": {"novel": live_urn is None, "corroborates_live_urn": live_urn},
+        "second_order": _second_order(row.get("second_order")),
+        "labels": labels,
+        "promoted_event_id": str(promoted) if promoted is not None else None,
+        "dss": dict(dss) if dss else None,
+    }
+    return props
+
+
+def osint_row_ok(row: Mapping[str, Any]) -> bool:
+    """A stored situation row may be served as an ``osint_event``: its props
+    (DSS aside — checked on its own) pass the registered ``OsintEventRow``
+    check.  A refused row is logged by id and never becomes an entity."""
+    try:
+        props = osint_event_props(row)
+    except (KeyError, TypeError, ValueError):
+        props = None
+    if props is not None and model_ok("osint_event_row", props):
+        return True
+    logger.warning("city.osint_row_refused", osint_event_id=str(row.get("osint_event_id"))[:40])
+    return False
+
+
+def osint_event_entity(
+    row: Mapping[str, Any],
+    now: datetime,
+    *,
+    dss: Mapping[str, Any] | None = None,
+    place_urns: Iterable[str] = (),
+) -> dict:
+    """One ``osint_event`` entity: ALWAYS ``source: "osint"`` with its
+    verification state and credibility — a reported situation never passes
+    for live data.  Props = the OsintEventRow fields + C-Q ``provenance`` +
+    ``context_members`` (additive, FIX-AUDIT-A): how many of the
+    ``source_count`` members are CONTEXT (an area alert in effect there,
+    never corroboration), counted by the store — so a surface counts the
+    REPORTS as ``source_count - context_members`` (at least 1), exactly as
+    the feed's surfaced row does, instead of inferring the context count
+    from the distinct, capped ``provenance.context_publishers``."""
+    props = osint_event_props(row, dss=dss)
+    props["provenance"] = osint_provenance(row)
+    props["context_members"] = max(0, int(finite(row.get("context_members")) or 0))
+    links = list(place_urns)
+    if props["segment_id"] is not None:
+        links.append(urn("segment", props["segment_id"]))
+    if props["junction_id"] is not None:
+        links.append(urn("junction", props["junction_id"]))
+    if props["promoted_event_id"]:
+        links.append(urn("event", props["promoted_event_id"]))
+    live_urn = props["attach"]["corroborates_live_urn"]
+    if live_urn:
+        links.append(str(live_urn))
+    t = parse_ts(row.get("window_end")) or parse_ts(row.get("created_at"))
+    return city_entity(
+        "osint_event",
+        props["osint_event_id"],
+        props["label"],
+        props["rep_lon"],
+        props["rep_lat"],
+        now=now,
+        state="promoted" if props["promoted_event_id"] else "surfaced",
+        source="osint",
+        t=t,
+        links=links,
+        props=props,
+        verification_state=verification_state_of(props["verification_state"]),
+        credibility=props["credibility"],
+    )
+
+
+def place_entity(
+    row: Mapping[str, Any],
+    now: datetime,
+    *,
+    osint_event_ids: Iterable[str] = (),
+    t: datetime | None = None,
+) -> dict:
+    """One ``place`` entity: a gazetteer PLACE (never a person) a surfaced
+    situation is reported at — ``source: "osint"`` (it is on the picture
+    because of OSINT); a place has no verification state of its own."""
+    gaz_id = int(row["gaz_id"])
+    ids = list(dict.fromkeys(str(e) for e in osint_event_ids))
+    segment_id = _positive_int(row.get("segment_id"))
+    junction_id = _positive_int(row.get("junction_id"))
+    links = [urn("osint_event", e) for e in ids]
+    if segment_id is not None:
+        links.append(urn("segment", segment_id))
+    if junction_id is not None:
+        links.append(urn("junction", junction_id))
+    return city_entity(
+        "place",
+        place_slug(row["canonical_name"], gaz_id),
+        str(row["canonical_name"]),
+        row.get("lon"),
+        row.get("lat"),
+        now=now,
+        state=row.get("feature_type"),
+        source="osint",
+        t=t,
+        links=links,
+        props={
+            "feature_type": row.get("feature_type"),
+            "canonical_name": str(row["canonical_name"]),
+            "surface_forms": [str(f) for f in (row.get("surface_forms") or []) if f][:32],
+            "segment_id": segment_id,
+            "junction_id": junction_id,
+            "osint_event_count": len(ids),
+        },
+    )
+
+
+async def link_places(
+    conn: Any, rows: Iterable[Mapping[str, Any]]
+) -> tuple[dict[str, list[str]], list[tuple[Any, list[str]]]]:
+    """The places these situations are reported at: the gazetteer entries
+    named by a situation's toponym or a member signal's geocoded toponym.
+
+    Returns ``({osint_event_id: [place urn]}, [(place row, [osint_event_id])])``
+    in two batched reads (none when there is nothing to link)."""
+    rows = list(rows)
+    if not rows:
+        return {}, []
+    names: dict[str, set[str]] = {}
+    for r in rows:
+        if r.get("toponym"):
+            names.setdefault(str(r["toponym"]).strip().lower(), set()).add(
+                str(r["osint_event_id"])
+            )
+    for t in await conn.fetch(
+        _SQL_OSINT_MEMBER_TOPONYMS, [r["osint_event_id"] for r in rows]
+    ):
+        names.setdefault(str(t["toponym"]).strip().lower(), set()).add(str(t["osint_event_id"]))
+    if not names:
+        return {}, []
+    by_event: dict[str, list[str]] = {}
+    places: list[tuple[Any, list[str]]] = []
+    for p in await conn.fetch(_SQL_OSINT_PLACES_BY_NAME, sorted(names)):
+        eids = sorted(names.get(str(p["canonical_name"]).strip().lower(), ()))
+        if not eids:
+            continue
+        purn = urn("place", place_slug(p["canonical_name"], p["gaz_id"]))
+        for e in eids:
+            by_event.setdefault(e, []).append(purn)
+        places.append((p, eids))
+    return by_event, places
 
 
 # ---------------------------------------------------------------------------
@@ -724,7 +1201,40 @@ class Snapshot:
 
     # -- shared sources -------------------------------------------------
     async def live_events(self) -> list[Any]:
-        return await self._once("events", lambda: self.conn.fetch(_SQL_LIVE_EVENTS))
+        async def load() -> list[Any]:
+            sql = (
+                _SQL_LIVE_EVENTS_PROVENANCE
+                if await event_provenance_supported(self.conn)
+                else _SQL_LIVE_EVENTS
+            )
+            return await self.conn.fetch(sql)
+
+        return await self._once("events", load)
+
+    async def osint_present(self) -> bool:
+        """The 021 OSINT store is in (one guarded probe per request)."""
+        return await self._once("osint_present", lambda: osint_store_present(self.conn))
+
+    async def osint_rows(self) -> list[Any]:
+        """Surfaced situations of the last 24 h (≤ 200) that pass the
+        registered model check (their places are linked from these only);
+        [] before 021."""
+
+        async def load() -> list[Any]:
+            if not await self.osint_present():
+                return []
+            rows = await self.conn.fetch(
+                _SQL_OSINT_SURFACED, self.now - OSINT_ENTITY_WINDOW, MAX_OSINT_EVENTS
+            )
+            return [r for r in rows if osint_row_ok(r)]
+
+        return await self._once("osint_rows", load)
+
+    async def osint_places(self) -> tuple[dict[str, list[str]], list[tuple[Any, list[str]]]]:
+        async def load() -> tuple[dict[str, list[str]], list[tuple[Any, list[str]]]]:
+            return await link_places(self.conn, await self.osint_rows())
+
+        return await self._once("osint_places", load)
 
     async def spines(self) -> dict[str, list[dict]]:
         """CURRENT spines per live event (superseded ones are history)."""
@@ -842,6 +1352,55 @@ class Snapshot:
                     links=links,
                     route_history=history.get(eid, []),
                 )
+            )
+        # additive (C-T): the latest decision support of each event, read
+        # with the lazy-expiry rule; only when one exists (022 guarded)
+        dss = await load_dss(self.conn, [e["urn"] for e in out], self.now)
+        for e in out:
+            if e["urn"] in dss:
+                e["props"]["dss"] = dss[e["urn"]]
+        return out
+
+    async def build_osint_event(self) -> list[dict]:
+        """Surfaced reported situations (C-T) — held ones are only counted
+        (``held_social``); before migration 021 there are none."""
+        self.feed_extra["osint_event"] = {"held_social": 0}
+        if not await self.osint_present():
+            return []
+        held = await self.conn.fetch(_SQL_OSINT_HELD_SOCIAL, self.now - OSINT_ENTITY_WINDOW)
+        self.feed_extra["osint_event"]["held_social"] = int(held[0]["n"] or 0) if held else 0
+        rows = await self.osint_rows()
+        if not rows:
+            return []
+        by_event, _ = await self.osint_places()
+        dss = await load_dss(
+            self.conn, [urn("osint_event", str(r["osint_event_id"])) for r in rows], self.now
+        )
+        return [
+            osint_event_entity(
+                r,
+                self.now,
+                dss=dss.get(urn("osint_event", str(r["osint_event_id"]))),
+                place_urns=by_event.get(str(r["osint_event_id"]), []),
+            )
+            for r in rows
+        ]
+
+    async def build_place(self) -> list[dict]:
+        """The places the snapshot's situations are reported at."""
+        rows = await self.osint_rows()
+        if not rows:
+            return []
+        latest: dict[str, datetime | None] = {
+            str(r["osint_event_id"]): parse_ts(r.get("window_end")) or parse_ts(r.get("created_at"))
+            for r in rows
+        }
+        _, places = await self.osint_places()
+        out: list[dict] = []
+        for p, eids in places:
+            times = [t for t in (latest.get(e) for e in eids) if t is not None]
+            out.append(
+                place_entity(p, self.now, osint_event_ids=eids, t=max(times) if times else None)
             )
         return out
 
@@ -980,6 +1539,12 @@ __all__ = [
     "CONVOY_POSITION_PREFIX",
     "DISPATCH_AT_EVENT_BASIS",
     "MAX_CONVOY_KEYS",
+    "MAX_OSINT_EVENTS",
+    "MODEL_CHECKS",
+    "MODEL_CHECK_NAMES",
+    "OSINT_ENTITY_WINDOW",
+    "OSINT_EVENT_ROW_FIELDS",
+    "PLACE_PROP_FIELDS",
     "SIGHTINGS_PER_VEHICLE",
     "SPINE_MARKER_BASIS",
     "Snapshot",
@@ -990,13 +1555,23 @@ __all__ = [
     "camera_entity",
     "convoy_entity",
     "dispatch_entity",
+    "dss_summary",
     "event_entity",
     "history_doc",
     "junction_entity",
+    "link_places",
+    "load_dss",
     "load_event_spines",
+    "model_ok",
+    "osint_event_entity",
+    "osint_event_props",
+    "osint_row_ok",
+    "place_entity",
     "recommendation_entity",
+    "register_model_check",
     "sighting_entity",
     "spine_doc",
     "unit_entity",
     "vehicle_entity",
+    "with_event_provenance",
 ]

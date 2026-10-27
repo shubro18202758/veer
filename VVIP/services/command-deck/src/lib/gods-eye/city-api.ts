@@ -26,11 +26,18 @@
  * Ethics rail (C6): the server masks plates in every label and text; the raw
  * plate travels only in props.plate, and the deck shows it only to a named
  * duty officer (plates.ts). No record here carries a face, person or frame.
+ *
+ * OSINT (contract C-C extension, plan X4): the entity kinds `osint_event`
+ * (uuid ids) and `place` (lower-case slugs) and the feed kind `osint`; every
+ * entity and feed row carries `verificationState` and `credibility` (null
+ * for non-OSINT rows). An OSINT row is ALWAYS source 'osint' here, whatever
+ * the wire says: open-source reports never read as live. The snapshot stays
+ * ONE GET /city/entities with no kinds filter (plan R11).
  */
 
 import { BRAIN_API, EMULATOR_PROXY_PATH, ORACLE_V1, safePathId } from '$lib/ops/endpoints';
 import { parseEscortOutcome, parseEscortProposal } from '$lib/ops/client';
-import type { EscortProposal, EscortProposalOutcome } from '$lib/ops/types';
+import type { EscortProposal, EscortProposalOutcome, VerificationState } from '$lib/ops/types';
 import { Down, NotDeployed, getJson } from './data';
 
 // ─── Fixed endpoints ─────────────────────────────────────────────────────────
@@ -65,6 +72,8 @@ export const ENTITY_KINDS = [
 	'recommendation',
 	'anomaly',
 	'segment',
+	'osint_event',
+	'place',
 ] as const;
 
 export type EntityKind = (typeof ENTITY_KINDS)[number];
@@ -73,8 +82,12 @@ export type EntityKind = (typeof ENTITY_KINDS)[number];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INT_RE = /^[1-9][0-9]{0,17}$/;
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
-const UUID_KINDS = new Set<EntityKind>(['event', 'vehicle', 'sighting', 'dispatch', 'recommendation']);
+/** A place's id: the gazetteer slug (contract C-C extension). */
+const PLACE_SLUG_RE = /^[a-z0-9][a-z0-9_]{0,63}$/;
+const UUID_KINDS = new Set<EntityKind>(['event', 'vehicle', 'sighting', 'dispatch', 'recommendation', 'osint_event']);
 const INT_KINDS = new Set<EntityKind>(['junction', 'segment', 'anomaly']);
+/** Kinds whose rows always come from open sources (C-C: their source is always 'osint'). */
+const OSINT_KINDS = new Set<EntityKind>(['osint_event', 'place']);
 
 export function isEntityKind(v: unknown): v is EntityKind {
 	return typeof v === 'string' && (ENTITY_KINDS as readonly string[]).includes(v);
@@ -84,6 +97,7 @@ export function isEntityKind(v: unknown): v is EntityKind {
 export function validEntityId(kind: EntityKind, id: string): boolean {
 	if (UUID_KINDS.has(kind)) return UUID_RE.test(id);
 	if (INT_KINDS.has(kind)) return INT_RE.test(id);
+	if (kind === 'place') return PLACE_SLUG_RE.test(id);
 	return SLUG_RE.test(id);
 }
 
@@ -105,8 +119,19 @@ export function parseUrn(urn: string | null | undefined): { kind: EntityKind; id
 
 // ─── Records ─────────────────────────────────────────────────────────────────
 
-export type SourceBadge = 'live' | 'emulated';
+/** Where a row comes from (plan X4): live, the scenario emulator, or open sources. */
+export type SourceBadge = 'live' | 'emulated' | 'osint';
 export type BandCode = 'GREEN' | 'AMBER' | 'RED' | 'BLACK';
+
+/** The six honest labels (migration 021, contract C-T); CONFIRMED is reserved (plan R29). */
+export const VERIFICATION_STATES: readonly VerificationState[] = [
+	'EMULATED',
+	'SIMULATED',
+	'UNVERIFIED-OSINT',
+	'NEWS-REPORTED',
+	'OFFICIAL-VERIFIED',
+	'CONFIRMED',
+];
 
 /** One CityEntity (contract C-C), times as epoch ms. */
 export interface CityEntity {
@@ -120,6 +145,10 @@ export interface CityEntity {
 	state: string | null;
 	band: BandCode | null;
 	source: SourceBadge;
+	/** OSINT verification label (null for non-OSINT rows, plan X4). */
+	verificationState: VerificationState | null;
+	/** OSINT credibility in [0, 1] (null for non-OSINT rows, plan X4). */
+	credibility: number | null;
 	/** Epoch ms of the entity's own time (sighting, update, program …). */
 	t: number | null;
 	/** Server-computed age at snapshot time. */
@@ -147,20 +176,42 @@ export interface CitySnapshot {
 	tookMs: number | null;
 }
 
+/**
+ * The city narrative's lanes. A row's `kind` is always one of these; an
+ * open-source row (wire kind `osint`) rides the Events lane (plan X8) and
+ * keeps its wire kind in `feedKind`.
+ */
 export type FeedKind = 'event' | 'enforcement' | 'anpr' | 'dispatch' | 'signals' | 'ama' | 'brain';
 
 export const FEED_KINDS: readonly FeedKind[] = ['event', 'enforcement', 'anpr', 'dispatch', 'signals', 'ama', 'brain'];
+
+/** Every FeedItem.kind the oracle sends (contract C-C extension, plan X4: + osint). */
+export type CityFeedKind = FeedKind | 'osint';
+
+export const CITY_FEED_KINDS: readonly CityFeedKind[] = [...FEED_KINDS, 'osint'];
+
+/** The lane a wire kind is drawn in: `osint` → the Events lane (plan X8). */
+export function feedLane(kind: CityFeedKind): FeedKind {
+	return kind === 'osint' ? 'event' : kind;
+}
 
 /** One FeedItem (contract C-C), `t` as epoch ms. */
 export interface FeedRow {
 	id: string;
 	t: number;
+	/** The lane (an `osint` row reads `event`; its wire kind is `feedKind`). */
 	kind: FeedKind;
+	/** The kind as the oracle sent it (`osint` included). */
+	feedKind: CityFeedKind;
 	urns: string[];
 	actor: string | null;
 	actorKind: 'human' | 'machine' | 'system';
 	text: string;
 	source: SourceBadge;
+	/** OSINT verification label (null for non-OSINT rows, plan X4). */
+	verificationState: VerificationState | null;
+	/** OSINT credibility in [0, 1] (null for non-OSINT rows, plan X4). */
+	credibility: number | null;
 	severity: 'info' | 'warn' | 'critical';
 	props: Record<string, unknown>;
 }
@@ -202,6 +253,22 @@ function record(v: unknown): Record<string, unknown> {
 
 const BANDS: readonly BandCode[] = ['GREEN', 'AMBER', 'RED', 'BLACK'];
 
+/** The wire source as this deck shows it: emulated and osint kept, anything else live (plan X4). */
+function sourceOf(v: unknown): SourceBadge {
+	return v === 'emulated' || v === 'osint' ? v : 'live';
+}
+
+/** One of the six verification labels, or null. */
+export function parseVerificationState(v: unknown): VerificationState | null {
+	return typeof v === 'string' && (VERIFICATION_STATES as readonly string[]).includes(v) ? (v as VerificationState) : null;
+}
+
+/** A credibility in [0, 1], or null. */
+export function parseCredibility(v: unknown): number | null {
+	const n = num(v);
+	return n != null && n >= 0 && n <= 1 ? n : null;
+}
+
 /** One wire CityEntity → record; null when it cannot be identified. */
 export function parseCityEntity(raw: unknown): CityEntity | null {
 	const r = record(raw);
@@ -220,7 +287,10 @@ export function parseCityEntity(raw: unknown): CityEntity | null {
 		lat: lon != null && lat != null ? lat : null,
 		state: str(r.state),
 		band: typeof r.band === 'string' && (BANDS as readonly string[]).includes(r.band) ? (r.band as BandCode) : null,
-		source: r.source === 'emulated' ? 'emulated' : 'live',
+		// an open-source kind is always 'osint', whatever the wire says (never live)
+		source: OSINT_KINDS.has(kind) ? 'osint' : sourceOf(r.source),
+		verificationState: parseVerificationState(r.verification_state ?? r.verificationState),
+		credibility: parseCredibility(r.credibility),
 		t: epochMs(r.t),
 		ageSec: num(r.age_sec),
 		links: Array.isArray(r.links) ? r.links.filter((u): u is string => typeof u === 'string') : [],
@@ -262,18 +332,23 @@ export function parseFeedRow(raw: unknown): FeedRow | null {
 	const id = str(r.id);
 	const t = epochMs(r.t);
 	const kind = r.kind;
-	if (!id || t == null || typeof kind !== 'string' || !(FEED_KINDS as readonly string[]).includes(kind)) return null;
+	if (!id || t == null || typeof kind !== 'string' || !(CITY_FEED_KINDS as readonly string[]).includes(kind)) return null;
+	const feedKind = kind as CityFeedKind;
 	return {
 		id,
 		t,
-		kind: kind as FeedKind,
+		kind: feedLane(feedKind),
+		feedKind,
 		urns: Array.isArray(r.urns) ? r.urns.filter((u): u is string => typeof u === 'string') : [],
 		actor: str(r.actor),
 		actorKind: (ACTOR_KINDS as readonly string[]).includes(String(r.actor_kind))
 			? (r.actor_kind as FeedRow['actorKind'])
 			: 'system',
 		text: str(r.text) ?? '',
-		source: r.source === 'emulated' ? 'emulated' : 'live',
+		// an osint row is always 'osint', whatever the wire says (never live)
+		source: feedKind === 'osint' ? 'osint' : sourceOf(r.source),
+		verificationState: parseVerificationState(r.verification_state ?? r.verificationState),
+		credibility: parseCredibility(r.credibility),
 		severity: (SEVERITIES as readonly string[]).includes(String(r.severity))
 			? (r.severity as FeedRow['severity'])
 			: 'info',

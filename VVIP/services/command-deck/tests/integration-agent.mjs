@@ -23,6 +23,7 @@
  */
 
 import { deckFetch, signIn, signOut } from './lib/operator-session.mjs';
+import { HOME, WORKSPACE } from './lib/routes.mjs';
 
 const BASE_URL = (
 	process.argv.includes('--base-url')
@@ -91,7 +92,8 @@ async function testEndpoint(name, path, options = {}) {
 
 async function testDeckAndGate() {
 	console.log('\n[1/6] Deck serving + operator gate');
-	await testEndpoint('GET / (the cockpit)', '/', { anonymous: true, latencyBudgetMs: 3000 });
+	await testEndpoint(`GET ${WORKSPACE} (the cockpit)`, WORKSPACE, { anonymous: true, latencyBudgetMs: 3000 });
+	await testEndpoint(`GET ${HOME} (Home)`, HOME, { anonymous: true, latencyBudgetMs: 3000 });
 	await testEndpoint('GET /api/session', '/api/session', {
 		anonymous: true,
 		expectShape: (d) => (d && typeof d.gate === 'boolean') || 'no {gate}',

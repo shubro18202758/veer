@@ -191,6 +191,7 @@ services:
     container_name: vvip-traffic-oracle
     restart: unless-stopped
     environment:
+      HOST: "0.0.0.0"  # bridge network: the published port needs it (the oracle defaults to loopback)
       VVIP_DATABASE_URL: postgresql://corridor_admin:${POSTGIS_PASSWORD:-dev_changeme}@postgis:5432/corridor_db
       VVIP_VALKEY_URL: redis://valkey:6379
       VVIP_NATS_URL: nats://nats:4222
@@ -248,15 +249,11 @@ services:
     container_name: vvip-convoy-brain
     restart: unless-stopped
     environment:
-      VVIP_DATABASE_URL: postgresql://corridor_admin:${POSTGIS_PASSWORD:-dev_changeme}@postgis:5432/corridor_db
       VVIP_VALKEY_URL: redis://valkey:6379
-      VVIP_NATS_URL: nats://nats:4222
       # Host model stack (models stream, C10): fixed internal endpoints
       MODEL_HOST_URL: http://host.docker.internal:8083
       LLAMA_BASE_URL: http://host.docker.internal:8084
       EMBEDDING_SERVICE_URL: http://host.docker.internal:8085
-      # legacy (retired with ollama_bridge.py; kept for transition):
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
       TRAFFIC_ORACLE_URL: http://traffic-oracle:8081
       PORT: "8080"
     ports:

@@ -84,7 +84,13 @@
  *                                        ones
  *   verify-all-tier-inventory            tier functions AND call sites
  *                                        intact in the pinned order (the
- *                                        offline ladder and the --live tiers)
+ *                                        offline ladder and the --live tiers;
+ *                                        tier_osint_offline right after the
+ *                                        pytest suites, running the OSINT
+ *                                        smoke and the gazetteer check), and
+ *                                        the OSINT packages' direct deps
+ *                                        (defusedxml, pyproj) INSIDE the
+ *                                        GATE_DEPS literal CI extracts
  *   pdf-claims-fresh                     the rendered PDF (pdftotext) carries
  *                                        the same corrected figures and is
  *                                        not older than the PPTX
@@ -560,7 +566,8 @@ function renderedDeckNeedles(chain, bench) {
 		...(top ? [`junction ${top.junction_id}, ${top.signal_control === false ? 'unsignalised' : 'signal-controlled'}, score ${top.score}`] : []),
 		`${chain.trace?.points}-position trace`,
 		String(bench.score_summary?.keyword_coverage),
-		'Convoy Command cockpit', '40/40'
+		// V3 (2026-10-27): the slides name Home as the front door and the live READY count of the V3 deploy
+		'Home (what needs you now)', 'READY 12/12'
 	];
 }
 
@@ -575,10 +582,12 @@ const CHECKS = [
 			let good = true;
 			good &= c.expectIn(DESIGN_SMOKE, smoke, 'data-template="convoy-command"', c.id,
 				'design-smoke must assert the cockpit marker');
-			good &= c.expectIn(DESIGN_SMOKE, smoke, '/ is the Convoy Command cockpit', c.id,
-				'design-smoke must name the cockpit contract');
-			good &= c.expectIn(DESIGN_SMOKE, smoke, "const EIGHT = ['/', '/ops'", c.id,
-				'design-smoke must probe / AND /ops as live 200 URLs');
+			// V3 (2026-10-27): `/` is Home and the cockpit is the Analyst workspace (`/analyst`, a reroute onto
+			// the (deck) root route, never a 301) — design-smoke names that contract and probes both as live URLs
+			good &= c.expectIn(DESIGN_SMOKE, smoke, 'IS the restored Convoy Command cockpit', c.id,
+				'design-smoke must name the cockpit contract (the Analyst workspace)');
+			good &= c.expectIn(DESIGN_SMOKE, smoke, "const EIGHT = [WORKSPACE, HOME, '/ops'", c.id,
+				'design-smoke must probe the workspace, Home AND /ops as live 200 URLs');
 			// no route rewrite anywhere in the deck src: code only — a comment
 			// may talk about redirects, and fetch()'s redirect:'manual' (never
 			// FOLLOW one) is tolerated in any file
@@ -978,8 +987,10 @@ const CHECKS = [
 			const screens = man.screens ?? {};
 			let total = 0;
 			let okCount = 0;
+			// a check recorded as SKIPPED (a dev-harness fixture page that a production deck does not serve) is
+			// neither counted nor failed — screens-verify itself reports it as "not run here, not counted as passed"
 			for (const [name, s] of Object.entries(screens)) {
-				const ch = s.checks ?? {};
+				const ch = Object.fromEntries(Object.entries(s.checks ?? {}).filter(([, x]) => !x.skipped));
 				total += Object.keys(ch).length;
 				okCount += Object.values(ch).filter((x) => x.ok).length;
 				for (const [k, x] of Object.entries(ch)) {
@@ -1344,7 +1355,7 @@ const CHECKS = [
 			// with command-not-found, so it is a failure here, not a passing grep
 			const ladders = [
 				['tier_scripts_syntax', 'tier_gods_eye_check', 'tier_gods_eye_canvas', 'tier_design_smoke', 'tier_deck_ui',
-					'tier_pytest_suites', 'tier_cargo', 'tier_display_geometry', 'tier_ingress_segments',
+					'tier_pytest_suites', 'tier_osint_offline', 'tier_cargo', 'tier_display_geometry', 'tier_ingress_segments',
 					'tier_submission_consistency', 'tier_wave1_hatches', 'tier_wave2_forecaster',
 					'tier_wave2_routing', 'tier_wave2_tier0', 'tier_wave3_repetition', 'tier_wave3_ledger'],
 				['tier_live', 'tier_demo_reset', 'tier_live_smokes', 'tier_models', 'tier_model_drift']
@@ -1365,6 +1376,25 @@ const CHECKS = [
 			c.expectIn(VERIFY_ALL, va, 'scripts/gen_display_geometry.py --verify', c.id, 'verify_all.sh must re-measure the OSM network (gen_display_geometry.py --verify)');
 			c.expectIn(VERIFY_ALL, va, 'scripts/gen_ingress_segments.py --check', c.id, "verify_all.sh must check signal-ingress's compiled-in network against the store (gen_ingress_segments.py --check)");
 			c.expectIn(VERIFY_ALL, va, 'cargo test --locked', c.id, 'verify_all.sh must run the signal-ingress cargo tests');
+			// the OSINT tier: the synthetic-capture pipeline smoke and the gazetteer drift check, offline
+			c.expectIn(VERIFY_ALL, va, 'bash scripts/osint_smoke.sh --offline', c.id, 'verify_all.sh must run the offline OSINT pipeline smoke (scripts/osint_smoke.sh --offline)');
+			// the command itself, under the gate venv — the bare 'gen_osint_gazetteer.py --check' also matches the
+			// tier's own log line, which would keep this check green with the command gone
+			c.expectIn(VERIFY_ALL, va, '"$GATE_VENV/bin/python" scripts/gen_osint_gazetteer.py --check', c.id, 'verify_all.sh must check the committed gazetteer against a rebuild, under the gate venv (gen_osint_gazetteer.py --check)');
+			// CI's gates.yml installs exactly the GATE_DEPS=( … ) literal (sed -n '/^GATE_DEPS=(/,/)$/p'):
+			// a dependency appended on a separate GATE_DEPS+=(…) line never reaches it
+			const deps = /^GATE_DEPS=\(([\s\S]*?)\)$/m.exec(va);
+			if (!deps) {
+				c.fail(VERIFY_ALL, 1, c.id, 'verify_all.sh lost the GATE_DEPS=( … ) literal that CI extracts');
+			} else {
+				const lineOfDeps = va.slice(0, deps.index).split('\n').length;
+				const names = new Set(deps[1].split(/\s+/).map((s) => s.replace(/^'|'$/g, '').replace(/\[.*$/, '')).filter(Boolean));
+				for (const dep of ['defusedxml', 'pyproj']) {
+					if (!names.has(dep)) c.fail(VERIFY_ALL, lineOfDeps, c.id, `GATE_DEPS literal lacks ${dep} (an OSINT package's direct dependency; CI installs only the literal)`);
+				}
+				const appended = /^\s*GATE_DEPS\+=/m.exec(va);
+				if (appended) c.fail(VERIFY_ALL, va.slice(0, appended.index).split('\n').length, c.id, 'a GATE_DEPS+=(…) line: CI extracts only the GATE_DEPS=( … ) literal, so that dependency never reaches it');
+			}
 			// the stack-bound tools that cannot run hermetically are at least
 			// parsed offline, and the pre-judging dry-run is a --live tier
 			for (const needle of ['node --check scripts/journeys.mjs', 'bash -n scripts/demo_reset.sh',
@@ -1765,7 +1795,35 @@ const MUTATIONS = [
 		id: 'verify-all-tier-inventory', scope: 'vvip',
 		desc: 'verify_all.sh runs the cargo tier before the pytest suites (out of the pinned order)',
 		apply(m) {
-			m.edit(VERIFY_ALL, (t) => t.replace(/^(\s+)tier_pytest_suites\n(\s+)tier_cargo$/m, '$1tier_cargo\n$2tier_pytest_suites'));
+			m.edit(VERIFY_ALL, (t) => t.replace(/^(\s+)tier_pytest_suites\n(\s+)tier_osint_offline\n(\s+)tier_cargo$/m,
+				'$1tier_cargo\n$2tier_pytest_suites\n$3tier_osint_offline'));
+		}
+	},
+	{
+		id: 'verify-all-tier-inventory', scope: 'vvip',
+		desc: 'verify_all.sh runs the OSINT offline tier before the pytest suites (its gate venv not bootstrapped yet)',
+		apply(m) {
+			m.edit(VERIFY_ALL, (t) => t.replace(/^(\s+)tier_pytest_suites\n(\s+)tier_osint_offline$/m, '$1tier_osint_offline\n$2tier_pytest_suites'));
+		}
+	},
+	{
+		id: 'verify-all-tier-inventory', scope: 'vvip',
+		desc: 'verify_all.sh drops the OSINT smoke from its OSINT tier',
+		apply(m) { m.edit(VERIFY_ALL, (t) => t.replaceAll('bash scripts/osint_smoke.sh --offline', 'true')); }
+	},
+	{
+		id: 'verify-all-tier-inventory', scope: 'vvip',
+		desc: 'verify_all.sh drops the gazetteer check from its OSINT tier (the tier\'s log line still names it)',
+		apply(m) {
+			m.edit(VERIFY_ALL, (t) => t.replaceAll('"$GATE_VENV/bin/python" scripts/gen_osint_gazetteer.py --check',
+				"echo 'gazetteer OK (not checked)'"));
+		}
+	},
+	{
+		id: 'verify-all-tier-inventory', scope: 'vvip',
+		desc: 'defusedxml moves out of the GATE_DEPS literal onto a GATE_DEPS+=(…) line CI never sees',
+		apply(m) {
+			m.edit(VERIFY_ALL, (t) => t.replace(' gymnasium defusedxml)\n', ' gymnasium)\nGATE_DEPS+=(defusedxml)\n'));
 		}
 	},
 	{

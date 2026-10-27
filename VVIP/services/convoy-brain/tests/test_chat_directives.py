@@ -298,7 +298,10 @@ class TestSelectionGrounding:
     async def test_the_linked_vehicle_is_cited_by_its_masked_plate(self, fake_store):
         """A citation chip reads 'vehicle GJ27EM•••1', not the vehicle's uuid."""
         executor = FakeExecutor(routes={"get_active_corridor_events": EVENTS})
-        bridge = ScriptBridge(replies=[json.dumps({"arguments": {}}), json.dumps(FINAL_OK)])
+        # cited because the answer names it (HON-13: no padding with entities
+        # the answer is not about)
+        answer = dict(FINAL_OK, reasoning="The pursuit of vehicle GJ27EM•••1 is planning.")
+        bridge = ScriptBridge(replies=[json.dumps({"arguments": {}}), json.dumps(answer)])
         orch = Orchestrator(bridge, executor, fake_store, decider_brain=DeciderBrain(
             ScriptDecider(["get_active_corridor_events", "final_answer"]), min_interval_sec=0))
         state = await orch.open_session(event_id=PURSUIT)
@@ -342,9 +345,15 @@ class TestFinalAnswerRescue:
         cut = ('{"action": "status_report", "reasoning": "The pursuit PURSUIT — stolen '
                'GJ27EM•••1 is planning; its sweep belt covers segments 1012, 1015 and 1005.", '
                '"tool_calls_made": ["get_active_corridor_e')
-        orch = Orchestrator(ScriptBridge(replies=[cut]), FakeExecutor(), fake_store,
-                            decider_brain=DeciderBrain(ScriptDecider("final_answer"),
-                                                       min_interval_sec=0))
+        # the answer stands on a tool result (the grounding check removes
+        # what no source reported: here the board names the pursuit, its
+        # vehicle and its spine)
+        orch = Orchestrator(ScriptBridge(replies=[json.dumps({"arguments": {}}), cut]),
+                            FakeExecutor(routes={"get_active_corridor_events": EVENTS}),
+                            fake_store,
+                            decider_brain=DeciderBrain(
+                                ScriptDecider(["get_active_corridor_events", "final_answer"]),
+                                min_interval_sec=0))
         await orch.create_session("s1")
         result = await orch.process_turn("s1", "status?")
         assert result["action"] == "status_report"
@@ -520,4 +529,7 @@ class TestFinalAnswerRescue:
         await orch.create_session("s1")
         result = await orch.process_turn("s1", "forecast for segment 1012")
         assert "heuristic_final" in result["tiers_used"]
-        assert result["reasoning"].endswith(SIMULATED_FEED_NOTE)
+        # labelled exactly once: the forecast summary itself now says
+        # SIMULATED FEED (HON-17), so the note is not appended a second time
+        assert "(SIMULATED FEED)" in result["reasoning"]
+        assert result["reasoning"].count("SIMULATED FEED") == 1

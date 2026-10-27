@@ -85,6 +85,11 @@ declare global {
 		lookAtTransform(transform: unknown, offset?: unknown): void;
 		/** Fires when the view changes enough (share-hash updates). */
 		changed: CesiumEvent;
+		/** Fires when the camera stops moving (chrome v2: clusters, labels, the scale bar). */
+		moveEnd?: CesiumEvent;
+		/** Move along the view direction by `amount` metres (chrome v2 zoom buttons). */
+		zoomIn?(amount?: number): void;
+		zoomOut?(amount?: number): void;
 		/** Fraction of view change that raises `changed` (default 0.5). */
 		percentageChanged: number;
 		/**
@@ -122,7 +127,16 @@ declare global {
 		point?: { pixelSize?: CesiumProperty<number> | number; outlineWidth?: CesiumProperty<number> | number };
 		polygon?: unknown;
 		/** Pixel-sized image (e-challan pins, signal glyphs) — highlight scales it. */
-		billboard?: { scale?: CesiumProperty<number> | number };
+		billboard?: {
+			scale?: CesiumProperty<number> | number;
+			/** Chrome v2 restyles markers in place (image, size, offset, tint, visibility). */
+			show?: CesiumProperty<boolean> | boolean;
+			image?: unknown;
+			width?: CesiumProperty<number> | number;
+			height?: CesiumProperty<number> | number;
+			pixelOffset?: unknown;
+			color?: unknown;
+		};
 		/** Text; a highlighted entity drops its distance condition so its label always shows. */
 		label?: { distanceDisplayCondition?: unknown };
 	}
@@ -133,6 +147,11 @@ declare global {
 		removeAll(): void;
 		getById(id: string): CesiumEntity | undefined;
 		values: CesiumEntity[];
+		/** (collection, added, removed, changed) — chrome v2 restyles after a layer redraw. */
+		collectionChanged?: CesiumEvent<[unknown, CesiumEntity[], CesiumEntity[], CesiumEntity[]]>;
+		/** Batch many entity edits into one collectionChanged (the flow layer's in-place pick texts). */
+		suspendEvents?(): void;
+		resumeEvents?(): void;
 	}
 
 	interface CesiumImageryLayerCollection {
@@ -234,6 +253,14 @@ declare global {
 		clock: CesiumClock;
 		/** The data-credit bar: static credits ride every frame (a showOnScreen credit on the bar itself). */
 		creditDisplay?: { addStaticCredit(credit: unknown): void; removeStaticCredit?(credit: unknown): void };
+		/** The widget's own input handler (chrome v2 drops its double-click entity tracking). */
+		cesiumWidget?: { screenSpaceEventHandler?: { removeInputAction(type: number): void } };
+		/**
+		 * `canAnimate` is false while a data source's geometry is still being
+		 * built (a draped batch not ready yet; the viewer's default
+		 * allowDataSourcesToSuspendAnimation) — the v2 flow layer waits on it.
+		 */
+		clockViewModel?: { canAnimate?: boolean };
 		destroy(): void;
 		resize(): void;
 	}
@@ -306,7 +333,7 @@ declare global {
 			): void;
 			destroy(): void;
 		};
-		ScreenSpaceEventType: { LEFT_CLICK: number; MOUSE_MOVE: number };
+		ScreenSpaceEventType: { LEFT_CLICK: number; MOUSE_MOVE: number; LEFT_DOUBLE_CLICK?: number };
 		/** Time-varying property for animated entity fields (pursuit overlay). */
 		CallbackProperty: new (callback: () => unknown, isConstant: boolean) => unknown;
 		/** Dashed polyline material (the marching future arc, alternate spines). */

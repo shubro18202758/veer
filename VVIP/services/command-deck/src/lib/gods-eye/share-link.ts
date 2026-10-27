@@ -20,6 +20,17 @@
  * ignore the key and fall back to White-Hot. `sel` hands over the selected
  * entity (a C-C URN — ids only, never a plate) so the receiver's City
  * Command opens the same dossier.
+ *
+ * PASS-THROUGH (plan R24, SPEC §7.5): this module owns the camera, layers
+ * and `sel` keys; the workspace (UI-S2, `workspace/hash.ts`) owns its own
+ * (`view, t0, t1, f, dock, items`). Keys this parser does not know are
+ * PRESERVED (parseShareHash → `extra`, shareHashExtras) and the serializer
+ * writes them back after its own, so the two halves compose in one hash and
+ * the canvas's hash updates never drop the workspace's state. The
+ * hostile-hash guards cover them too: a key must match EXTRA_KEY_RE, a value
+ * is at most EXTRA_VALUE_MAX characters, at most EXTRA_MAX keys ride along,
+ * and a known key is never overridden by an extra. Values pass through
+ * unchanged — masking is the writer's duty (URNs only, never a mark).
  */
 
 export interface ShareCameraState {
@@ -44,6 +55,43 @@ export interface ShareViewState extends ShareCameraState {
 	layers: string[];
 	/** Selected entity URN (`<kind>:<id>`), when the sender had one. */
 	selected?: string | null;
+	/** Keys this module does not own (the workspace's), passed through in order. */
+	extra?: Record<string, string>;
+}
+
+/** The keys this module owns. */
+export const SHARE_KEYS: ReadonlySet<string> = new Set(['v', 'lat', 'lon', 'alt', 'heading', 'pitch', 'roll', 'style', 'bhot', 'palette', 'layers', 'sel']);
+
+/** A key another module may carry through the hash. */
+export const EXTRA_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+/** The longest value passed through (base64url filter sets fit). */
+export const EXTRA_VALUE_MAX = 4096;
+/** At most this many keys pass through. */
+export const EXTRA_MAX = 16;
+
+/**
+ * The keys of a hash this module does not own, guarded (key grammar, value
+ * length, count). Accepts a hash with or without '#'; never throws.
+ */
+export function shareHashExtras(hash: string | null | undefined): Record<string, string> {
+	const body = (hash ?? '').startsWith('#') ? (hash ?? '').slice(1) : (hash ?? '');
+	const out: Record<string, string> = {};
+	if (!body) return out;
+	let params: URLSearchParams;
+	try {
+		params = new URLSearchParams(body);
+	} catch {
+		return out;
+	}
+	let n = 0;
+	for (const [key, value] of params) {
+		// own keys only: 'constructor' or 'toString' is a key like any other, never an inherited name
+		if (SHARE_KEYS.has(key) || Object.hasOwn(out, key) || !EXTRA_KEY_RE.test(key) || value.length > EXTRA_VALUE_MAX) continue;
+		if (n >= EXTRA_MAX) break;
+		out[key] = value;
+		n++;
+	}
+	return out;
 }
 
 /** URN grammar a share link may carry (kind slug + the oracle's id alphabet). */
@@ -80,6 +128,14 @@ export function buildShareHash(state: ShareViewState, layerIds: readonly string[
 	const on = state.layers.filter((l) => known.has(l));
 	params.set('layers', (on.length ? on : layerIds).join(','));
 	if (state.selected && SEL_RE.test(state.selected)) params.set('sel', state.selected);
+	// the keys other modules own, after ours (guarded again: an extra never overrides a known key)
+	let n = 0;
+	for (const [key, value] of Object.entries(state.extra ?? {})) {
+		if (n >= EXTRA_MAX) break;
+		if (SHARE_KEYS.has(key) || !EXTRA_KEY_RE.test(key) || typeof value !== 'string' || value.length > EXTRA_VALUE_MAX) continue;
+		params.set(key, value);
+		n++;
+	}
 	return params.toString();
 }
 
@@ -137,5 +193,6 @@ export function parseShareHash(hash: string, layerIds: readonly string[]): Share
 		palette: style === 'flir' && params.get('palette') === 'iron' ? 'iron' : 'mono',
 		layers: layers.length ? layers : fallbackLayers,
 		selected: sel && SEL_RE.test(sel) ? sel : null,
+		extra: shareHashExtras(body),
 	};
 }

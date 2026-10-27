@@ -131,6 +131,8 @@ import {
 	type SituationLogPoint,
 } from './client';
 import { readLangCookie, writeLangCookie } from '$lib/i18n/lang-cookie';
+import { ensureLang } from '$lib/i18n/load';
+import '$lib/i18n/pack-registry.svelte'; // the reactive pack-version signal (t() re-renders when a chunk lands)
 import { operatorSession } from '$lib/shell/session.svelte';
 import { tOps } from '$lib/i18n/strings.ops';
 import { istHm } from '$lib/primitives/time';
@@ -142,6 +144,7 @@ import {
 	POLL_MS,
 	PURSUIT_ANCHOR_TOL_M,
 	WS_OPEN_TIMEOUT_MS,
+	safePathId,
 } from './endpoints';
 import { clipText, maskDetail, maskPlate, maskPlatesInText, tailText } from './format';
 import { USE_CASES, useCaseById } from './usecases';
@@ -224,6 +227,18 @@ const PREVIEW_KEY = 'veer.ops.previewFixtures';
 const BAND_RANK: Record<BandCode, number> = { GREEN: 0, AMBER: 1, RED: 2, BLACK: 3 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The console's own audit-channel rows (F-18): plain words an officer can
+ * read — no event uuid (the row's meta carries the event) and no transport
+ * jargon ("ws-event", "WS ladder", "poll rung"). Exported for the unit test.
+ */
+export const AUDIT_CHANNEL_MSG = {
+	following: 'Following this event’s audit trail',
+	live: 'Audit trail updates arrive live',
+	fallback: 'Live audit updates unavailable; the trail is re-read every 2 s',
+	polled: 'Audit trail re-read every 2 s (this server sends no live updates)',
+} as const;
 
 function fixtureEvents(): CorridorEvent[] {
 	return USE_CASES.map((u) => ({
@@ -347,6 +362,7 @@ export function mergeAuditView(server: AuditEntry[], local: AuditEntry[], cap = 
 
 function planSignature(plan: InterceptionPlan): string {
 	return JSON.stringify([
+		plan.eventId, // two pursuits' plans never share a signature (the plan follows the vehicle)
 		plan.vehicleId,
 		plan.latestSighting?.sightingId,
 		plan.latestSighting?.t,
@@ -561,6 +577,9 @@ class OpsStore {
 		if (code === this.#lang) return;
 		this.#lang = code;
 		writeLangCookie(code);
+		// the other languages' packs load on first use (FIX-E-PERF2); t()'s
+		// EN fallback holds until the chunk lands, then every surface re-renders
+		void ensureLang(code);
 	}
 
 	/**
@@ -570,7 +589,10 @@ class OpsStore {
 	 */
 	adoptLangCookie() {
 		const choice = readLangCookie();
-		if (choice && choice !== this.#lang) this.#lang = choice;
+		if (choice && choice !== this.#lang) {
+			this.#lang = choice;
+			void ensureLang(choice); // the persisted language's pack chunk
+		}
 	}
 
 	// ─── operator gate (the deck's VEER_OPERATOR_PIN session) ────────────────
@@ -662,6 +684,20 @@ class OpsStore {
 	pursuitBusy = $state<string | null>(null);
 	/** Inline refusal per vehicle when a pursuit open came back refused. */
 	pursuitNote = $state<{ vehicleId: string; text: string } | null>(null);
+	/**
+	 * The vehicle whose open pursuit's plan this console follows (UI-S5A,
+	 * SPEC §5.4 "the pursuit plan follows the vehicle"): set when a vehicle is
+	 * the selection, null otherwise, and cleared when the operator picks an
+	 * event (selectEvent) — the most recent intent wins. Selecting the
+	 * vehicle OR its pursuit event loads and polls the same plan
+	 * (planEventId).
+	 */
+	followedVehicleId = $state<string | null>(null);
+
+	// ─── decided recommendations (the Decisions column's Rejected tab) ───────
+	/** Rejected recommendations, read only while a surface asks for them (pollRejected); never a global poller. */
+	rejectedRecommendations = $state<EnforcementRecommendation[]>([]);
+	rejectedUpdated = $state(0);
 
 	// ─── degradation ledger (decisions_log failure taxonomy) ─────────────────
 	degradation = $state<DegradationTaxonomy | null>(null);
@@ -1231,12 +1267,13 @@ class OpsStore {
 	private ensureSelection(firstLoad: boolean) {
 		const current = this.selectedEventId;
 		if (current && this.events.some((e) => e.eventId === current)) {
-			if (firstLoad) this.selectEvent(current); // a pre-board selection loads now
+			if (firstLoad) this.applyEventSelection(current); // a pre-board selection loads now
 			return;
 		}
 		const pick = preferredEvent(this.events);
 		if (pick) {
-			this.selectEvent(pick.eventId);
+			// an automatic pick is not the operator's intent: a followed vehicle keeps its plan
+			this.applyEventSelection(pick.eventId);
 		} else if (current || firstLoad) {
 			this.selectedEventId = null;
 			this.resetSubject();
@@ -1301,14 +1338,28 @@ class OpsStore {
 		this.rebuildAudit();
 	}
 
+	/**
+	 * The operator picks an event (the board, a map pick, a deep link, a
+	 * newly opened pursuit). The most recent intent wins (SPEC §5.4): the
+	 * picked event's plan replaces a followed vehicle's, so following stops
+	 * until a vehicle is selected again (EventBoard picks an event without
+	 * changing the workspace selection).
+	 */
 	selectEvent(id: string) {
+		this.followedVehicleId = null;
+		this.applyEventSelection(id);
+	}
+
+	/** Select `id` on the board and load its band, audit and plan; the follow is left as it is. */
+	private applyEventSelection(id: string) {
 		if (id !== this.selectedEventId) {
 			this.selectedEventId = id;
 			this.resetSubject();
 		}
 		void this.pollBand();
 		void this.pollAudit(true);
-		void this.loadInterception(id);
+		// the plan of the followed vehicle's open pursuit, else the selected pursuit's
+		void this.loadInterception(this.planEventId ?? id);
 		this.rebindSocket();
 	}
 
@@ -1338,15 +1389,16 @@ class OpsStore {
 		const officer = this.requireOfficerFor(`event ${toStatus}`);
 		if (!officer) return false;
 		this.eventBusy = eventId;
-		this.pushAudit('operator', 'decision', officer, `${TRANSITION_VERB[toStatus]} ${ev.name}${note.trim() ? ` — ${clipText(note.trim(), 140)}` : ''}`, undefined, {
-			actorKind: 'human',
-			eventId,
-			kind: 'event',
-		});
 		try {
 			const outcome = await transitionEventStatus(eventId, { toStatus, officer, note });
 			this.eventOutcome = outcome;
 			if (outcome.ok) {
+				// F-28: the officer's transition is on the local trail only once the oracle accepted it
+				this.pushAudit('operator', 'decision', officer, `${TRANSITION_VERB[toStatus]} ${ev.name}${note.trim() ? ` — ${clipText(note.trim(), 140)}` : ''}`, undefined, {
+					actorKind: 'human',
+					eventId,
+					kind: 'event',
+				});
 				await this.pollBoard(true);
 				void this.pollAudit(true);
 				if (outcome.closedDispatches) void this.pollDispatches();
@@ -1796,17 +1848,11 @@ class OpsStore {
 			// channel here — said once per event, not on every reselect.
 			if (this.rungNoted.has(ev.eventId)) return;
 			this.rungNoted.add(ev.eventId);
-			this.pushAudit(
-				'audit-poll',
-				'info',
-				'deck',
-				`audit for ${ev.eventId.slice(0, 8)} via the 2 s poll rung (this origin serves no WebSocket upgrade)`,
-				undefined,
-				{ actorKind: 'system', eventId: ev.eventId },
-			);
+			this.pushAudit('audit-poll', 'info', 'deck', AUDIT_CHANNEL_MSG.polled, undefined, { actorKind: 'system', eventId: ev.eventId });
 			return;
 		}
-		this.pushAudit('operator', 'info', 'deck', `subscribed to audit channel for ${ev.eventId}`, undefined, { actorKind: 'system' });
+		// F-18: plain words, the event in the row's meta — never a raw uuid or a transport name in the text
+		this.pushAudit('operator', 'info', 'deck', AUDIT_CHANNEL_MSG.following, undefined, { actorKind: 'system', eventId: ev.eventId });
 		const sock = createAuditSocket(
 			ev.eventId,
 			(wsEvent: BrainWsEvent) => this.onWsEvent(wsEvent),
@@ -1817,11 +1863,9 @@ class OpsStore {
 						runsSource(rung),
 						'info',
 						'deck',
-						rung === 'unavailable'
-							? 'WS ladder exhausted — falling back to 2 s audit poll'
-							: `audit channel connected via ${rung}`,
+						rung === 'unavailable' ? AUDIT_CHANNEL_MSG.fallback : AUDIT_CHANNEL_MSG.live,
 						undefined,
-						{ actorKind: 'system' },
+						{ actorKind: 'system', eventId: ev.eventId },
 					);
 				}
 			},
@@ -2529,6 +2573,11 @@ class OpsStore {
 		}
 	}
 
+	/** True once the brain accepted this console's answer to the proposal (it is final: never sent twice). */
+	escortAnswered(approvalId: string): boolean {
+		return this.escortDecisions[approvalId]?.ok === true;
+	}
+
 	/** One closed proposal as a feed row (expired / superseded / decided elsewhere). */
 	private narrateEscortOutcome(o: EscortProposalOutcome) {
 		const what = o.summary ?? o.action.replace(/_/g, ' ');
@@ -2548,10 +2597,14 @@ class OpsStore {
 	/**
 	 * A named officer approves or rejects an escort proposal — the AI never
 	 * does. One decision in flight across every surface (HUD, planner rail,
-	 * decision queue): a second click while one is out is ignored.
+	 * decision queue): a second click while one is out is ignored — and so is
+	 * one AFTER the brain accepted this console's answer: the proposal stays on
+	 * screen until the next escorts poll closes it, and a click in that window
+	 * must never send the decision again (one POST per decision).
 	 */
 	async decideEscortProposal(proposal: EscortProposal, decision: 'approve' | 'reject'): Promise<EscortApprovalOutcome | null> {
 		if (this.escortDecisionBusy) return null;
+		if (this.escortAnswered(proposal.approvalId)) return null;
 		const officer = this.requireOfficerFor(`escort proposal ${decision}`);
 		if (!officer) return null;
 		this.escortDecisionBusy = proposal.approvalId;
@@ -2644,14 +2697,6 @@ class OpsStore {
 		const unitId = input.unitId.trim() || DEFAULT_UNIT_ID[agency] || 'JR-EM-01';
 		this.dispatchBusy = eventId;
 		const label = AGENCIES[agency as keyof typeof AGENCIES]?.label ?? agency;
-		this.pushAudit(
-			'operator',
-			'decision',
-			officer,
-			`${label} ${unitId} requested${input.waypointJunction != null ? ` → J${input.waypointJunction}` : ''}`,
-			undefined,
-			{ actorKind: 'human', eventId, kind: 'dispatch' },
-		);
 		try {
 			const rec = await requestDispatch(eventId, {
 				agency,
@@ -2660,6 +2705,16 @@ class OpsStore {
 				requestedBy: officer,
 				...(input.note ? { note: input.note } : {}),
 			});
+			// F-28: the officer's request is on the trail only once the oracle has it — a refused
+			// request leaves the error row below, never a "requested" decision that did not happen
+			this.pushAudit(
+				'operator',
+				'decision',
+				officer,
+				`${label} ${unitId} requested${input.waypointJunction != null ? ` → J${input.waypointJunction}` : ''}`,
+				undefined,
+				{ actorKind: 'human', eventId, kind: 'dispatch' },
+			);
 			this.dispatchRequestNote = {
 				ok: true,
 				text: `dispatch ${rec?.dispatchId.slice(0, 8) ?? '?'} requested — awaiting a duty officer's APPROVE`,
@@ -2708,13 +2763,14 @@ class OpsStore {
 		const officer = this.requireOfficerFor(`dispatch ${action}`);
 		if (!officer) return false;
 		this.dispatchBusy = id;
-		this.pushAudit('operator', 'decision', officer, `dispatch ${id.slice(0, 8)} ${action === 'approve' ? 'approved' : 'deferred'}`, undefined, {
-			actorKind: 'human',
-			kind: 'dispatch',
-			eventId: this.dispatchEventId(id),
-		});
 		try {
 			await decideDispatch(id, { action, officer, note });
+			// F-28: recorded locally only after the oracle accepted the decision
+			this.pushAudit('operator', 'decision', officer, `dispatch ${id.slice(0, 8)} ${action === 'approve' ? 'approved' : 'deferred'}`, undefined, {
+				actorKind: 'human',
+				kind: 'dispatch',
+				eventId: this.dispatchEventId(id),
+			});
 			await this.pollDispatches();
 			void this.pollAudit(true);
 			return true;
@@ -2955,11 +3011,87 @@ class OpsStore {
 
 	// ─── pursuit / interception ───────────────────────────────────────────────
 
-	/** The 6 s pursuit poller: refresh the plan while a LIVE pursuit is selected. */
+	/**
+	 * The 6 s pursuit poller: refresh the plan while a LIVE pursuit is
+	 * selected, or while a selected vehicle has an open pursuit (planEventId).
+	 */
 	async pollInterception() {
-		const ev = this.selectedEvent;
-		if (!isLivePursuit(ev)) return;
-		await this.loadInterception(ev.eventId);
+		const id = this.planEventId;
+		if (!id) return;
+		await this.loadInterception(id);
+	}
+
+	/**
+	 * The open vehicle_pursuit whose metadata names `vehicleId` (SPEC §5.4):
+	 * a live, uuid-keyed pursuit that is neither completed nor cancelled, the
+	 * newest first. Null for an unknown or empty id.
+	 */
+	pursuitFor(vehicleId: string | null | undefined): CorridorEvent | null {
+		if (!vehicleId) return null;
+		const open = this.events.filter(
+			(e) => isLivePursuit(e) && e.metadata?.vehicleId === vehicleId && e.state !== 'completed' && e.state !== 'cancelled',
+		);
+		if (open.length <= 1) return open[0] ?? null;
+		const t = (e: CorridorEvent) => Date.parse(e.windowStart ?? e.phases[0]?.startTime ?? '') || 0;
+		return [...open].sort((a, b) => t(b) - t(a))[0];
+	}
+
+	/**
+	 * The pursuit event whose interception plan the console shows — the most
+	 * recent intent wins: the open pursuit of the followed (selected) vehicle
+	 * (selectEvent stops following), else the selected event when it is a
+	 * live pursuit, else null. With two pursuits open, selecting vehicle B
+	 * shows B's plan even while pursuit A is the board's selection.
+	 */
+	get planEventId(): string | null {
+		const followed = this.pursuitFor(this.followedVehicleId);
+		if (followed) return followed.eventId;
+		const sel = this.selectedEvent;
+		return isLivePursuit(sel) ? sel.eventId : null;
+	}
+
+	/**
+	 * Follow a vehicle's open pursuit (the vehicle is the selection), or stop
+	 * following (null). The plan loads at once and the 6 s poller keeps it
+	 * fresh; the request-token guard drops an answer for a plan no longer
+	 * followed. A hostile id is ignored.
+	 */
+	followVehicle(vehicleId: string | null | undefined) {
+		const id = vehicleId && safePathId(vehicleId) ? vehicleId : null;
+		if (id === this.followedVehicleId) return;
+		this.followedVehicleId = id;
+		const target = this.planEventId;
+		if (target) {
+			if (this.interceptionRaw && this.interceptionRaw.eventId !== target) {
+				this.interceptionRaw = null;
+				this.interception = null;
+				this.interceptionSig = '';
+				this.interceptionUpdated = 0;
+				this.interceptionNote = null;
+			}
+			void this.loadInterception(target);
+		} else if (this.interceptionRaw) {
+			this.interceptionToken++;
+			this.interceptionRaw = null;
+			this.interception = null;
+			this.interceptionSig = '';
+			this.interceptionUpdated = 0;
+			this.interceptionNote = null;
+		}
+	}
+
+	/**
+	 * GET the rejected recommendations once (the Decisions column polls it
+	 * only while its Rejected tab is open). Keeps the last good list on a
+	 * failure.
+	 */
+	async pollRejected() {
+		try {
+			this.rejectedRecommendations = await fetchEnforcementRecommendations('rejected');
+			this.rejectedUpdated = Date.now();
+		} catch {
+			// keep last-good; the tab says when it was read
+		}
 	}
 
 	/**
@@ -2986,7 +3118,7 @@ class OpsStore {
 		}
 		try {
 			const plan = await fetchInterceptionPlan(eventId);
-			if (token !== this.interceptionToken || this.selectedEventId !== eventId) return;
+			if (token !== this.interceptionToken || this.planEventId !== eventId) return;
 			const sig = planSignature(plan);
 			if (sig !== this.interceptionSig) {
 				this.interceptionSig = sig;
@@ -2996,7 +3128,7 @@ class OpsStore {
 			this.interceptionUpdated = Date.now();
 			this.interceptionNote = null;
 		} catch (err) {
-			if (token !== this.interceptionToken || this.selectedEventId !== eventId) return;
+			if (token !== this.interceptionToken || this.planEventId !== eventId) return;
 			// Keep this pursuit's last plan (the panel shows it stale); never
 			// another event's.
 			if (this.interceptionRaw && this.interceptionRaw.eventId !== eventId) {

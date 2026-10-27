@@ -29,10 +29,24 @@ its package fails to import):
     /api/v1/city/entity/{kind}/{id}  dossier
     /api/v1/city/feed            city narrative
     /api/v1/events/{id}/audit    the narrative scoped to one event
+
+OSINT surfaces (contract C-T) and decision support (C-U) — guarded mounts
+of ``traffic_oracle.osint.router`` and ``traffic_oracle.decision_support.router``
+(each module exposes ``router``); until a router lands, or when it cannot
+import (the OSINT libraries are not deployed in the image), its GET paths
+answer a truthful 503 "not deployed".  A router that is present but BROKEN
+(any exception while importing or including it) is logged as a warning with
+its type and never propagates: the oracle always boots.  The path templates
+are frozen (OS-1): the real routers use the same parameter names.
+    /api/v1/osint/events                      surfaced reported situations
+    /api/v1/osint/events/{osint_event_id}     one situation's dossier
+    /api/v1/osint/gazetteer/resolve           free text → place candidates
+    /api/v1/decision-support/{dss_id}         one decision-support proposal
 """
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
 import structlog
@@ -41,7 +55,12 @@ from fastapi.responses import JSONResponse
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["CITY_PATHS", "register_coordination_routers"]
+__all__ = [
+    "CITY_PATHS",
+    "DECISION_SUPPORT_PATHS",
+    "OSINT_PATHS",
+    "register_coordination_routers",
+]
 
 _STUB_DETAIL = "not deployed"
 
@@ -53,6 +72,24 @@ CITY_PATHS: tuple[str, ...] = (
     "/api/v1/city/entity/{kind}/{entity_id}",
     "/api/v1/city/feed",
     "/api/v1/events/{event_id}/audit",
+)
+
+#: OSINT GET paths (C-T) stubbed until traffic_oracle.osint.router mounts.
+#: Frozen templates: OS-5's router uses these parameter names.
+OSINT_PATHS: tuple[str, ...] = (
+    "/api/v1/osint/events",
+    "/api/v1/osint/events/{osint_event_id}",
+    "/api/v1/osint/gazetteer/resolve",
+)
+
+#: Decision-support GET path (C-U) stubbed until
+#: traffic_oracle.decision_support.router mounts (OS-6, same parameter name).
+DECISION_SUPPORT_PATHS: tuple[str, ...] = ("/api/v1/decision-support/{dss_id}",)
+
+#: The guarded optional mounts: (stream label, module exposing ``router``).
+_OPTIONAL_ROUTERS: tuple[tuple[str, str], ...] = (
+    ("osint", "traffic_oracle.osint.router"),
+    ("decision_support", "traffic_oracle.decision_support.router"),
 )
 
 
@@ -98,6 +135,38 @@ def _mount(app: FastAPI, label: str, router: Any) -> None:
         logger.info("coordination.router_mounted", stream=label)
 
 
+def _mount_guarded(app: FastAPI, label: str, module_name: str) -> None:
+    """Mount ``module_name.router`` if it imports; NEVER let it stop the boot.
+
+    * ImportError for the router module, its package or an ``osint_*``
+      library: the stream is simply not deployed (info) — its stubs answer.
+    * Any other ImportError (a present module importing something missing)
+      or ANY other exception while importing or including the router (the
+      ``spatial`` pattern in ``__main__``): a fault, logged as a warning with
+      its type; the stubs answer and the oracle keeps booting.
+    """
+    try:
+        module = importlib.import_module(module_name)
+        _mount(app, label, module.router)
+    except ImportError as exc:
+        package = module_name.rsplit(".", 1)[0]
+        missing = exc.name or ""
+        absent = missing in (module_name, package) or missing.startswith("osint_")
+        (logger.info if absent else logger.warning)(
+            "coordination.not_deployed" if absent else "coordination.import_failed",
+            stream=label,
+            missing=missing,
+            error=str(exc)[:200],
+        )
+    except Exception as exc:  # noqa: BLE001 — a broken stream router never takes the oracle down
+        logger.warning(
+            "coordination.router_failed",
+            stream=label,
+            error_type=type(exc).__name__,
+            error=str(exc)[:200],
+        )
+
+
 def register_coordination_routers(app: FastAPI) -> None:
     """Mount every stream router with ImportError tolerance (C0)."""
 
@@ -138,11 +207,17 @@ def register_coordination_routers(app: FastAPI) -> None:
         logger.warning("coordination.import_failed", stream="city", error=str(exc))
         app.include_router(_stub_router(CITY_PATHS))
 
-    # ── signalling / canvas / adaptive streams — 503 stubs until landed ──
+    # ── OSINT surfaces (C-T) + decision support (C-U) — guarded mounts ──
+    for label, module_name in _OPTIONAL_ROUTERS:
+        _mount_guarded(app, label, module_name)
+
+    # ── signalling / canvas / adaptive / OSINT streams — 503 stubs until landed
     stubbed: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("signals", ("/api/v1/signals/state",)),
         ("units", ("/api/v1/units",)),
         ("situation_log", ("/api/v1/adaptive/situation_log",)),
+        ("osint", OSINT_PATHS),
+        ("decision_support", DECISION_SUPPORT_PATHS),
     )
     for label, paths in stubbed:
         if any(_route_exists(app, p) for p in paths):

@@ -86,6 +86,17 @@
  *   CC_MIN_FLOW=35 CC_MIN_SIGNALS=11 CC_MIN_CAMERAS=4 CC_MIN_RAIL=10  floors
  *   PUPPETEER_FROM=…/package.json, CHROME_PATH=…   tool resolution overrides
  *
+ * Final pins (UI-S7B, SPEC §12.4–12.5): the geometry through the workspace
+ * frame (`[data-ws=frame]`, `data-dock`, `data-pane`) only; the pick dismissed
+ * with Esc on the inspector it opened (only while the click left a selection
+ * of its own); the audit rows under `[data-bottom-tab=audit]`; the provenance
+ * tags `chip-simulated` and the v2 wall's Simulated-flow legend; the planner
+ * behind `[data-rail=plan]`; the dossier's blocks in the inspector's tabs; and
+ * the officer typed into the navbar's `duty-officer` (§12.2: the inspector's
+ * own officer prompt is retired — it unmasks the plate the same way). The
+ * rail check names its rows on the v2 Explorer (kind tree → object table →
+ * the inspector's "Show on map" action flies).
+ *
  * Nothing here POSTs except the operator sign-in (gate on only) and the
  * opt-in cockpit plan (the operator's own PLAN button). Exits 0 with
  * `ok <name> — <detail>` lines, 1 on any FAIL.
@@ -98,7 +109,10 @@ import { existsSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { deckFetch, puppeteerCookies, signIn, signOut } from './lib/operator-session.mjs';
+import { deckFetch, nameOfficer, officerValue, puppeteerCookies, signIn, signOut } from './lib/operator-session.mjs';
+import { textIs, textMatches } from './lib/queue.mjs';
+import { WORKSPACE } from './lib/routes.mjs';
+import { COPY, SEL, clearCanvasRegion, dismissPick, ensureAuditRows, ensureInspectorTab, ensureLayers, ensurePlanner, ensureRail, ensureVitals, firstPresentText, leaveReplay, lockTitle, rowMarked, textHas, within } from './lib/tolerant.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DECK = path.resolve(HERE, '..');
@@ -168,6 +182,19 @@ function ok(name, cond, detail = '') {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * V3-P6B: the duty-officer input is in the V3 top bar's officer popover (the pill `v3-officer`), not inline in a
+ * navbar. Open the popover (when it is not already) so the input exists, and return the input's selector.
+ */
+async function openOfficerField(page) {
+	const sel = 'input[data-testid="duty-officer"]';
+	if (!(await page.$(sel))) {
+		await page.click('[data-v3="top-bar"] [data-testid="v3-officer"]');
+		await page.waitForSelector(sel, { timeout: 8000 });
+	}
+	return sel;
+}
 const fmt = (n, d = 4) => (typeof n === 'number' ? n.toFixed(d) : String(n));
 
 /**
@@ -290,21 +317,13 @@ const readback = (page) =>
 		return { meanChroma: chroma / n };
 	});
 
-/** The clear canvas region City Command's panels leave (client px). */
-const clearRegion = (page) =>
-	page.evaluate(() => {
-		const box = (el) => (el ? el.getBoundingClientRect() : null);
-		const stage = box(document.querySelector('.stage'));
-		const vitals = box(document.querySelector('.vitals-panel'));
-		const dossier = box(document.querySelector('.dossier-panel'));
-		const rail = box(document.querySelector('.rail-panel'));
-		if (!stage) return null;
-		const left = vitals ? vitals.right : stage.left;
-		const right = dossier ? dossier.left : stage.right;
-		const top = stage.top + 56;
-		const bottom = rail ? rail.top : stage.bottom;
-		return { left, right, top, bottom, cx: (left + right) / 2, cy: (top + bottom) / 2 };
-	});
+/**
+ * The clear canvas region City Command's panels leave (client px): today the
+ * `.stage` minus the vitals, dossier and rail panels; the redesign's map pane
+ * minus its open docks, the vitals card and the inspector (SPEC §12.4;
+ * tests/lib/tolerant.mjs clearCanvasRegion).
+ */
+const clearRegion = (page) => page.evaluate(clearCanvasRegion);
 
 /** True when the client point lands on the Cesium canvas (not a panel over it). */
 const onCanvas = (page, x, y) =>
@@ -468,12 +487,15 @@ async function layoutCheck(browser) {
 		if (phase !== 'ready') return;
 		const t0 = Date.now();
 		let rows = 0;
+		let auditTab = false;
 		while (Date.now() - t0 < 30000) {
+			// the redesign keeps the rows under the bottom dock's Audit tab (a no-op today)
+			if (!auditTab) auditTab = await ensureAuditRows(page, { timeout: 2000 });
 			rows = await page.evaluate(() => document.querySelectorAll('[data-testid=fusion-rail] .f-row').length);
 			if (rows >= FLOORS.rail) break;
 			await sleep(500);
 		}
-		ok(`${name} fusion rail rows`, rows >= FLOORS.rail, `${rows} rows after ${Math.round((Date.now() - t0) / 1000)} s (floor ${FLOORS.rail})`);
+		ok(`${name} fusion rail rows`, rows >= FLOORS.rail, `${rows} rows after ${Math.round((Date.now() - t0) / 1000)} s (floor ${FLOORS.rail})${auditTab ? ' · under the Audit tab' : ''}`);
 
 		const floors = (s) => {
 			const L = s?.layerStats ?? {};
@@ -507,27 +529,61 @@ async function layoutCheck(browser) {
 				: 'no vitals on the snapshot',
 		);
 
-		// Honesty: a synthetic ingest feed is labelled SIMULATED, never dressed as live.
-		if (v?.feeds?.simulated || Number(layers.flow?.simulated ?? 0) > 0) {
-			const tags = await page.evaluate(() => ({
-				chip: !!document.querySelector('[data-layer=flow] [data-testid=chip-simulated]'),
-				vitals: !!document.querySelector('[data-testid=vitals-feeds] .sim'),
-			}));
-			ok(`${name} simulated feed labelled`, tags.chip && tags.vitals, `FLOW chip SIM tag ${tags.chip} · vitals SIMULATED FEED pill ${tags.vitals}`);
-		}
-
 		const boxes = await page.evaluate(() => {
-			const b = (sel) => {
-				const r = document.querySelector(sel)?.getBoundingClientRect();
+			const box = (el) => {
+				const r = el?.getBoundingClientRect();
 				return r ? { x: r.x, y: r.y, r: r.right, b: r.bottom, w: r.width, h: r.height } : null;
 			};
-			return { vitals: b('[data-testid=city-vitals]'), panel: b('.vitals-panel'), rail: b('.rail-panel'), canvas: b('.ge-canvas'), ethics: b('[data-testid=vitals-ethics]') };
+			const b = (sel) => box(document.querySelector(sel));
+			return {
+				// V3-P6B: the page lives beside the V3 rail and under the V3 bars, so its widths are read against its own frame
+				deck: b('.deck-main'),
+				vitals: b('[data-testid=city-vitals]'),
+				panel: b('.vitals-panel'),
+				rail: b('.rail-panel'),
+				canvas: b('.ge-canvas'),
+				ethics: b('[data-testid=vitals-ethics]'),
+				// the redesign's workspace frame (SPEC §5.3, §12.4)
+				frame: !!document.querySelector('[data-ws="frame"]'),
+				pane: b('[data-pane="map"]'),
+				docks: [...document.querySelectorAll('[data-ws="frame"] [data-dock]')].map((d) => ({ id: d.getAttribute('data-dock'), open: d.getAttribute('data-open'), ...box(d) })),
+			};
 		});
-		const sane =
-			!!boxes.panel && !!boxes.rail && !!boxes.canvas &&
-			boxes.panel.x < W * 0.25 && boxes.rail.y > H * 0.6 && boxes.panel.b <= boxes.rail.y + 1 && boxes.canvas.w >= W * 0.95;
-		ok(`${name} vitals · canvas · rail`, sane, `vitals ${Math.round(boxes.panel?.x ?? -1)}–${Math.round(boxes.panel?.r ?? -1)} px × to y=${Math.round(boxes.panel?.b ?? -1)}, rail from y=${Math.round(boxes.rail?.y ?? -1)}, canvas ${Math.round(boxes.canvas?.w ?? 0)}×${Math.round(boxes.canvas?.h ?? 0)}`);
-		ok(`${name} ethics rails above the fold`, !!boxes.ethics && boxes.ethics.b <= (boxes.panel?.b ?? 0) + 1, `ETHICS RAILS ends at y=${Math.round(boxes.ethics?.b ?? -1)} (panel bottom ${Math.round(boxes.panel?.b ?? -1)})`);
+		if (!boxes.frame) {
+			return ok(`${name} workspace frame`, false, 'no [data-ws=frame] on /gods-eye — the v2 map mode geometry is the only layout (§12.4)');
+		}
+		// map mode (SPEC §6.2, §12.4): the canvas ≥ 95 % wide, the vitals card at the top right, no dock over the map pane
+		{
+			const pane = boxes.pane ?? boxes.canvas;
+			const over = boxes.docks.filter((d) => d.w > 0 && d.h > 0 && !!pane && d.x < pane.r - 1 && d.r > pane.x + 1 && d.y < pane.b - 1 && d.b > pane.y + 1);
+			// the canvas is ≥ 95 % of the PAGE's width (the area beside the V3 rail: the viewport less the rail), the card in its right quarter
+			const FW = boxes.deck?.w ?? W;
+			const FL = boxes.deck?.x ?? 0;
+			const sane = !!pane && !!boxes.canvas && boxes.canvas.w >= FW * 0.95 && !!boxes.vitals && boxes.vitals.r - FL >= FW * 0.75 && boxes.vitals.y <= H * 0.3 && over.length === 0;
+			ok(`${name} vitals · canvas · docks`, sane, `page frame ${Math.round(FW)} px · canvas ${Math.round(boxes.canvas?.w ?? 0)}×${Math.round(boxes.canvas?.h ?? 0)} · vitals card ${Math.round(boxes.vitals?.x ?? -1)}–${Math.round(boxes.vitals?.r ?? -1)} px from y=${Math.round(boxes.vitals?.y ?? -1)} · docks over the map pane: ${over.map((d) => d.id).join(',') || 'none'}`);
+			// the full vitals (the Info tab) keep the ethics rails above the fold
+			await ensureVitals(page, 'vitals-ethics');
+			const ethics = await page.evaluate(() => {
+				const r = document.querySelector('[data-testid=vitals-ethics]')?.getBoundingClientRect();
+				return r ? { b: r.bottom, h: r.height } : null;
+			});
+			ok(`${name} ethics rails above the fold`, !!ethics && ethics.h > 0 && ethics.b <= H + 1, `ETHICS RAILS ends at y=${Math.round(ethics?.b ?? -1)} (viewport ${H})`);
+		}
+
+		// Honesty: a synthetic ingest feed is labelled SIMULATED, never dressed as live
+		// (after the geometry: the redesign's layer tree sits in the left dock).
+		if (v?.feeds?.simulated || Number(layers.flow?.simulated ?? 0) > 0) {
+			await ensureLayers(page);
+			const tags = await page.evaluate(([chipSel, vitalsSel]) => {
+				const words = (el) => (el ? `${el.textContent ?? ''} ${el.getAttribute('title') ?? ''}`.replace(/\s+/g, ' ').trim() : null);
+				return { chip: words(document.querySelector(chipSel)), vitals: words(document.querySelector(vitalsSel)) };
+			}, [SEL.flowSimulated, SEL.vitalsSimulated]);
+			ok(
+				`${name} simulated feed labelled`,
+				tags.chip != null && tags.vitals != null && textMatches(tags.chip, COPY.simulated) && textMatches(tags.vitals, COPY.simulated),
+				`FLOW chip SIM tag '${tags.chip ?? '—'}' · vitals SIMULATED FEED pill '${tags.vitals ?? '—'}'`,
+			);
+		}
 
 		const rb = await readback(page);
 		ok(`${name} canvas renders`, (rb?.meanChroma ?? 0) > 0, `mean chroma ${fmt(rb?.meanChroma, 1)}`);
@@ -561,17 +617,25 @@ async function dossierCheck(browser) {
 		}
 		if (!spot) return ok(`${name} marker on screen`, false, `'${prefix}' not on the canvas`);
 		const cursor = await hoverAndClick(page, spot);
-		const opened = await page
+		const loaded = await page
 			.waitForFunction(
 				(u) => {
 					const el = document.querySelector('[data-testid=entity-dossier]');
-					return el?.dataset.urn === u && el.dataset.state === 'ok' && el.querySelectorAll('.rel-chip').length > 0;
+					return el?.dataset.urn === u && el.dataset.state === 'ok';
 				},
 				{ timeout: 12000 },
 				urn,
 			)
 			.then(() => true)
 			.catch(() => false);
+		// the redesign's inspector lists links under its Links tab (today the dossier renders every block at once)
+		if (loaded) await ensureInspectorTab(page, 'links', '.rel-chip');
+		const opened =
+			loaded &&
+			(await page
+				.waitForFunction(() => document.querySelectorAll('[data-testid=entity-dossier] .rel-chip').length > 0, { timeout: 8000 })
+				.then(() => true)
+				.catch(() => false));
 		ok(`${name} marker click opens the dossier`, opened, `clicked ${prefix} at ${Math.round(spot.x)},${Math.round(spot.y)} (cursor '${cursor}')`);
 		if (!opened) return;
 
@@ -596,6 +660,8 @@ async function dossierCheck(browser) {
 				};
 			});
 		const d = await read();
+		// the audit rows: today in the dossier; the redesign's Activity tab (read after the links)
+		if (await ensureInspectorTab(page, 'activity', '.a-row')) d.audit = (await read()).audit;
 		const camIds = new Set(d.cameras.map((c) => c.urn.replace(/^camera:/, '')));
 		const sightCams = d.sightings.map((s) => [...camIds].find((id) => s.text.includes(id)) ?? null);
 		ok(
@@ -630,9 +696,14 @@ async function dossierCheck(browser) {
 			`shown '${d.plate}' (data-masked=${d.maskedAttr}); the full plate appears nowhere in the dossier: ${!d.text.includes(PLATE)}`,
 		);
 
-		// A named duty officer unmasks it (C6: the officer is on console).
-		await page.type('[data-testid=dossier-officer]', 'Duty Officer CC Smoke');
+		// A named duty officer unmasks it (C6: the officer is on console): the
+		// top bar's duty-officer (plan X12; §12.2 retires the inspector's own
+		// dossier-officer prompt — one officer control, and it unmasks the
+		// inspector's plate the same way). V3-P6B: the field sits in the officer pill's popover.
+		await openOfficerField(page);
+		const officerSel = await nameOfficer(page, 'Duty Officer CC Smoke', { prefer: ['duty-officer'], delay: 0 });
 		await page.keyboard.press('Enter');
+		await page.keyboard.press('Escape');
 		const shown = await page
 			.waitForFunction(
 				(p) => document.querySelector('[data-testid=dossier-plate] .plate')?.textContent?.trim() === p,
@@ -642,7 +713,7 @@ async function dossierCheck(browser) {
 			.then(() => true)
 			.catch(() => false);
 		const after = await read();
-		ok(`${name} plate shown to a named officer`, shown && after.maskedAttr === 'false', `shown '${after.plate}' (data-masked=${after.maskedAttr})`);
+		ok(`${name} plate shown to a named officer`, shown && after.maskedAttr === 'false', `shown '${after.plate}' (data-masked=${after.maskedAttr}) · officer typed into ${officerSel}`);
 		await waitSnap(page, (s) => s.tilesLoaded || s.offlineDetected, 20000, 1000);
 		await page.screenshot({ path: path.join(ARTIFACTS, 'city-command-dossier.png') });
 	} finally {
@@ -654,63 +725,149 @@ async function dossierCheck(browser) {
 
 const POINT_KINDS = ['camera', 'sighting', 'recommendation', 'vehicle', 'dispatch', 'unit', 'junction'];
 
+/**
+ * The v2 row surface (UI-S7B repoint, audit E-WORKSPACE): the legacy fusion
+ * rail is not the v2 surface — its bottom-dock audit rows carry the feed
+ * row's FIRST urn (usually the event's), so no row named a located point
+ * entity and the check failed on main. Equal strength on the Explorer: the
+ * kind tree row opens the object TABLE, whose rows name located point
+ * entities; clicking a row selects the object everywhere, and the
+ * inspector's own "Show on map" action flies the camera to it (§12.4).
+ */
 async function railCheck(browser) {
 	const name = 'rail';
 	const page = await newPage(browser);
 	try {
-		const phase = await openCanvas(page, '/gods-eye');
+		const phase = await openCanvas(page, WORKSPACE);
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
-		await page.waitForFunction(() => document.querySelectorAll('[data-testid=fusion-rail] .f-row:not([disabled])').length > 0, { timeout: 30000 }).catch(() => {});
 		await waitSnap(page, (s) => s.registry?.status === 'ok', 20000);
-		const rows = await page.evaluate(() =>
-			[...document.querySelectorAll('[data-testid=fusion-rail] .f-row:not([disabled])')].map((b) => ({ id: b.dataset.feedId, urn: b.dataset.urn })),
-		);
-		// Only entities the LIVE registry carries are drawn (a closed dispatch's
-		// /city/entity still answers with a position, but no layer draws it).
 		const registry = await getJson(`${ORIGIN}/api/v1/city/entities`).catch(() => null);
 		const located = new Map();
 		for (const e of registry?.entities ?? []) {
-			if (typeof e.lon === 'number' && typeof e.lat === 'number' && typeof e.urn === 'string') located.set(e.urn, e);
+			if (typeof e.lon === 'number' && typeof e.lat === 'number' && typeof e.urn === 'string' && POINT_KINDS.includes(e.urn.split(':')[0])) located.set(e.urn, e);
 		}
-		let target = null;
-		for (const row of rows) {
-			const kind = row.urn?.split(':')[0];
-			if (!POINT_KINDS.includes(kind)) continue;
-			const e = located.get(row.urn);
-			if (e) {
-				target = { ...row, lon: e.lon, lat: e.lat };
-				break;
-			}
+		// Explorer: the Object types tree lists every kind with rows — open the
+		// left dock's Explorer tab the way an operator does (the dock is closed
+		// by default), then pick the first kind whose table can hold a located
+		// point entity.
+		const readKindRows = () =>
+			page.evaluate(() =>
+				[...document.querySelectorAll('[data-testid="explorer-kinds"] [data-kind]')].map((n) => ({ kind: n.getAttribute('data-kind'), count: Number(n.getAttribute('data-count') ?? -1) })),
+			);
+		let kindRows = await readKindRows();
+		if (!kindRows.length) {
+			const opened = await ensureRail(page, 'explorer', '[data-testid="explorer-kinds"]', { timeout: 10000 });
+			if (!opened && !(await page.$('[data-testid="explorer-kinds"]'))) return ok(name, false, 'the Explorer tab never opened (no [data-rail=explorer] click, no tree)');
+			kindRows = await readKindRows();
 		}
-		if (!target) return ok(name, false, `no rail row names a located point entity of the live registry (${rows.length} rows · ${located.size} located registry entities)`);
-		// The click is dispatched in the page and timed on the page clock
-		// (click → the flight's landing, selection.flyMs): the CDP round trips
-		// of a software-GL page under load are the harness's, not the operator's.
-		const t0 = Date.now();
-		await page.evaluate((id) => document.querySelector(`[data-testid=fusion-rail] .f-row[data-feed-id="${id}"]`)?.click(), target.id);
+		const kind = kindRows.find((k) => located.size > 0 && k.count > 0 && [...located.keys()].some((u) => u.startsWith(`${k.kind}:`)));
+		if (!kind) return ok(name, false, `no Explorer kind names a located point entity of the live registry (${kindRows.length} kinds · ${located.size} located point entities)`);
+		await page.evaluate((k) => document.querySelector(`[data-testid="explorer-kinds"] [data-kind="${k}"]`)?.click(), kind.kind);
+		const tableUp = await page
+			.waitForFunction((k) => !!document.querySelector(`[data-testid="object-table"] tr[data-urn^="${k}:"]`), { timeout: 15000 }, kind.kind)
+			.then(() => true)
+			.catch(() => false);
+		if (!tableUp) return ok(name, false, `the object table never listed a ${kind.kind} row after the Explorer kind click`);
+		// the located entity's row, in the table
+		const urn = [...located.keys()].find((u) => u.startsWith(`${kind.kind}:`) && !!located.get(u));
+		const e = located.get(urn);
+		const clicked = await page.evaluate((u) => {
+			const row = document.querySelector(`[data-testid="object-table"] tr[data-urn="${u}"]`);
+			row?.click();
+			return !!row;
+		}, urn);
+		const selected = await page
+			.waitForFunction((u) => window.__GODS_EYE__?.selection?.urn === u, { timeout: 8000 }, urn)
+			.then(() => true)
+			.catch(() => false);
+		// the row carries the selection mark while the table is up (the
+		// show-on-map click below switches the centre to the map)
+		const linked = await page.evaluate(rowMarked, `[data-testid="object-table"] tr[data-urn="${urn}"]`);
+		ok(`${name} table row selects the entity`, clicked && selected && linked, `${urn} (${kind.kind} row clicked; selection ${selected ? 'set' : 'not set'} · row marked ${linked})`);
+		if (!selected) return;
+		// the inspector opened on it; its Actions tab carries "Show on map".
+		// The inspector's module loads with the first pick (FIX-E-PERF2; the
+		// operator's first press prefetches it): wait for the inspector to show
+		// THIS entity before reading its tabs, as an officer waits for the panel
+		// — the tab lookup itself never waits, so a still-loading inspector read
+		// as "no Show on map" (FIX-F-REGR item 2).
+		const showSel = '[data-testid="entity-dossier"] li[data-action-id="ws.show-on-map"] button';
+		const inspected = await page
+			.waitForFunction((u) => document.querySelector('[data-testid="entity-dossier"]')?.getAttribute('data-urn') === u, { timeout: 15000 }, urn)
+			.then(() => true)
+			.catch(() => false);
+		if (!inspected) return ok(name, false, `the inspector never showed the selected entity (${urn}) within 15 s of the pick`);
+		await ensureInspectorTab(page, 'actions', 'li[data-action-id]', { timeout: 12000 });
+		const showBtn = await page.waitForSelector(showSel, { timeout: 8000 }).catch(() => null);
+		if (!showBtn) return ok(name, false, 'no "Show on map" action on the inspector (the Actions tab must offer it for a located entity)');
+		// The flight is read from the page's own fly bookkeeping (flyMs: request
+		// → landing, page clock). One sample is not a fair measure under load
+		// (audit E-S7B F11: 920–1106 ms normally, 3254 ms once at load average
+		// ~26), so the operator's action is repeated: THREE flights, the camera
+		// panned away by a canvas drag before each re-flight. EVERY flight must
+		// land on the entity (the S5 kill: a show-on-map that never flies fails
+		// on the first one); the MEDIAN landing time is held to the budget, and
+		// all three times are reported.
 		const near = (s) =>
 			!!s?.camera &&
-			s.selection?.urn === target.urn &&
+			s.selection?.urn === urn &&
 			s.selection?.flyOutcome === 'landed' &&
-			Math.abs(s.camera.lon - target.lon) <= FLY_TOLERANCE_DEG &&
-			Math.abs(s.camera.lat - target.lat) <= FLY_TOLERANCE_DEG;
-		const { snap, ok: arrived } = await waitSnap(page, near, FLY_BUDGET_MS + 4000, 100);
-		const wallMs = Date.now() - t0;
-		const flyMs = snap?.selection?.flyMs ?? null;
+			s.selection?.flyMs != null &&
+			Math.abs(s.camera.lon - e.lon) <= FLY_TOLERANCE_DEG &&
+			Math.abs(s.camera.lat - e.lat) <= FLY_TOLERANCE_DEG;
+		const panAway = async () => {
+			const box = await page.evaluate(() => {
+				const c = document.querySelector('.ge-wrap canvas') ?? document.querySelector('canvas');
+				const b = c?.getBoundingClientRect();
+				return b ? { x: b.x, y: b.y, w: b.width, h: b.height } : null;
+			});
+			if (!box) return null;
+			const x0 = box.x + box.w * 0.5;
+			const y0 = box.y + box.h * 0.5;
+			await page.mouse.move(x0, y0);
+			await page.mouse.down();
+			for (let i = 1; i <= 12; i++) await page.mouse.move(x0 - (box.w * 0.35 * i) / 12, y0 - (box.h * 0.3 * i) / 12);
+			await page.mouse.up();
+			await sleep(1500); // the 1 Hz snapshot catches the moved camera
+			const c = (await snapshot(page).catch(() => null))?.camera;
+			return c ? Math.round(Math.hypot((c.lon - e.lon) * 102_000, (c.lat - e.lat) * 110_540)) : null;
+		};
+		const flights = [];
+		for (let i = 0; i < 3; i++) {
+			const awayM = i === 0 ? null : await panAway();
+			let btn = await page.$(showSel);
+			if (!btn) {
+				await ensureInspectorTab(page, 'actions', 'li[data-action-id]', { timeout: 12000 });
+				btn = await page.$(showSel);
+			}
+			if (!btn) {
+				flights.push({ arrived: false, flyMs: null, awayM, why: 'the Show on map action was gone' });
+				break;
+			}
+			const t0 = Date.now();
+			await btn.click();
+			const { snap, ok: arrived } = await waitSnap(page, near, FLY_BUDGET_MS + 6000, 100);
+			flights.push({ arrived, flyMs: snap?.selection?.flyMs ?? null, wallMs: Date.now() - t0, awayM, cam: snap?.camera ?? null });
+			if (!arrived) break;
+		}
+		const landed = flights.filter((f) => f.arrived && f.flyMs != null);
+		const times = landed.map((f) => f.flyMs).sort((a, b) => a - b);
+		const median = times.length === 3 ? times[1] : null;
 		ok(
-			`${name} row click flies to the entity`,
-			arrived && flyMs != null && flyMs <= FLY_BUDGET_MS,
-			`${target.urn} at ${fmt(target.lon)},${fmt(target.lat)}: camera ${fmt(snap?.camera?.lon)},${fmt(snap?.camera?.lat)} — landed ${flyMs ?? '—'} ms after the click (≤ ${FLY_BUDGET_MS} ms, ≤ ${FLY_TOLERANCE_DEG}°; harness saw it at ${wallMs} ms)`,
+			`${name} show-on-map flies to the entity`,
+			landed.length === 3 && median != null && median <= FLY_BUDGET_MS,
+			`${urn} at ${fmt(e.lon)},${fmt(e.lat)}: ${flights
+				.map((f, i) => `flight ${i + 1}${f.awayM != null ? ` (from ${f.awayM} m away)` : ''} ${f.arrived ? `landed ${f.flyMs} ms` : `DID NOT LAND${f.why ? ` — ${f.why}` : ''} (camera ${fmt(f.cam?.lon)},${fmt(f.cam?.lat)})`}`)
+				.join(' · ')} — median ${median ?? '—'} ms (≤ ${FLY_BUDGET_MS} ms; every flight lands ≤ ${FLY_TOLERANCE_DEG}°)`,
 		);
 		await sleep(1500); // the 1 Hz tick re-applies the highlight after any layer redraw
 		const s2 = await snapshot(page);
-		const linked = await page.evaluate((id) => document.querySelector(`[data-testid=fusion-rail] .f-row[data-feed-id="${id}"]`)?.classList.contains('linked') ?? false, target.id);
 		const dossierUrn = await page.evaluate(() => document.querySelector('[data-testid=entity-dossier]')?.dataset.urn ?? null);
 		const halo = s2?.selection?.halo;
 		ok(
 			`${name} entity highlighted`,
-			!!halo && Math.abs(halo.lon - target.lon) < 0.0015 && Math.abs(halo.lat - target.lat) < 0.0015 && (s2?.selection?.highlighted ?? 0) >= 1 && linked && dossierUrn === target.urn,
-			`halo ${halo ? `${fmt(halo.lon)},${fmt(halo.lat)}` : '—'} · ${s2?.selection?.highlighted ?? 0} primitives emphasised · row marked ${linked} · dossier ${dossierUrn ?? '—'}`,
+			!!halo && Math.abs(halo.lon - e.lon) < 0.0015 && Math.abs(halo.lat - e.lat) < 0.0015 && (s2?.selection?.highlighted ?? 0) >= 1 && dossierUrn === urn,
+			`halo ${halo ? `${fmt(halo.lon)},${fmt(halo.lat)}` : '—'} · ${s2?.selection?.highlighted ?? 0} primitives emphasised · inspector ${dossierUrn ?? '—'}`,
 		);
 		await page.screenshot({ path: path.join(ARTIFACTS, 'city-command-rail.png') });
 	} finally {
@@ -758,13 +915,14 @@ async function feedsCheck(browser) {
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
 		const units = await waitSnap(page, (s) => s.registry?.status === 'ok' && s.registry?.kinds?.unit === 0, 20000, 500);
 		await sleep(1500);
+		await ensureLayers(page); // the redesign's LayerTree (a no-op today: the HUD chips)
 		const chip = await page.evaluate(() => {
 			const el = document.querySelector('[data-layer=units]');
 			return el ? { warn: el.classList.contains('warn'), title: el.getAttribute('title') ?? '' } : null;
 		});
 		ok(
 			`${name} an empty-but-healthy UNITS feed shows no ⚠`,
-			units.ok && !!chip && !chip.warn && chip.title === 'no units fielded',
+			units.ok && !!chip && !chip.warn && textIs(chip.title, COPY.noUnitsFielded),
 			chip ? `UNITS chip warn=${chip.warn} · hint '${chip.title}'` : 'no UNITS chip',
 		);
 		const flow = await waitSnap(page, (s) => Number(s.layerStats?.flow?.schematic ?? 0) > 0, 30000, 500);
@@ -772,7 +930,7 @@ async function feedsCheck(browser) {
 		const hint = await page.evaluate(() => document.querySelector('[data-layer=flow]')?.getAttribute('title') ?? '');
 		ok(
 			`${name} schematic geometry is counted in the FLOW hint`,
-			flow.ok && Number(f.schematic) === schematicServed && Number(f.osm) === osmServed && hint.includes(`${osmServed} OSM-traced · ${schematicServed} schematic (dashed)`),
+			flow.ok && Number(f.schematic) === schematicServed && Number(f.osm) === osmServed && textHas(hint, `${osmServed} OSM-traced · ${schematicServed} schematic (dashed)`),
 			`served ${osmServed} OSM-traced + ${schematicServed} schematic · layer ${f.osm ?? '—'} / ${f.schematic ?? '—'} · hint '${hint.slice(0, 120)}'`,
 		);
 	} finally {
@@ -785,7 +943,7 @@ async function feedsCheck(browser) {
 async function postureCheck(browser) {
 	const name = 'posture';
 	// No active event carries a band (as on live while the only event is
-	// planning): CITY POSTURE speaks for the city band — entered 3h50m ago,
+	// planning): CITY POSTURE speaks for the city band — entered 3 h 50 min ago,
 	// the engine's newest evaluation 2 s ago, inputs simulated.
 	const real = await getJson(`${ORIGIN}/api/v1/city/entities`);
 	const unbanded = { ...real, entities: (real.entities ?? []).map((e) => (e.kind === 'event' ? { ...e, band: null } : e)) };
@@ -822,6 +980,7 @@ async function postureCheck(browser) {
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
 		const held = await waitSnap(page, (s) => s.vitals?.posture?.source === 'city-band' && s.vitals.posture.heldSec != null, 20000, 500);
 		const p = held.snap?.vitals?.posture ?? {};
+		await ensureVitals(page, 'vitals-posture'); // the redesign's map mode: the full vitals in the Info tab
 		const dom = await page.evaluate(() => {
 			const sec = document.querySelector('[data-testid=vitals-posture]');
 			const pill = sec?.querySelector('[data-testid=vitals-posture-simulated]');
@@ -830,23 +989,23 @@ async function postureCheck(browser) {
 			return {
 				staleTag: !!sec?.querySelector('[data-testid=vitals-posture-stale]'),
 				held: sec?.querySelector('[data-testid=vitals-posture-held]')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
-				pill: pr && sr ? { right: Math.round(pr.right), edge: Math.round(sr.right), width: Math.round(pr.width) } : null,
+				pill: pr && sr ? { right: Math.round(pr.right), edge: Math.round(sr.right), width: Math.round(pr.width), text: `${pill.textContent ?? ''} ${pill.getAttribute('title') ?? ''}`.replace(/\s+/g, ' ').trim() } : null,
 			};
 		});
 		ok(
-			`${name} a city band held 3h50m on a healthy engine is aged from its newest reading — never STALE`,
+			`${name} a city band held 3 h 50 min on a healthy engine is aged from its newest reading — never STALE`,
 			held.ok && p.band === 'GREEN' && p.basis === 'reading' && p.stale === false && (p.ageSec ?? 999) < 60 && !dom.staleTag,
 			`${p.band ?? '—'} · basis ${p.basis ?? '—'} · age ${p.ageSec ?? '—'} s · stale ${p.stale} · STALE tag ${dom.staleTag}`,
 		);
 		ok(
-			`${name} …how long it has held is its own line ('held 3h50m · since HH:MM IST')`,
-			Math.abs((p.heldSec ?? 0) - HELD_SEC) < 120 && /^held 3h5\dm · since \d{2}:\d{2} IST$/.test(dom.held),
+			`${name} …how long it has held is its own line ('Held 3 h 50 min · since HH:MM IST')`,
+			Math.abs((p.heldSec ?? 0) - HELD_SEC) < 120 && textMatches(dom.held, COPY.heldLine),
 			`${dom.held || 'no held line'} · heldSec ${p.heldSec ?? '—'}`,
 		);
 		ok(
 			`${name} …its SIMULATED FEED pill wraps inside the rail (never clipped)`,
-			!!dom.pill && dom.pill.width > 0 && dom.pill.right <= dom.pill.edge,
-			dom.pill ? `pill right ${dom.pill.right} ≤ section edge ${dom.pill.edge}` : 'no SIMULATED FEED pill',
+			!!dom.pill && dom.pill.width > 0 && dom.pill.right <= dom.pill.edge && textMatches(dom.pill.text, COPY.simulated),
+			dom.pill ? `'${dom.pill.text}' · pill right ${dom.pill.right} ≤ section edge ${dom.pill.edge}` : 'no SIMULATED FEED pill',
 		);
 		const box = await page.$eval('[data-testid=vitals-posture]', (e) => {
 			const r = e.getBoundingClientRect();
@@ -874,8 +1033,13 @@ async function replayCheck(browser) {
 	try {
 		const phase = await openCanvas(page, '/gods-eye');
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
+		// hardening (gate C: this wait timed out once at 30 s under load): every
+		// wait here is caught and reported, never allowed to abort the smoke.
+		const toggleUp = await page.waitForSelector('[data-testid=replay-toggle]', { timeout: 20000 }).then(() => true).catch(() => false);
+		if (!toggleUp) return ok(name, false, 'no [data-testid=replay-toggle] on the canvas (the Timeline control must exist)');
 		await page.click('[data-testid=replay-toggle]');
-		await page.waitForSelector('[data-testid=replay-bar]', { timeout: 10000 });
+		const barShown = await page.waitForSelector('[data-testid=replay-bar]', { timeout: 20000 }).then(() => true).catch(() => false);
+		if (!barShown) return ok(name, false, 'the replay bar never mounted after the toggle (20 s)');
 		// The picker lists the runs ledger once it answers; pick the run only then.
 		const listed = await page
 			.waitForFunction(
@@ -900,14 +1064,14 @@ async function replayCheck(browser) {
 		if (!loaded) return;
 
 		const pills = () =>
-			page.evaluate(() => {
+			page.evaluate((src) => {
 				const vis = (sel) => {
 					const el = document.querySelector(sel);
 					const r = el?.getBoundingClientRect();
-					return !!r && r.width > 0 && r.height > 0 && /EMULATED/.test(el.textContent ?? '');
+					return !!r && r.width > 0 && r.height > 0 && new RegExp(src, 'i').test(el.textContent ?? '');
 				};
 				return { bar: vis('[data-testid=replay-emulated-pill]'), chip: vis('[data-testid=replay-pill]') };
-			});
+			}, COPY.replayEmulated.source);
 		const scrub = (sec) =>
 			page.evaluate((v) => {
 				const input = document.querySelector('[data-testid=replay-scrubber]');
@@ -939,7 +1103,7 @@ async function replayCheck(browser) {
 		ok(`${name} EMULATED pills stay visible`, pillsHeld, 'scrubber-bar pill and canvas chip at every scrub position');
 		await page.screenshot({ path: path.join(ARTIFACTS, 'city-command-replay.png') });
 
-		await page.evaluate(() => [...document.querySelectorAll('[data-testid=fusion-rail] .mode button')][0]?.click());
+		await leaveReplay(page); // today the rail's LIVE mode button; the redesign's Live/Replay control
 		const live = await waitSnap(page, (s) => s.replay === null && (s.layerStats?.traces?.count ?? 0) >= 0, 5000);
 		ok(`${name} LIVE restores the live picture`, live.ok, `replay ${live.snap?.replay === null ? 'off' : 'still on'}`);
 	} finally {
@@ -959,7 +1123,7 @@ async function cockpitCheck(browser) {
 		}
 	});
 	try {
-		const phase = await openCanvas(page, '/');
+		const phase = await openCanvas(page, WORKSPACE);
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
 		const pick = (sel, text) =>
 			page.evaluate(
@@ -974,6 +1138,7 @@ async function cockpitCheck(browser) {
 				sel,
 				text,
 			);
+		await ensurePlanner(page); // the redesign's PlanPanel sits behind [data-rail=plan]; a no-op today
 		const chosen = (await pick('[data-testid=planner-origin]', 'Lal Darwaja')) && (await pick('[data-testid=planner-destination]', 'SVPI Airport'));
 		await page.evaluate(() => [...document.querySelectorAll('.class-pill')].find((b) => b.textContent.trim() === 'Z')?.click());
 		ok(`${name} form`, chosen, 'Lal Darwaja → SVPI Airport · class Z');
@@ -1076,7 +1241,7 @@ async function escortHudCheck(browser, movementId) {
 	}
 	const page = await newPage(browser);
 	try {
-		await page.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+		await page.goto(`${ORIGIN}${WORKSPACE}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 		const adopted = await page
 			.waitForFunction(() => document.querySelector('[data-template=convoy-hud]')?.getAttribute('data-phase') === 'escorting', { timeout: 20000 })
 			.then(() => true)
@@ -1087,7 +1252,7 @@ async function escortHudCheck(browser, movementId) {
 		const hud = await page.evaluate(() => ({
 			hold: !!document.querySelector('[data-testid=convoy-hud-hold]'),
 			approvals: document.querySelectorAll('[data-testid=convoy-hud-approval]').length,
-			emulated: !!document.querySelector('[data-template=convoy-hud] [data-testid=convoy-hud-emulated]') || /EMULATED GPS/.test(document.querySelector('[data-testid=convoy-hud-provenance]')?.textContent ?? ''),
+			emulated: !!document.querySelector('[data-template=convoy-hud] [data-testid=convoy-hud-emulated]') || /emulated gps/i.test(document.querySelector('[data-testid=convoy-hud-provenance]')?.textContent ?? ''),
 			simulated: !!document.querySelector('[data-testid=convoy-hud-simulated]'),
 		}));
 		const fresh = (await getJson(`${ORIGIN}/api/convoy/movements/${encodeURIComponent(movementId)}/escort`).catch(() => null)) ?? doc;
@@ -1142,6 +1307,22 @@ async function hiddenCheck(browser) {
 
 // ── plates: C6 at every text sink, no duty officer named ──────────────────
 
+/**
+ * Switch layers off as an operator would: today's HUD chips (a click toggles,
+ * `.off` when off); the redesign's LayerTree rows (behind the Layers tab, an
+ * EyeToggle in the row, `aria-pressed=false` / `data-visible=false` when off).
+ */
+async function layersOff(page, ids) {
+	await ensureLayers(page);
+	await page.evaluate((list) => {
+		const off = (el) => el.classList.contains('off') || el.getAttribute('aria-pressed') === 'false' || el.getAttribute('data-visible') === 'false';
+		for (const id of list) {
+			const el = document.querySelector(`.chip.layer[data-layer="${id}"], [data-layer="${id}"]`);
+			if (el && !off(el)) (el.querySelector('.eye, [data-eye]') ?? el).click();
+		}
+	}, ids);
+}
+
 /** Every text a page shows or announces: rendered text + title / aria-label attributes. */
 const pageTexts = (page) =>
 	page.evaluate(() => {
@@ -1156,17 +1337,24 @@ const pageTexts = (page) =>
  * canvas picked THAT primitive (__GODS_EYE__.picked): a junction carries
  * several layers (a moving unit, an event spine, the waypoint ring), so a
  * click that lands on a neighbour is retried a few pixels off, then on the
- * next locate round (moving units pass).
+ * next locate round (moving units pass). `wantUrn` is the URN prefix the
+ * wanted primitive selects (a neighbour's selection is dismissed, that one
+ * never is).
  */
-async function clickPrefix(page, prefix, rounds = 5, spotsPerRound = 1) {
+async function clickPrefix(page, prefix, { rounds = 5, spotsPerRound = 1, wantUrn = null } = {}) {
 	const OFFSETS = [[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4], [7, 7], [-7, -7], [7, -7], [-7, 7]];
 	for (let round = 0; round < rounds; round++) {
-		const spots = (await page.evaluate((p) => window.__GODS_EYE__?.locate?.(p) ?? [], prefix)).slice(0, spotsPerRound);
+		// a spot whose projection is not finite (behind the camera, or a tile
+		// that has not framed the city yet) can never be clicked — skip it
+		const spots = (await page.evaluate((p) => window.__GODS_EYE__?.locate?.(p) ?? [], prefix))
+			.filter((s) => Number.isFinite(s?.x) && Number.isFinite(s?.y))
+			.slice(0, spotsPerRound);
 		for (const spot of spots) {
 			for (const [dx, dy] of OFFSETS) {
 				const at = { x: spot.x + dx, y: spot.y + dy };
-				// a pick card (or any panel) over the spot would take the click
+				// a pick card, the inspector (or any panel) over the spot would take the click
 				if (!(await onCanvas(page, at.x, at.y))) continue;
+				const before = await page.evaluate(() => window.__GODS_EYE__?.selection?.urn ?? null);
 				await page.mouse.move(at.x, at.y);
 				await sleep(250);
 				await page.mouse.click(at.x, at.y);
@@ -1174,9 +1362,10 @@ async function clickPrefix(page, prefix, rounds = 5, spotsPerRound = 1) {
 				const picked = await page.evaluate(() => window.__GODS_EYE__?.picked?.id ?? null);
 				if (picked?.startsWith(prefix)) return at;
 				// Something else sits on top here (an event marker on the same road):
-				// dismiss its pick card, as an operator would, and try the next spot.
+				// dismiss it as an operator would — today's pick card on its ✕, else
+				// the dossier / inspector the click opened with Esc — and try the next spot.
 				if (picked) {
-					await page.evaluate(() => document.querySelector('.ge-pick .pick-x')?.click());
+					await dismissPick(page, { wantUrn, before });
 					await sleep(200);
 				}
 			}
@@ -1205,13 +1394,9 @@ async function platesCheck(browser) {
 			// The signal glyph shares the waypoint junction, and a unit that
 			// ARRIVED stands on it (C-N: units drive to the junction itself):
 			// an operator switches SIGNALS and UNITS off to reach the waypoint.
-			await page.evaluate(() => {
-				document.querySelector('[data-layer=signals]')?.click();
-				const units = document.querySelector('[data-layer=units]');
-				if (units && !units.classList.contains('off')) units.click();
-			});
+			await layersOff(page, ['signals', 'units']);
 			await sleep(1500);
-			const spot = await clickPrefix(page, `dsp:wp-${dsp.id}`);
+			const spot = await clickPrefix(page, `dsp:wp-${dsp.id}`, { wantUrn: `dispatch:${dsp.id}` });
 			const d = await page.evaluate(() => {
 				const el = document.querySelector('[data-testid=entity-dossier]');
 				return {
@@ -1235,13 +1420,13 @@ async function platesCheck(browser) {
 	// 2. The cockpit: LOCKED chip + LiveRail focus note for the pursuit, a dispatch pick card.
 	const page = await newPage(browser);
 	try {
-		const phase = await openCanvas(page, '/');
+		const phase = await openCanvas(page, WORKSPACE);
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
 		await sleep(3000); // the board lands
-		const officer = await page.evaluate(() => document.querySelector('[data-testid=planner-officer]')?.value ?? '');
+		const officer = (await officerValue(page, ['planner-officer', 'duty-officer'])) || ((await page.$eval('[data-v3="top-bar"] [data-testid="v3-officer"]', (el) => (el.getAttribute('data-named') === 'true' ? el.textContent : '')).catch(() => '')) ?? '');
 		if (officer.trim().length >= 2) return ok(name, false, `a duty officer is already named on '/' ('${officer}') — the masked path cannot be checked`);
 		if (pursuit) {
-			const row = `.rail-right .event[data-event-id="${pursuit.id}"]`;
+			const row = SEL.cockpitRow(pursuit.id);
 			const clicked = await page.evaluate((sel) => {
 				const el = document.querySelector(sel);
 				el?.click();
@@ -1250,9 +1435,9 @@ async function platesCheck(browser) {
 			let title = null;
 			for (let i = 0; i < 40 && !title; i++) {
 				await sleep(400);
-				title = await page.evaluate(() => document.querySelector('.ge-hud .chip.lock')?.getAttribute('title') ?? null);
+				title = await page.evaluate(lockTitle);
 			}
-			const note = await page.evaluate((sel) => document.querySelector(`${sel} .ev-focus`)?.getAttribute('title') ?? '', row);
+			const note = await page.evaluate((sel) => document.querySelector(sel)?.getAttribute('title') ?? '', within(row, '.ev-focus'));
 			ok(
 				`${name} LOCKED chip title + focus note masked`,
 				clicked && !!title && title.includes(MASKED) && !title.includes(PLATE) && !note.includes(PLATE),
@@ -1261,11 +1446,7 @@ async function platesCheck(browser) {
 		}
 		if (dsp) {
 			// signal glyphs and arrived units share the waypoint junctions (see above)
-			await page.evaluate(() => {
-				document.querySelector('[data-layer=signals]')?.click();
-				const units = document.querySelector('[data-layer=units]');
-				if (units && !units.classList.contains('off')) units.click();
-			});
+			await layersOff(page, ['signals', 'units']);
 			await sleep(1500);
 			// The LOCK frames the pursuit (~2 km up): a far choke's waypoint is
 			// off screen. Pick a dispatch of this plate whose waypoint IS on
@@ -1281,7 +1462,10 @@ async function platesCheck(browser) {
 			};
 			let target = await onScreen();
 			if (!target) {
-				await page.evaluate(() => document.querySelector('.ge-hud .chip.lock')?.click());
+				await page.evaluate(() => {
+					const chips = [...document.querySelectorAll('.ge-hud .chip.lock')];
+					(chips.find((c) => /locked/i.test(c.textContent ?? '') || c.getAttribute('aria-pressed') === 'true') ?? chips[0])?.click();
+				});
 				await sleep(1200);
 				const mid = await page.evaluate(() => {
 					const r = document.querySelector('.ge-canvas canvas, canvas')?.getBoundingClientRect();
@@ -1296,8 +1480,9 @@ async function platesCheck(browser) {
 					target = await onScreen();
 				}
 			}
-			const spot = target ? await clickPrefix(page, `dsp:wp-${target.id}`) : null;
-			const card = await page.evaluate(() => document.querySelector('.ge-pick .pick-text')?.textContent ?? null);
+			const spot = target ? await clickPrefix(page, `dsp:wp-${target.id}`, { wantUrn: `dispatch:${target.id}` }) : null;
+			// today's pick card, else the redesign's inspector opened on the dispatch (its MAP line)
+			const card = await page.evaluate(firstPresentText, ['.ge-pick .pick-text', '[data-testid="entity-dossier"][data-urn^="dispatch:"] .map-pick .pick-text']);
 			ok(
 				`${name} cockpit pick card masks the dispatch's event title`,
 				!!spot && !!card && card.includes(MASKED) && !card.includes(PLATE),
@@ -1308,12 +1493,20 @@ async function platesCheck(browser) {
 		ok(`${name} cockpit page-wide (no officer)`, !all.includes(PLATE), `raw plate in page text/attributes: ${all.includes(PLATE)}`);
 		// A named duty officer is on console: the same title shows the plate (masking is officer-gated, not blanket).
 		if (pursuit) {
-			await page.type('[data-testid=planner-officer]', 'Duty Officer CC Smoke');
-			const shown = await page
-				.waitForFunction((p) => (document.querySelector('.ge-hud .chip.lock')?.getAttribute('title') ?? '').includes(p), { timeout: 5000 }, PLATE)
-				.then(() => true)
-				.catch(() => false);
-			ok(`${name} LOCKED title shows the plate to a named officer`, shown, shown ? `officer named → ${PLATE} in the LOCKED title` : 'still masked (or the lock was released)');
+			await nameOfficer(page, 'Duty Officer CC Smoke', { prefer: ['planner-officer', 'duty-officer'], delay: 0 }).catch(async () => {
+				await openOfficerField(page); // the cockpit's planner field is not open: the top bar's officer popover
+				await nameOfficer(page, 'Duty Officer CC Smoke', { prefer: ['duty-officer'], delay: 0 });
+				await page.keyboard.press('Escape');
+			});
+			// the title of the chip that HOLDS the camera (lockTitle, as the masked half above reads it)
+			let lockedTitle = await page.evaluate(lockTitle);
+			const deadline = Date.now() + 5000;
+			while (!lockedTitle?.includes(PLATE) && Date.now() < deadline) {
+				await sleep(250);
+				lockedTitle = await page.evaluate(lockTitle);
+			}
+			const shown = !!lockedTitle?.includes(PLATE);
+			ok(`${name} LOCKED title shows the plate to a named officer`, shown, shown ? `officer named → ${PLATE} in the LOCKED title` : `still masked (or the lock was released): '${(lockedTitle ?? '—').slice(0, 90)}'`);
 		}
 	} finally {
 		await page.close();
@@ -1333,33 +1526,37 @@ async function provenanceCheck(browser) {
 		const phase = await openCanvas(page, '/ops');
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
 		const { snap } = await waitSnap(page, (s) => Number(s.layerStats?.anomalies?.simulated ?? 0) > 0 && Number(s.layerStats?.flow?.simulated ?? 0) > 0, 30000, 1000);
-		const chips = await page.evaluate(() => ({
-			flow: !!document.querySelector('[data-layer=flow] [data-testid=chip-simulated]'),
-			anomaly: !!document.querySelector('[data-layer=anomalies] [data-testid=chip-simulated]'),
-			anomalyHint: document.querySelector('[data-layer=anomalies]')?.getAttribute('title') ?? '',
-		}));
+		// the v2 wall (the /ops default since UI-S6) states the feed's provenance
+		// in its own chrome: the "Simulated flow" legend entry and the metric
+		// strip's feed label (gate C: the legacy chip bar is gone)
+		const chips = await page.evaluate(() => {
+			const vis = (el) => !!el && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0;
+			const legend = [...document.querySelectorAll('[data-wall="city"] .legend .item')].find((el) => /simulated/i.test(el.textContent || ''));
+			return {
+				flow: vis(legend),
+				anomaly: vis(legend),
+				anomalyHint: (document.body.innerText.match(/[^\n]*simulated feed[^\n]*/i) ?? [''])[0],
+			};
+		});
 		const anomalies = Number(snap?.layerStats?.anomalies?.anomalies ?? 0);
 		ok(
-			`${name} /ops FLOW + ANOMALY chips carry the SIM tag`,
-			chips.flow && (anomalies === 0 || (chips.anomaly && /SIMULATED FEED/.test(chips.anomalyHint))),
+			`${name} /ops FLOW + ANOMALY provenance (v2 legend: Simulated flow, visible)`,
+			chips.flow && (anomalies === 0 || (chips.anomaly && textMatches(chips.anomalyHint, COPY.simulatedFeedWords))),
 			`summary '${summary.provenance}' (${summary.emulated_segments ?? '—'} emulated segments) · FLOW SIM ${chips.flow} · ANOMALY SIM ${chips.anomaly} over ${anomalies} pulses · hint '${chips.anomalyHint.slice(0, 90)}'`,
 		);
 		if (anomalies > 0) {
 			// A pulse sits ON its segment — under the flow line, often under an
 			// event marker or a pursuit's trace on the same road: an operator
 			// switches those layers off to reach it.
-			await page.evaluate(() => {
-				for (const id of ['flow', 'events', 'traces', 'enforcement']) {
-					const chip = document.querySelector(`[data-layer=${id}]`);
-					if (chip && !chip.classList.contains('off')) chip.click();
-				}
-			});
+			await layersOff(page, ['flow', 'events', 'traces', 'enforcement']);
 			await sleep(1500);
-			const spot = await clickPrefix(page, 'anm:', 4, 3);
-			const card = spot ? await page.evaluate(() => document.querySelector('.ge-pick .pick-text')?.textContent ?? null) : null;
+			const spot = await clickPrefix(page, 'anm:', { rounds: 4, spotsPerRound: 3, wantUrn: 'anomaly:' });
+			const card = spot ? await page.evaluate(firstPresentText, ['.ge-pick .pick-text', '[data-testid="entity-dossier"][data-urn^="anomaly:"]']) : null;
 			ok(
 				`${name} /ops anomaly pick card says SIMULATED FEED`,
-				!!card && card.includes('SIMULATED FEED') && !/source signal-ingress feed\s*$/.test(card),
+				// the canvas pick text says "SIMULATED FEED"; the inspector's provenance row says it as the
+				// workspace's own words, "Simulated traffic feed" (ws_v_simulated_feed) — either, never the bare feed name
+				!!card && (textMatches(card, COPY.simulatedFeedWords) || /simulated traffic feed/i.test(card)) && !textMatches(card, COPY.bareFeedName),
 				card ? `'…${card.slice(-110)}'` : 'no anomaly pulse clickable on the wall',
 			);
 		}

@@ -200,10 +200,12 @@ def build():
     bullets(s, [
         b1s([("Our Very Important Persons: ", True), ("the Voter on the bus, the Victim in the "
             "108 ambulance, and the Vulnerable patient for whom ten minutes matter.", False)]),
-        b1s([("One interface, every audience — the command-deck at 127.0.0.1:5273: ", True),
-            ("the Convoy Command cockpit, the /ops situation wall, the /gods-eye cinematic, the "
-            "public /citizen + /driver, the trilingual /comms desk, /chat. Operators sign in by "
-            "name; every approval carries it. Headless camera: 40/40 checks.", False)]),
+        b1s([("One interface, simple by default, deep on demand — 127.0.0.1:5273: ", True),
+            ("Home (what needs you now), Map, Decide (one decision at a time, \u201cwhat changes "
+            "if you approve\u201d), Plan, Assistant and Advisories on one rail; the full analyst "
+            "workspace, situation wall and 3D city under Analyst; public /citizen + /driver in "
+            "EN/HI/GU. Real place photos, agency marks and artwork; every approval carries a "
+            "named officer.", False)]),
         b1s([("The God's-eye — real 3D Ahmedabad: ", True), ("signed-in operators see Google "
             "Photorealistic 3D Tiles with the overlays draped on the city, none floating — the "
             "simulated congestion feed on the real roads, spines, the pursuit fan, units, cameras; "
@@ -223,20 +225,18 @@ def build():
             "floors. In the flagship the engine chose signal hold at 45 s — “regulated, not "
             "stopped.”", False)]),
     ], x=Inches(0.55), y=Inches(1.5), w=Inches(8.55), h=Inches(5.35))
-    # The interface, live: the 3D God's-eye city (PHOTOREAL 3D · GOOGLE) + the
-    # public Daylight citizen advisory (keyless) — pixel-proven hero shots
-    # recaptured on the live stack in its staged judging state (2026-10-24
-    # 01:25 IST). 1440x900 → w3.95/h2.47.
-    sc = VVIP / "showcase"
-    if (sc / "showcase_gods_eye_city.png").exists() and \
-       (sc / "showcase_citizen_advisory.png").exists():
-        s.shapes.add_picture(str(sc / "showcase_gods_eye_city.png"),
+    # The interface, live (V3, 2026-10-27): Home — the one decision that needs
+    # an officer now over the real map of its place — and the public citizen
+    # page (keyless, EN/HI/GU). 1440x900 → w3.95/h2.47.
+    v3 = VVIP / "showcase"
+    if (v3 / "showcase_v3_home.png").exists() and (v3 / "showcase_v3_citizen.png").exists():
+        s.shapes.add_picture(str(v3 / "showcase_v3_home.png"),
                              Inches(9.25), Inches(1.55), width=Inches(3.95))
-        s.shapes.add_picture(str(sc / "showcase_citizen_advisory.png"),
+        s.shapes.add_picture(str(v3 / "showcase_v3_citizen.png"),
                              Inches(9.25), Inches(4.12), width=Inches(3.95))
         tf = textbox(s, Inches(9.1), Inches(6.66), Inches(4.25), Inches(0.4))
         set_par(tf.paragraphs[0],
-                "Live stack, 2026-10-24 — the 3D city at rest · the public citizen advisory",
+                "Live stack, 2026-10-27 — Home · the public citizen page",
                 8, GRAY, italic=True, align=PP_ALIGN.CENTER)
     add_footer(s, 3)
 
@@ -247,9 +247,10 @@ def build():
     bullets(s, [
         b1s([("Live on the box: ", True),
             ("scripts/veer_up.sh brings the stack up and it starts itself at boot — real reboots "
-            "came back READY 11/11 in 4 min 25 s, no manual command. / is the Convoy Command "
-            "cockpit, /ops the situation wall (Decision Queue with its escort lane, Jan Rakshak "
-            "dispatch, AMA card, audit stream). screens-verify on the live deck: 40/40 checks.", False)]),
+            "came back READY in 4 min 25 s, no manual command. The V3 interface went live on "
+            "2026-10-27 (READY 12/12 with OSINT on, migrations 001–025, operator gate on): / is "
+            "Home, Decide holds one decision at a time, Analyst keeps the workspace and the "
+            "situation wall.", False)]),
         b1s([("Deployed, then accepted live (2026-10-23/24): ", True),
             ("19 of 22 acceptance steps passed first time; the tier-0 cache miss was fixed (route "
             "options named by their own segments, answers filed per movement), redeployed and "
@@ -272,26 +273,24 @@ def build():
             "ANPR reads, camera sites and units are emulated or simulated and labelled so on "
             "every surface; every decision is the real stack's, every approval carries the "
             "officer's name — a signed-in human in the judged demo.", False)]),
-        b1s([("Measured: ", True), ("2709 pytest tests collected on the deployed tree (2624 pass, "
-            "85 skip themselves) + 120 cargo tests; migrations 001–020. Bench: decider 455.78 tok/s (p99 1106.8 ms), Gemma 20.09 tok/s, "
+        b1s([("Measured: ", True), ("5123 pytest tests collected on the deployed tree (5012 pass, "
+            "92 skip themselves) + 120 cargo tests; migrations 001–025. Bench: decider 455.78 tok/s (p99 1106.8 ms), Gemma 20.09 tok/s, "
             "embeddings 92.7 ms, 62.73 GiB resident; adversarial suite 19/19 (score 100; avg "
             "29.19 s / max 57.38 s). Kept visible: tool coverage 0.684 / keyword coverage 0.561; "
             "one same-day 69.99 s scenario; DSTGAT ships as architecture only.", False)]),
     ], x=Inches(0.55), y=Inches(1.5), w=Inches(8.55), h=Inches(5.35))
-    # The interface, live: the /ops wall staged for judging and the
-    # pursuit-trace camera on the stolen vehicle's trace centroid (EMULATED
-    # reads; hero shots recaptured 2026-10-24 01:26 IST). Both 1440x900 →
-    # w3.95/h2.47.
-    sc = VVIP / "showcase"
-    if (sc / "showcase_ops_wall.png").exists() and \
-       (sc / "showcase_pursuit_trace.png").exists():
-        s.shapes.add_picture(str(sc / "showcase_ops_wall.png"),
+    # The interface, live (V3, 2026-10-27): Decide on the stolen-vehicle
+    # sighting (EMULATED reads, plate masked until an officer is named) and
+    # the Map on Google's photoreal 3D city. Both 1440x900 → w3.95/h2.47.
+    v3 = VVIP / "showcase"
+    if (v3 / "showcase_v3_decide.png").exists() and (v3 / "showcase_v3_map.png").exists():
+        s.shapes.add_picture(str(v3 / "showcase_v3_decide.png"),
                              Inches(9.25), Inches(1.55), width=Inches(3.95))
-        s.shapes.add_picture(str(sc / "showcase_pursuit_trace.png"),
+        s.shapes.add_picture(str(v3 / "showcase_v3_map.png"),
                              Inches(9.25), Inches(4.12), width=Inches(3.95))
         tf = textbox(s, Inches(9.1), Inches(6.66), Inches(4.25), Inches(0.4))
         set_par(tf.paragraphs[0],
-                "/ops wall, staged for judging · the stolen vehicle's trace (2026-10-24)",
+                "Live stack, 2026-10-27 — Decide · the Map on the 3D city",
                 8, GRAY, italic=True, align=PP_ALIGN.CENTER)
     add_footer(s, 4)
 
@@ -373,8 +372,8 @@ def build():
            "the AI proposes, a named officer decides every penalty, pursuit, dispatch and escort "
            "route switch."),
         b1("The interface of record is the backend-wired command-deck at :5273 behind the "
-           "operator sign-in (screenshots taken on it live, 2026-10-24: operator views in 3D, the "
-           "public page keyless); "
+           "operator sign-in (screenshots taken on it live, 2026-10-27: operator views, the "
+           "public page keyless; reference photos are credited and labelled not live); "
            "the legacy React demo is the clearly-labelled offline fallback; the showcase injects "
            "emulator-generated causes into the real stack (reads labelled emulated_anpr, units "
            "labelled emulated). Every statistic comes from cited sources, the falsifiable "

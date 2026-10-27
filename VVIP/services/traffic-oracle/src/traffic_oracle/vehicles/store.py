@@ -39,7 +39,10 @@ transaction-scoped advisory lock), never on every request:
         sightings are kept, never cut them below what every other vehicle
         gets;
     (3) vehicle rows left with no sightings, no earmark history and no
-        recommendation, unseen for the default horizon.
+        recommendation, unseen for the default horizon;
+    (4) full-mark lookup audit rows (migrations 024/025) older than
+        LOOKUP_AUDIT_RETENTION_DAYS — the earmark retention cap, so a
+        lookup's record outlives every read it could have disclosed.
 A sighting referenced by a DECIDED (approved/rejected) recommendation is
 never reaped — that row is the challan's evidence and its audit trail.
 """
@@ -75,6 +78,12 @@ __all__ = [
     "fetch_trace",
     "fetch_sighting_brief",
     "recommendations_for_sighting",
+    "vehicle_by_plate",
+    "active_earmark_for_vehicle",
+    "open_recommendations_for_vehicle",
+    "pursuits_for_vehicle",
+    "insert_lookup_audit",
+    "fetch_lookup_audits",
     "persist_read",
     "RetentionReaper",
     "REAPER",
@@ -83,6 +92,8 @@ __all__ = [
     "REAP_DEFAULT_SQL",
     "REAP_EARMARKED_SQL",
     "REAP_ORPHAN_VEHICLES_SQL",
+    "REAP_LOOKUP_AUDIT_SQL",
+    "LOOKUP_AUDIT_RETENTION_DAYS",
     "SQL_DISCLOSURE_BASIS",
     "SQL_LAWFUL_LAST_SIGHTINGS",
     "SQL_LAWFUL_LATEST_T",
@@ -123,10 +134,12 @@ SQL_LAWFUL_LAST_SIGHTINGS = "SELECT DISTINCT ON (s.vehicle_id) s.vehicle_id, s.t
 #: (1) rows past the default horizon for vehicles with NO active earmark;
 #: (2) rows of actively earmarked vehicles older than
 #:     GREATEST(retention_days, default days) — $1 = the default days;
-#: (3) orphaned vehicle rows (no sightings, earmarks or recommendations).
+#: (3) orphaned vehicle rows (no sightings, earmarks or recommendations);
+#: (4) lookup audit rows older than $1 days (LOOKUP_AUDIT_RETENTION_DAYS).
 REAP_DEFAULT_SQL = "DELETE FROM corridor.vehicle_sightings s WHERE s.t < $1 AND NOT EXISTS (SELECT 1 FROM corridor.vehicle_earmarks e WHERE e.vehicle_id = s.vehicle_id AND e.cleared_at IS NULL AND e.retention_until > NOW()) AND NOT EXISTS (SELECT 1 FROM events.enforcement_recommendations r WHERE r.sighting_id = s.sighting_id AND r.status <> 'pending') RETURNING s.sighting_id"  # noqa: E501
 REAP_EARMARKED_SQL = "DELETE FROM corridor.vehicle_sightings s USING (SELECT ve.vehicle_id, max(ve.retention_days) AS retention_days FROM corridor.vehicle_earmarks ve WHERE ve.cleared_at IS NULL AND ve.retention_until > NOW() GROUP BY ve.vehicle_id) e WHERE e.vehicle_id = s.vehicle_id AND s.t < NOW() - make_interval(days => GREATEST(e.retention_days, $1::int)) AND NOT EXISTS (SELECT 1 FROM events.enforcement_recommendations r WHERE r.sighting_id = s.sighting_id AND r.status <> 'pending') RETURNING s.sighting_id"  # noqa: E501
 REAP_ORPHAN_VEHICLES_SQL = "DELETE FROM corridor.vehicles v WHERE v.last_seen < $1 AND NOT EXISTS (SELECT 1 FROM corridor.vehicle_sightings s WHERE s.vehicle_id = v.vehicle_id) AND NOT EXISTS (SELECT 1 FROM corridor.vehicle_earmarks e WHERE e.vehicle_id = v.vehicle_id) AND NOT EXISTS (SELECT 1 FROM events.enforcement_recommendations r WHERE r.vehicle_id = v.vehicle_id) RETURNING v.vehicle_id"  # noqa: E501
+REAP_LOOKUP_AUDIT_SQL = "DELETE FROM corridor.vehicle_lookup_audit a WHERE a.looked_up_at < NOW() - make_interval(days => $1::int) RETURNING a.id"  # noqa: E501
 
 #: Cross-process serialization of the reap (pg_try_advisory_xact_lock key).
 REAP_ADVISORY_LOCK_KEY = 7310010
@@ -140,9 +153,15 @@ REAP_MIN_INTERVAL_SEC = 600.0
 #: oldest acceptable read share this one value.
 SIGHTING_RETENTION_DAYS_DEFAULT = 30
 
+#: How long a full-mark lookup's audit row is kept (days): the earmark
+#: retention cap (C6, migration 010's CHECK), the longest any read of a
+#: vehicle is ever kept — the record of who looked outlives every read the
+#: lookup could have disclosed, and then goes too (DPDP purpose limitation).
+LOOKUP_AUDIT_RETENTION_DAYS = 90
+
 
 async def reap_expired_sightings(conn: Any, default_cutoff) -> int:
-    """Run the three retention reaps; returns total rows removed.
+    """Run the four retention reaps; returns total rows removed.
 
     ``default_cutoff`` is the precomputed horizon datetime (bound as a
     timestamptz parameter — no interval parameter needs type inference).
@@ -151,7 +170,8 @@ async def reap_expired_sightings(conn: Any, default_cutoff) -> int:
     r1 = await conn.fetch(REAP_DEFAULT_SQL, default_cutoff)
     r2 = await conn.fetch(REAP_EARMARKED_SQL, SIGHTING_RETENTION_DAYS_DEFAULT)
     r3 = await conn.fetch(REAP_ORPHAN_VEHICLES_SQL, default_cutoff)
-    return len(r1) + len(r2) + len(r3)
+    r4 = await conn.fetch(REAP_LOOKUP_AUDIT_SQL, LOOKUP_AUDIT_RETENTION_DAYS)
+    return len(r1) + len(r2) + len(r3) + len(r4)
 
 
 class RetentionReaper:
@@ -489,6 +509,82 @@ async def recommendations_for_sighting(conn: Any, sighting_id) -> list:
         """,
         sighting_id,
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Full-mark lookup reads + the lookup audit trail (FIX-C-PLATESEARCH)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+async def vehicle_by_plate(conn: Any, plate: str) -> Any:
+    """The vehicle row carrying ``plate`` (already normalized), or None."""
+    return await conn.fetchrow(
+        "SELECT vehicle_id, plate, vehicle_class FROM corridor.vehicles "
+        "WHERE plate = $1",
+        plate,
+    )
+
+
+async def active_earmark_for_vehicle(conn: Any, vehicle_id) -> Any:
+    """The vehicle's newest ACTIVE earmark, or None (expiry enforced in
+    the query path — the same predicate as active_earmarks_by_plate)."""
+    return await conn.fetchrow(
+        "SELECT state, reason, lawful_basis, retention_until "
+        "FROM corridor.vehicle_earmarks "
+        "WHERE vehicle_id = $1 AND cleared_at IS NULL "
+        "AND retention_until > NOW() ORDER BY earmarked_at DESC LIMIT 1",
+        vehicle_id,
+    )
+
+
+async def open_recommendations_for_vehicle(conn: Any, vehicle_id) -> list:
+    """The vehicle's PENDING e-challan recommendations, newest first."""
+    return await conn.fetch(
+        "SELECT recommendation_id, rule_id, status "
+        "FROM events.enforcement_recommendations "
+        "WHERE vehicle_id = $1 AND status = 'pending' "
+        "ORDER BY created_at DESC LIMIT 10",
+        vehicle_id,
+    )
+
+
+async def pursuits_for_vehicle(conn: Any, vehicle_id) -> list:
+    """Live vehicle_pursuit corridor events naming the vehicle (max 5).
+
+    ``metadata->>'vehicle_id'`` is text, so the uuid binds AS TEXT — the
+    events router's own pursuit lookups compare the same way.
+    """
+    return await conn.fetch(
+        "SELECT event_id, status, metadata->>'recommendation_id' "
+        "AS recommendation_id FROM events.corridor_events "
+        "WHERE event_kind = 'vehicle_pursuit' "
+        "AND status IN ('planning','approved','active') "
+        "AND metadata->>'vehicle_id' = $1 "
+        "ORDER BY created_at DESC LIMIT 5",
+        str(vehicle_id),
+    )
+
+
+async def insert_lookup_audit(conn: Any, officer: str, mark_masked: str,
+                              found: bool, disclosure: str) -> Any:
+    """ONE audit row per completed lookup (found or not); RETURNING id,
+    looked_up_at.  The mark crosses the wire only MASKED — never hashed
+    (migration 025 dropped 024's mark_sha256: an unsalted hash of a mark
+    whose mask hides three digits falls to 1000 guesses)."""
+    return await conn.fetchrow(
+        "INSERT INTO corridor.vehicle_lookup_audit "
+        "(officer, mark_masked, found, disclosure) "
+        "VALUES ($1, $2, $3, $4) RETURNING id, looked_up_at",
+        officer, mark_masked, found, disclosure)
+
+
+async def fetch_lookup_audits(conn: Any, limit: int) -> list:
+    """Newest audit rows for GET /vehicles/lookups — masked marks only
+    (after migration 025 the table holds nothing else about the mark)."""
+    return await conn.fetch(
+        "SELECT id, looked_up_at, officer, mark_masked, found, disclosure "
+        "FROM corridor.vehicle_lookup_audit ORDER BY looked_up_at DESC "
+        "LIMIT $1", limit)
 
 
 async def persist_read(conn: Any, read: AnprRead, vehicle_id, point_json: str,

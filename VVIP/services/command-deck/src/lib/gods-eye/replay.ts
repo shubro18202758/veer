@@ -15,15 +15,20 @@
  * 3D city never runs inside its buildings.
  *
  * Honesty: a tape is a recording of EMULATED causes — every label carries
- * EMULATED, plates stay masked unless a named duty officer is on console,
+ * "Emulated", plates stay masked unless a named duty officer is on console,
  * and nothing here delivers anything to the stack.
+ *
+ * Symbology (SPEC §2.4, hue only by role): camera sites and units are
+ * neutral rings; a vehicle the sweep matched (a watchlist hit) is the alert
+ * red; labels use the UI face through the type tokens (canvasFont), at the
+ * 12 px floor.
  *
  * Pick ids `rpl:veh-<n>`, `rpl:unit-<n>`, `rpl:cam-<cameraId>`.
  */
 
 import type { ReplayTape } from './hud/replay.svelte';
 import { displayPlate } from './plates';
-import { cssColor } from './theme';
+import { canvasFont, cssColor } from './theme';
 import { agencyColor } from './layers/agency';
 import { DRAPE_Z, clampedDot, clampedLabel, drapedRing, ground } from './layers/draping';
 
@@ -104,8 +109,8 @@ export function createReplayOverlay(cesium: CesiumGlobal, viewer: CesiumViewer):
 
 		const canvasInk = cssColor(cesium, '--v-canvas', cesium.Color.BLACK);
 		const ink = cssColor(cesium, '--v-ink-1', cesium.Color.WHITE);
-		const act = cssColor(cesium, '--v-act', cesium.Color.ORANGE);
-		const tool = cssColor(cesium, '--v-tool', cesium.Color.CYAN);
+		const alert = cssColor(cesium, '--v-map-alert', cesium.Color.RED);
+		const marker = cssColor(cesium, '--v-map-marker', cesium.Color.LIGHTGRAY);
 
 		// Camera sites seen on the tape (fixed rings, labelled).
 		const cams = new Map<string, [number, number]>();
@@ -115,11 +120,11 @@ export function createReplayOverlay(cesium: CesiumGlobal, viewer: CesiumViewer):
 				id: `${REPLAY_PICK_PREFIX}cam-${id}`,
 				position: ground(cesium, lon, lat),
 				// a draped 60 m ring (ground ellipses have no outline)
-				polyline: drapedRing(cesium, { lon, lat, radiusM: 60, width: 2, material: tool, z: DRAPE_Z.trace }),
+				polyline: drapedRing(cesium, { lon, lat, radiusM: 60, width: 2, material: marker, z: DRAPE_Z.trace }),
 				label: clampedLabel(cesium, {
-					text: `${id} ·EMULATED`,
-					font: '11px monospace',
-					fillColor: tool,
+					text: `${id} · Emulated`,
+					font: canvasFont('12px var(--v-font-ui)'),
+					fillColor: marker,
 					outlineColor: canvasInk,
 					outlineWidth: 2,
 					style: 2,
@@ -154,14 +159,14 @@ export function createReplayOverlay(cesium: CesiumGlobal, viewer: CesiumViewer):
 				// a clamped DOT billboard — never a clamped `point` (draping.ts)
 				billboard: clampedDot(cesium, {
 					pixelSize: hit ? 13 : 8,
-					color: hit ? act : ink,
+					color: hit ? alert : ink,
 					outlineColor: canvasInk,
 					outlineWidth: 2,
 				}),
 				label: clampedLabel(cesium, {
-					text: `${label}${hit ? ` ·${hit.replace(/_/g, ' ').toUpperCase()}` : ''} ·EMULATED`,
-					font: hit ? '600 12px monospace' : '11px monospace',
-					fillColor: hit ? act : ink,
+					text: `${label}${hit ? ` · ${hit.replace(/_/g, ' ')}` : ''} · Emulated`,
+					font: canvasFont(hit ? '600 12px var(--v-font-ui)' : '12px var(--v-font-ui)'),
+					fillColor: hit ? alert : ink,
 					outlineColor: canvasInk,
 					outlineWidth: 2,
 					style: 2,
@@ -194,8 +199,8 @@ export function createReplayOverlay(cesium: CesiumGlobal, viewer: CesiumViewer):
 				position: prop,
 				billboard: clampedDot(cesium, { pixelSize: 9, color, outlineColor: canvasInk, outlineWidth: 2 }),
 				label: clampedLabel(cesium, {
-					text: `${unitId} ·EMULATED`,
-					font: '11px monospace',
+					text: `${unitId} · Emulated`,
+					font: canvasFont('12px var(--v-font-ui)'),
 					fillColor: color,
 					outlineColor: canvasInk,
 					outlineWidth: 2,

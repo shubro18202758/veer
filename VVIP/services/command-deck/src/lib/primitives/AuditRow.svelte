@@ -1,10 +1,10 @@
 <script lang="ts">
 	/**
-	 * AuditRow — FeedItem + a source chip: the feed kind of a server row
-	 * (event / enforcement / anpr / dispatch / signals / ama / brain) or the
-	 * rung of a local one (ndjson-chat / audit-poll / operator). Every row is
-	 * labelled; the ledger never hides its origin, and an emulated row
-	 * carries the EMULATED pill.
+	 * AuditRow — FeedItem (the AuditTable row renderer) plus its source: the
+	 * feed kind of a server row (event / enforcement / anpr / dispatch /
+	 * signals / ama / brain) or the rung of a local one (ndjson-chat /
+	 * audit-poll / operator). Every row is labelled; the audit never hides its
+	 * origin, and an emulated row carries the compact Emulated glyph.
 	 */
 	import FeedItem, { type FeedLevel, type FeedSource } from './FeedItem.svelte';
 
@@ -23,7 +23,7 @@
 		lang?: string;
 	}
 
-	let { ts, actor, actorKind, level, text, detail, source, emulated = false, simulated = false, rowId = null, lang = 'en' }: Props = $props();
+	let { ts, actor, actorKind, level, text, detail, source, emulated = false, simulated = false, rowId = null, lang }: Props = $props();
 </script>
 
 <div data-prim="audit-row" class="audit-row">
@@ -31,8 +31,8 @@
 </div>
 
 <style>
-	/* display:contents keeps FeedItem as the direct flex child of the feed
-	 * column; the wrapper exists only to carry the audit-row identity. */
+	/* display:contents keeps FeedItem the direct child of the audit column;
+	 * the wrapper exists only to carry the audit-row identity. */
 	.audit-row {
 		display: contents;
 	}

@@ -62,6 +62,12 @@
 	let tileErrors = 0;
 	let fittedKey = '';
 
+	/** A V3 day token as the page resolves it (the public shell loads them), else the deck's daylight value. */
+	function v3(name: string, fallback: string): string {
+		const v = typeof document === 'undefined' ? '' : getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		return v || fallback;
+	}
+
 	const cx = (CITY_BBOX.minLon + CITY_BBOX.maxLon) / 2;
 	const cy = (CITY_BBOX.minLat + CITY_BBOX.maxLat) / 2;
 
@@ -140,7 +146,7 @@
 							{
 								id: 'paper',
 								type: 'background',
-								paint: { 'background-color': cssVar('--v-paper', 'daylight') }
+								paint: { 'background-color': v3('--v3-map-bg', cssVar('--v-paper', 'daylight')) }
 							},
 							{
 								id: 'osm-tiles',
@@ -177,11 +183,13 @@
 				});
 
 				m.on('load', async () => {
-					const act = cssVar('--v-act', 'daylight');
-					const ink3 = cssVar('--v-ink-3', 'daylight');
-					const line1 = cssVar('--v-line-1', 'daylight');
-					const data = cssVar('--v-data', 'daylight');
-					const paper = cssVar('--v-paper', 'daylight');
+					// V3 day: the granted stretch is the protected route's teal, the tracked unit the brand blue; the roads
+					// are quiet ink, never an alert colour
+					const act = v3('--v3-route', cssVar('--v-act', 'daylight'));
+					const ink3 = v3('--v3-t2', cssVar('--v-ink-3', 'daylight'));
+					const line1 = v3('--v3-line-3', cssVar('--v-line-1', 'daylight'));
+					const data = v3('--v3-brand-strong', cssVar('--v-data', 'daylight'));
+					const paper = v3('--v3-s1', cssVar('--v-paper', 'daylight'));
 					for (const id of ['spine', 'routes', 'granted', 'unit']) {
 						m.addSource(id, { type: 'geojson', data: EMPTY });
 					}
@@ -295,15 +303,15 @@
 <style>
 	.light-map {
 		position: relative;
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-panel);
+		border: 1px solid var(--v3-line-1);
+		border-radius: var(--v3-radius-xl);
 		overflow: hidden;
-		background: var(--v-paper);
-		height: 320px;
+		background: var(--v3-map-bg);
+		height: 340px;
 	}
 
 	.light-map.compact {
-		height: 220px;
+		height: 260px;
 	}
 
 	.canvas {
@@ -313,19 +321,19 @@
 
 	.note {
 		position: absolute;
-		left: var(--v-space-2);
-		bottom: var(--v-space-2);
+		left: 8px;
+		bottom: 8px;
 		margin: 0;
-		padding: 2px var(--v-space-2);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		background: var(--v-surface-1);
-		border: 1px dashed var(--v-line-2);
-		border-radius: var(--v-radius-chip);
+		padding: 2px 10px;
+		font-size: var(--v3-text-meta);
+		color: var(--v3-t2);
+		background: var(--v3-s1);
+		border: 1px dashed var(--v3-dashed);
+		border-radius: 10px;
 	}
 
 	.light-map :global(.maplibregl-ctrl-attrib) {
-		font-size: var(--v-text-2xs);
-		background: var(--v-surface-1);
+		font-size: var(--v3-text-micro);
+		background: var(--v3-glass);
 	}
 </style>

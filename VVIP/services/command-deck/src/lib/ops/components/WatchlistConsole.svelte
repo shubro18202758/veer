@@ -1,31 +1,34 @@
 <script lang="ts">
 	/**
-	 * WatchlistConsole — earmarked plates, ANPR sightings, and the pursuit
-	 * entry point. Reads GET /api/v1/vehicles (earmark state, lawful basis,
-	 * retention horizon, last sighting — every synthetic read labelled
-	 * EMULATED per the ethics rail); the earmark/clear writers sit behind
-	 * the named-officer gate with the lawful-basis enum the backend enforces.
-	 * The retention line states the sighting-retention policy and whether
-	 * the reaper is actually running (GET /api/v1/vehicles/retention — a
-	 * failing DPDP control is shown, never silent). Plates are masked
-	 * (GJ27EM•••1) until a duty officer is named (C6).
+	 * Watchlist and retention (SPEC §6.3 col 3, §9.3; ownership UI-S5B):
+	 * the earmarked vehicles and the DPDP retention control.
+	 *
+	 *   retention  how long reads are kept and whether the purge is actually
+	 *              running (`retention-health` data-healthy 1 | 0 | ''): a
+	 *              failing control is shown, never silent
+	 *   table      each earmarked vehicle: the mark (masked, with its lock,
+	 *              unless a duty officer is named), earmark state, lawful
+	 *              basis, last read; selecting a row opens the vehicle in the
+	 *              inspector. Withdrawing an earmark asks once in an Alert
+	 *              (the officer's name is recorded with it).
+	 *   add        a popover form: mark, state, lawful basis (the enum the
+	 *              oracle enforces), reason, retention days; Earmark stays
+	 *              disabled with its reason until a duty officer is named.
+	 * Vehicles only: no person, owner or driver field anywhere (ethics rule 3).
 	 */
-	import Panel from '$lib/primitives/Panel.svelte';
-	import Badge from '$lib/primitives/Badge.svelte';
-	import Button from '$lib/primitives/Button.svelte';
-	import EmptyState from '$lib/primitives/EmptyState.svelte';
+	import { kindIcon } from '$lib/design/icons';
+	import { Alert, Button, FormGroup, HTMLSelect, Input, Plate, Popover, ProvenanceTag, Section, Tag } from '$lib/ui';
+	import { fmtAgo, fmtDay, fmtTime } from '$lib/ui/format/format';
+	import { t } from '$lib/i18n/strings';
+	import '$lib/i18n/packs.wall';
 	import { ops } from '$lib/ops/store.svelte';
-	import { LAWFUL_BASIS_CODES, EARMARK_STATES, POLL_MS } from '$lib/ops/endpoints';
-	import { tOps } from '$lib/i18n/strings.ops';
-	import { fmtAgeSince, fmtRetentionUntil, istClock } from '$lib/ops/format';
+	import { EARMARK_STATES, LAWFUL_BASIS_CODES, type LawfulBasisCode } from '$lib/ops/endpoints';
+	import { selection } from '$lib/gods-eye/entities/selection.svelte';
+	import Age from '$lib/decisions/wall/Age.svelte';
+	import type { VehicleWatchRecord } from '$lib/ops/types';
 
 	const lang = $derived(ops.lang);
-
-	let plate = $state('');
-	let earmarkState = $state<'watch' | 'flagged'>('flagged');
-	let basis = $state<(typeof LAWFUL_BASIS_CODES)[number]>('stolen_vehicle_fir');
-	let reason = $state('');
-	let days = $state(30);
+	const L = (key: string, ...args: unknown[]) => t(lang, key, ...args);
 
 	let clock = $state(Date.now());
 	$effect(() => {
@@ -35,250 +38,266 @@
 
 	const ret = $derived(ops.retention);
 
-	async function submitEarmark() {
-		if (!plate.trim() || reason.trim().length < 3) return;
-		const ok = await ops.earmarkPlate(plate.trim(), earmarkState, reason.trim(), basis, days);
+	// ── add to the watchlist (popover form) ───────────────────────────────
+	let plate = $state('');
+	let earmark = $state<string>('flagged');
+	let basis = $state<string>('stolen_vehicle_fir');
+	let reason = $state('');
+	let days = $state('30');
+	let formOpen = $state(false);
+
+	const daysNum = $derived(Math.max(1, Math.min(90, Math.round(Number(days) || 30))));
+	const formReason = $derived(
+		!ops.officerOn ? L('wall_watch_needs_officer') : !plate.trim() ? L('wall_watch_needs_mark') : reason.trim().length < 3 ? L('wall_watch_needs_reason') : null,
+	);
+
+	async function submit(close: () => void) {
+		if (formReason) return;
+		const ok = await ops.earmarkPlate(plate.trim(), earmark as 'watch' | 'flagged', reason.trim(), basis as LawfulBasisCode, daysNum);
 		if (ok) {
 			plate = '';
 			reason = '';
+			close();
 		}
 	}
+
+	// ── withdraw (Alert) ──────────────────────────────────────────────────
+	let withdrawing = $state<VehicleWatchRecord | null>(null);
+	let alertOpen = $state(false);
+
+	function askWithdraw(w: VehicleWatchRecord) {
+		withdrawing = w;
+		alertOpen = true;
+	}
+
+	async function confirmWithdraw() {
+		const w = withdrawing;
+		if (!w) return;
+		await ops.clearWatch(w.vehicleId);
+		alertOpen = false;
+		withdrawing = null;
+	}
+
+	function basisWord(code: string | null): string {
+		if (!code) return '—';
+		const key = `wall_basis_${code}`;
+		const w = L(key);
+		return w === key ? code : w;
+	}
+
+	function pick(w: VehicleWatchRecord) {
+		selection.select(`vehicle:${w.vehicleId}`, { source: 'table' });
+	}
+
+	function onKey(e: KeyboardEvent, w: VehicleWatchRecord) {
+		if (e.target !== e.currentTarget) return;
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			pick(w);
+		}
+	}
+
+	const shownMark = (w: VehicleWatchRecord) => ops.plate(w.plate) ?? w.vehicleId.slice(0, 8);
 </script>
 
-<Panel
-	title={tOps(lang, 'watchTitle')}
-	sub={tOps(lang, 'watchSub')}
-	status={ops.watchlistUpdated ? { state: ops.watchlistLive === false ? 'stale' : 'live', updatedAt: ops.watchlistUpdated } : null}
-	pollMs={POLL_MS.watchlist}
-	lang={lang}
-	scroll
->
-	<p class="retention mono" data-testid="retention-health" data-healthy={ret?.healthy == null ? '' : ret.healthy ? '1' : '0'}>
+{#snippet right()}
+	<Age at={ops.watchlistUpdated || null} {lang} />
+	<Popover placement="bottom-end" bind:open={formOpen}>
+		<Button minimal small icon="plus" tooltip={L('wall_watch_add_tip')}>{L('wall_watch_add')}</Button>
+		{#snippet content({ close })}
+			<form
+				class="form"
+				onsubmit={(e) => {
+					e.preventDefault();
+					void submit(close);
+				}}
+			>
+				<div class="f-head">{L('wall_watch_add')}</div>
+				<FormGroup label={L('wall_watch_mark')}>
+					<Input small fill bind:value={plate} spellcheck="false" autocomplete="off" maxlength={16} data-autofocus />
+				</FormGroup>
+				<div class="f-row">
+					<FormGroup label={L('wall_watch_state')}>
+						<HTMLSelect small fill bind:value={earmark} options={EARMARK_STATES.map((s) => ({ value: s, label: L(`wall_earmark_${s}`) }))} />
+					</FormGroup>
+					<FormGroup label={L('wall_watch_days')}>
+						<Input small fill type="number" min="1" max="90" bind:value={days} />
+					</FormGroup>
+				</div>
+				<FormGroup label={L('wall_watch_basis')}>
+					<HTMLSelect small fill bind:value={basis} options={LAWFUL_BASIS_CODES.map((b) => ({ value: b, label: basisWord(b) }))} />
+				</FormGroup>
+				<FormGroup label={L('wall_watch_reason')}>
+					<Input small fill bind:value={reason} maxlength={200} placeholder={L('wall_watch_reason_ph')} />
+				</FormGroup>
+				<div class="f-foot">
+					<Button small onclick={close}>{L('wall_cancel')}</Button>
+					<Button small intent="primary" type="submit" disabled={!!formReason || ops.watchBusy !== null} disabledReason={formReason} reasonInline>
+						{L('wall_watch_earmark')}
+					</Button>
+				</div>
+			</form>
+		{/snippet}
+	</Popover>
+{/snippet}
+
+<Section title={L('wall_watch')} icon={kindIcon('vehicle')} level={2} sub={L('wall_watch_count', ops.watchlist.length)} {right} data-prim="panel" data-wall="watchlist">
+	<div class="retention" data-testid="retention-health" data-healthy={ret?.healthy == null ? '' : ret.healthy ? '1' : '0'}>
 		{#if ret}
-			<span>{tOps(lang, 'retentionLine', ret.defaultDays ?? '—', ret.earmarkCapDays ?? '—')}</span>
-			<span class:ok={ret.healthy === true} class:bad={ret.healthy === false}>
-				{ret.healthy === false ? tOps(lang, 'retentionFailing', ret.consecutiveFailures) : ret.healthy ? tOps(lang, 'retentionHealthy') : '—'}
-			</span>
-			{#if ret.lastSuccessAt}<span>{tOps(lang, 'retentionLastRun', istClock(ret.lastSuccessAt), ret.lastRemoved ?? 0)}</span>{/if}
+			<span class="ell">{L('wall_ret_line', ret.defaultDays ?? '—', ret.earmarkCapDays ?? '—')}</span>
+			{#if ret.healthy === true}
+				<Tag intent="success" tooltip={ret.lastSuccessAt ? L('wall_ret_last', fmtTime(ret.lastSuccessAt), ret.lastRemoved ?? 0) : null}>{L('wall_ret_healthy')}</Tag>
+			{:else if ret.healthy === false}
+				<Tag intent="danger" tooltip={L('wall_ret_failing_tip')}>{L('wall_ret_failing', ret.consecutiveFailures)}</Tag>
+			{:else}
+				<Tag>{L('wall_ret_unknown')}</Tag>
+			{/if}
 		{:else}
-			<span>{ops.retentionNote ?? tOps(lang, 'retentionUnknown')}</span>
+			<span class="muted">{ops.retentionNote ?? L('wall_ret_waiting')}</span>
 		{/if}
-	</p>
-	<form class="earmark-form" onsubmit={(e) => { e.preventDefault(); void submitEarmark(); }}>
-		<input
-			class="w-input mono"
-			type="text"
-			placeholder={tOps(lang, 'watchPlate')}
-			bind:value={plate}
-			spellcheck="false"
-			autocomplete="off"
-		/>
-		<select class="w-select" bind:value={earmarkState} aria-label={tOps(lang, 'watchState')}>
-			{#each EARMARK_STATES as s (s)}
-				<option value={s}>{s}</option>
-			{/each}
-		</select>
-		<select class="w-select" bind:value={basis} aria-label={tOps(lang, 'watchBasis')}>
-			{#each LAWFUL_BASIS_CODES as b (b)}
-				<option value={b}>{b}</option>
-			{/each}
-		</select>
-		<input
-			class="w-input reason"
-			type="text"
-			placeholder={tOps(lang, 'watchReasonPlaceholder')}
-			bind:value={reason}
-		/>
-		<label class="days">
-			<span class="mono">{tOps(lang, 'watchDays')}</span>
-			<input class="w-days mono" type="number" min="1" max="90" bind:value={days} />
-		</label>
-		<Button variant="primary" size="sm" actor={ops.officerOn ? ops.dutyOfficer : null} onclick={() => void submitEarmark()}>
-			{tOps(lang, 'watchEarmark')}
-		</Button>
-	</form>
+	</div>
 
 	{#if ops.watchlist.length === 0}
-		<EmptyState title={tOps(lang, 'watchNone')} hint={ops.watchlistNote ?? undefined} />
+		<p class="empty">{ops.watchlistNote ?? L('wall_watch_none')}</p>
 	{:else}
-		<ul class="watch-rows">
-			{#each ops.watchlist as w (w.vehicleId)}
-				<li class="watch-row" class:flagged={w.earmarkState === 'flagged'}>
-					<div class="row-main">
-						<span class="plate mono" data-testid="watch-plate">{ops.plate(w.plate) ?? w.vehicleId.slice(0, 8)}</span>
-						<Badge variant={w.earmarkState === 'flagged' ? 'act' : 'pending'} label={w.earmarkState ?? '—'} />
-						{#if w.lastSighting?.source === 'emulated_anpr'}
-							<Badge variant="emulated" label={tOps(lang, 'labelEmulated')} />
-						{/if}
-					</div>
-					<p class="row-reason">{ops.text(w.earmarkReason) || '—'}</p>
-					<dl class="row-facts mono">
-						<div><dt>{tOps(lang, 'watchBasis')}</dt><dd>{w.lawfulBasis ?? '—'}</dd></div>
-						<div><dt>{tOps(lang, 'watchRetention')}</dt><dd>{fmtRetentionUntil(w.retentionUntil, clock)}</dd></div>
-						<div><dt>{tOps(lang, 'watchLastSeen')}</dt><dd>{fmtAgeSince(w.lastSighting?.t ?? null, clock)}{w.lastSighting?.t ? ` · ${istClock(w.lastSighting.t)} IST` : ''}{w.lastSighting?.speedKmh != null ? ` · ${tOps(lang, 'watchSpeed', Math.round(w.lastSighting.speedKmh))}` : ''}</dd></div>
-					</dl>
-					<div class="row-actions">
-						<Button
-							variant="ghost"
-							size="sm"
-							busy={ops.watchBusy === w.vehicleId}
-							actor={ops.officerOn ? ops.dutyOfficer : null}
-							onclick={() => void ops.clearWatch(w.vehicleId)}
-						>
-							{tOps(lang, 'watchClear')}
-						</Button>
-					</div>
-				</li>
-			{/each}
-		</ul>
+		<table class="wdt">
+			<colgroup><col /><col style:width="76px" /><col style:width="132px" /><col style:width="88px" /><col style:width="40px" /></colgroup>
+			<thead>
+				<tr>
+					<th scope="col">{L('wall_watch_col_vehicle')}</th>
+					<th scope="col">{L('wall_watch_col_state')}</th>
+					<th scope="col">{L('wall_watch_col_basis')}</th>
+					<th scope="col" class="num">{L('wall_watch_col_last')}</th>
+					<th aria-hidden="true"></th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each ops.watchlist as w (w.vehicleId)}
+					{@const sel = selection.current === `vehicle:${w.vehicleId}`}
+					<tr class={['pick', sel && 'is-selected']} tabindex="0" aria-selected={sel} data-vehicle-id={w.vehicleId} onclick={() => pick(w)} onkeydown={(e) => onKey(e, w)}>
+						<td>
+							<div class="c">
+								<Plate mark={shownMark(w)} masked={!ops.officerOn} data-testid="watch-plate" />
+								{#if w.lastSighting?.source === 'emulated_anpr'}<ProvenanceTag source="emulated" compact {lang} />{/if}
+							</div>
+						</td>
+						<td><div class="c"><Tag intent={w.earmarkState === 'flagged' ? 'danger' : 'none'}>{L(`wall_earmark_${w.earmarkState ?? 'watch'}`)}</Tag></div></td>
+						<td><div class="c"><span class="ell" title={ops.text(w.earmarkReason) || undefined}>{basisWord(w.lawfulBasis)}</span></div></td>
+						<td class="num">
+							<div class="c">
+								<span class="tn" title={w.retentionUntil ? L('wall_watch_keep_until', fmtDay(w.retentionUntil)) : undefined}>{w.lastSighting?.t ? fmtAgo(w.lastSighting.t, clock, lang) : '—'}</span>
+							</div>
+						</td>
+						<td class="num">
+							<div class="c" role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+								<Button
+									minimal
+									small
+									icon="cross"
+									tooltip={ops.officerOn ? L('wall_watch_withdraw') : L('wall_watch_needs_officer')}
+									aria-label={L('wall_watch_withdraw')}
+									disabled={!ops.officerOn || ops.watchBusy !== null}
+									loading={ops.watchBusy === w.vehicleId}
+									onclick={() => askWithdraw(w)}
+								/>
+							</div>
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
 	{/if}
-</Panel>
+</Section>
+
+<Alert
+	bind:open={alertOpen}
+	intent="primary"
+	icon="cross"
+	confirmLabel={L('wall_watch_withdraw')}
+	cancelLabel={L('wall_cancel')}
+	loading={!!withdrawing && ops.watchBusy === withdrawing.vehicleId}
+	onconfirm={() => void confirmWithdraw()}
+	oncancel={() => (withdrawing = null)}
+	{lang}
+>
+	{#if withdrawing}
+		<p class="a-title">{L('wall_watch_withdraw_q')} <Plate mark={shownMark(withdrawing)} masked={!ops.officerOn} /></p>
+		<p class="a-body">{L('wall_watch_withdraw_body')}</p>
+	{/if}
+</Alert>
 
 <style>
 	.retention {
-		margin: 0 0 var(--v-space-2);
 		display: flex;
-		flex-wrap: wrap;
-		gap: var(--v-space-3);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.retention .ok {
-		color: var(--v-band-green);
-	}
-
-	.retention .bad {
-		color: var(--v-band-red);
-	}
-
-	.earmark-form {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--v-space-2);
 		align-items: center;
-		margin-bottom: var(--v-space-3);
-		padding-bottom: var(--v-space-3);
+		gap: 8px;
+		min-width: 0;
+		padding: 8px 16px;
 		border-bottom: 1px solid var(--v-line-1);
-	}
-
-	.w-input {
-		height: var(--v-ctl-sm);
-		padding: 0 var(--v-space-2);
 		font-size: var(--v-text-xs);
-		color: var(--v-ink-1);
-		background: var(--v-surface-sink);
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-btn);
-		min-width: 90px;
+		line-height: 16px;
 	}
 
-	.w-input.reason {
-		flex: 1;
-		min-width: 160px;
+	.ell {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.w-select {
-		height: var(--v-ctl-sm);
-		font: inherit;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-1);
-		background: var(--v-surface-sink);
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-btn);
-	}
-
-	.days {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--v-space-1);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.w-days {
-		width: 52px;
-		height: var(--v-ctl-sm);
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-1);
-		background: var(--v-surface-sink);
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-btn);
-	}
-
-	.watch-rows {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--v-gap-panel);
-	}
-
-	.watch-row {
-		display: flex;
-		flex-direction: column;
-		gap: var(--v-space-1);
-		padding: var(--v-space-2) var(--v-space-3);
-		background: var(--v-surface-2);
-		border: 1px solid var(--v-line-1);
-		border-left: 2px solid var(--v-band-amber);
-		border-radius: var(--v-radius-panel);
-	}
-
-	.watch-row.flagged {
-		border-left-color: var(--v-band-red);
-	}
-
-	.row-main {
-		display: flex;
-		align-items: center;
-		gap: var(--v-space-2);
-		flex-wrap: wrap;
-	}
-
-	.plate {
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-1);
-		letter-spacing: 0.04em;
-	}
-
-	.row-reason {
-		margin: 0;
-		font-size: var(--v-text-xs);
+	.muted {
 		color: var(--v-ink-2);
 	}
 
-	.row-facts {
+	.tn {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.empty {
 		margin: 0;
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--v-space-3);
-	}
-
-	.row-facts div {
-		display: flex;
-		gap: var(--v-space-1);
-		align-items: baseline;
-	}
-
-	.row-facts dt {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.row-facts dd {
-		margin: 0;
-		font-size: var(--v-text-2xs);
+		padding: 10px 16px;
 		color: var(--v-ink-2);
+		font-size: var(--v-text-xs);
 	}
 
-	.row-actions {
+	.form {
 		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		width: 320px;
+		padding: 12px 16px;
+	}
+
+	.f-head {
+		margin-bottom: 4px;
+		font-weight: 600;
+	}
+
+	.f-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 96px;
+		gap: 8px;
+	}
+
+	.f-foot {
+		display: flex;
+		align-items: flex-start;
 		justify-content: flex-end;
+		gap: 8px;
+		margin-top: 4px;
 	}
 
-	.mono {
-		font-family: var(--v-font-mono);
+	.a-title {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin: 0 0 6px;
+		font-weight: 600;
+	}
+
+	.a-body {
+		margin: 0;
+		color: var(--v-ink-2);
 	}
 </style>

@@ -1,13 +1,4 @@
-<script lang="ts">
-	/**
-	 * Badge — the 18px status pill. Hairline only; 'emulated' is dashed
-	 * ink-2 caps; 'act' is act-border + act-text with NO fill (orange never
-	 * fills); the 'band' variant MUST go through BandChip (BLACK's inverted
-	 * rules apply) and is enforced here by delegation.
-	 */
-	import BandChip from './BandChip.svelte';
-	import type { Band } from '$lib/design/tokens';
-
+<script lang="ts" module>
 	export type BadgeVariant =
 		| 'live'
 		| 'offline'
@@ -22,6 +13,37 @@
 		| 'act'
 		| 'neutral'
 		| 'band';
+</script>
+
+<script lang="ts">
+	/**
+	 * Badge — the legacy status pill, rebuilt on src/lib/ui's Tag (SPEC §5.2).
+	 * The thirteen variants collapse into the colour roles (SPEC §2.4) and the
+	 * provenance glyphs:
+	 *   live, approved           → success (healthy, approved)
+	 *   act, with its own label  → warning: the "Needs decision" tag (a
+	 *                              decision waits), the one orange use
+	 *   act with a caller's label, pending → neutral: callers use them for
+	 *                              rule notes and states ("No fine · evidence
+	 *                              only", "Human confirms", "Commits locked …"),
+	 *                              and orange never marks a rule note
+	 *   emulated                 → the emulated provenance glyph, quiet ink
+	 *   fixture                  → the test glyph, quiet ink
+	 *   offline, not-deployed, stale, rejected, deferred, neutral → neutral
+	 *   band                     → BandChip (BLACK's fill-and-hairline rule)
+	 * Text is sentence case: the label as given, its first letter capitalised
+	 * (HI and GU are untouched). `data-prim="badge"`, `data-variant` and the
+	 * `badge` class stay on the root.
+	 */
+	import type { Band } from '$lib/design/tokens';
+	import { PROVENANCE_ICON, type IconName } from '$lib/design/icons';
+	import { t } from '$lib/i18n/strings';
+	import '$lib/i18n/packs';
+	import Tag from '$lib/ui/Tag.svelte';
+	import { uiLang } from '$lib/ui/lang';
+	import type { TagIntent } from '$lib/ui/types';
+	import BandChip from './BandChip.svelte';
+	import { sentenceStart } from './text';
 
 	interface Props {
 		variant: BadgeVariant;
@@ -29,91 +51,45 @@
 		band?: Band | null;
 		label?: string;
 		title?: string;
+		lang?: string;
 	}
 
-	let { variant, band = null, label, title }: Props = $props();
+	let { variant, band = null, label, title, lang }: Props = $props();
 
-	const text = $derived(label ?? variant);
+	const ctxLang = uiLang();
+	const L = $derived(lang ?? ctxLang());
+
+	const INTENT: Partial<Record<BadgeVariant, TagIntent>> = {
+		live: 'success',
+		approved: 'success'
+	};
+	/** Orange only for the "Needs decision" tag itself (no caller label): SPEC §2.4. */
+	const intent = $derived<TagIntent>(variant === 'act' && label == null ? 'warning' : (INTENT[variant] ?? 'none'));
+	const ICON: Partial<Record<BadgeVariant, IconName>> = {
+		emulated: PROVENANCE_ICON.emulated,
+		fixture: PROVENANCE_ICON.test
+	};
+
+	const text = $derived(sentenceStart(label ?? t(L, `badge_${variant}`)));
+	const quiet = $derived(variant === 'emulated' || variant === 'fixture' || variant === 'stale' || variant === 'not-deployed' || variant === 'offline');
 </script>
 
 {#if variant === 'band'}
-	<BandChip band={(band ?? 'GREEN') as Band} label={label} size="sm" />
+	<BandChip band={(band ?? 'GREEN') as Band} {label} size="sm" />
 {:else}
-	<span
-		class="badge v-{variant}"
-		{title}
+	<Tag
+		{intent}
+		icon={ICON[variant]}
+		tooltip={title ?? null}
+		class={['badge', quiet && 'quiet']}
 		data-prim="badge"
-	>{text}</span>
+		data-variant={variant}>{text}</Tag
+	>
 {/if}
 
 <style>
-	.badge {
-		display: inline-flex;
-		align-items: center;
-		height: 18px;
-		padding: 0 var(--v-space-2);
-		font-size: var(--v-text-2xs);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		border-radius: var(--v-radius-pill);
-		border: 1px solid var(--v-line-2);
+	/* provenance and absent states read quietly (ink-2), never as a colour */
+	:global(.tag[data-prim='badge'].quiet) {
 		color: var(--v-ink-2);
-		background: transparent;
-		white-space: nowrap;
-	}
-
-	/* feed-health dots reuse band-green only as ≤8px dots elsewhere; the
-	 * 'live' badge keeps the green EDGE, never a fill. */
-	.v-live {
-		border-color: var(--v-band-green);
-		color: var(--v-band-green);
-	}
-
-	.v-offline,
-	.v-not-deployed,
-	.v-neutral {
-		border-color: var(--v-line-2);
-		color: var(--v-ink-3);
-	}
-
-	.v-not-deployed,
-	.v-stale {
-		border-style: dashed;
-		color: var(--v-ink-3);
-	}
-
-	.v-fixture,
-	.v-deferred {
-		border-color: var(--v-data);
-		color: var(--v-data);
-	}
-
-	/* emulated evidence — dashed, ink-2, caps (never green). */
-	.v-emulated {
-		border-style: dashed;
-		border-color: var(--v-ink-2);
-		color: var(--v-ink-2);
-	}
-
-	.v-pending {
-		border-color: var(--v-act);
-		color: var(--v-act-text);
-	}
-
-	/* the human-must-act badge: edge + text, never a fill. */
-	.v-act {
-		border-color: var(--v-act);
-		color: var(--v-act-text);
-	}
-
-	.v-approved {
-		border-color: var(--v-band-green);
-		color: var(--v-band-green);
-	}
-
-	.v-rejected {
-		border-color: var(--v-band-red);
-		color: var(--v-band-red);
 	}
 </style>

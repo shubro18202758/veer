@@ -49,6 +49,7 @@ which rewrites the files and the snapshot together.
 | `scripts/data/osm/city.overpass.json.gz`, `scripts/data/osm/walled_city.overpass.json.gz` | the two Overpass extracts the network is built from, unmodified (gzip of the request and the response) | the response's own `osm3s.copyright` (openstreetmap.org, ODbL) and this notice |
 | `scripts/data/osm_network_map.json` | the mapping table: OSM node per junction, road per segment, evidence | `about` |
 | `scripts/data/osm_network.json` | the evidence: traced paths, OSM way and node ids, validation metrics | `attribution` |
+| `scripts/data/osint_gazetteer.json` | the OSINT place gazetteer (`scripts/gen_osint_gazetteer.py`): the 34 junctions' and 49 road segments' OSM names and points, plus hand-placed neighbourhood and landmark points; seeds `osint.gazetteer` | `meta.licence` ("© OpenStreetMap contributors, ODbL 1.0") and `meta.source` |
 | `services/signal-ingress/src/feeds/segments_ahmedabad.rs` | the ingress feeds' polylines (`scripts/gen_ingress_segments.py`, read from the store) | module header |
 | `scripts/data/route_acceptance_pairs.json` | routes over the network (`scripts/poi_route_matrix.py`) | `attribution` |
 | `scripts/scenario_library.json` | the twin's network facts (`python -m traffic_oracle.simulation export`) | `attribution` |

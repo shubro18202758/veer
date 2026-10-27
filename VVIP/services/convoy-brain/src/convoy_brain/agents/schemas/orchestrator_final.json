@@ -36,7 +36,7 @@
         },
         "threat_level": {
           "type": "string",
-          "enum": ["nominal", "guarded", "moderate", "elevated", "critical"]
+          "enum": ["not_assessed", "nominal", "guarded", "moderate", "elevated", "critical"]
         },
         "plan_b_ready": { "type": "boolean" }
       }

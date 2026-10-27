@@ -1,64 +1,61 @@
 <script lang="ts">
 	/**
-	 * EventBoard — the live event board with lifecycle state. Rebuilt on the
-	 * design system: per-subject BandChip (the only legal band renderer),
-	 * source badges (EMULATED for emulator-staged rows), and the C-F verb
-	 * rail — APPROVE / ACTIVATE / COMPLETE / CANCEL under the named officer
-	 * (EventLifecycleVerbs). Planned renders hollow, active fills and
-	 * carries the 8 s corridor sweep sheen, complete desaturates over 2 s.
-	 * Windows print in IST through the one formatter the dossier uses, so
-	 * the two always agree; titles are plate-masked unless an officer is
-	 * named (C6). The PREVIEW toggle shows the labelled use-case fixtures
-	 * beside a healthy live board.
+	 * Corridor operations (SPEC §6.3 col 2, §9.2; ownership UI-S5B): the
+	 * city's corridor events in three tabs, Open · Completed · Cancelled.
+	 *
+	 *   Open       the live board (GET /events/active, planning → active),
+	 *              plus the labelled use-case fixtures while the Fixtures
+	 *              switch is on (`preview-toggle`; rows keep `.fixture`).
+	 *              Each row: the kind's glyph, the title (plate-masked
+	 *              unless a duty officer is named, then through the display
+	 *              layer), its provenance marks (RowProvenance: a uniform list
+ *              states its provenance once in the header, a mixed list marks
+ *              each emulated row with the compact glyph, a test row ALWAYS
+ *              shows a visible "Test" tag), the window in IST, the
+	 *              kind, class and state, and the C-F lifecycle verbs
+	 *              (EventLifecycleVerbs: one POST per click under the named
+	 *              officer; CANCEL keeps its inline confirmation,
+	 *              `.cancel-row input`). The selected row also lists its
+	 *              phases (`phase-window`, the dossier's formatter, so the two
+	 *              always agree) and its route.
+	 *   Completed  the event history (GET /events?limit=200) within the
+	 *   Cancelled  wall's range, newest change first.
+	 *
+	 * Selecting is a row click: the event is selected everywhere (the board,
+	 * the band, the audit scope, the map) and the inspector opens on it; a
+	 * fixture only moves the board's selection (it is not a city object).
+	 * Rows keep `event-card` with `data-event-id` and `data-status`, and
+	 * `.selected` on the selected one. A promoted OSINT event shows its
+	 * verification tag WITH its visible label, and its credibility
+	 * (decisions/wall/EventProvenance; SPEC §9.2, ethics rule 7).
 	 */
-	import Panel from '$lib/primitives/Panel.svelte';
-	import Badge from '$lib/primitives/Badge.svelte';
-	import BandChip from '$lib/primitives/BandChip.svelte';
-	import EmptyState from '$lib/primitives/EmptyState.svelte';
+	import { eventKindIcon } from '$lib/design/icons';
+	import { Icon, NonIdealState, ProvenanceTag, Section, Switch, Tabs, Tooltip } from '$lib/ui';
+	import { fmtRange } from '$lib/ui/format/format';
+	import { kindLabel, t } from '$lib/i18n/strings';
+	import '$lib/i18n/packs.wall';
 	import EventLifecycleVerbs from './EventLifecycleVerbs.svelte';
-	import { ops } from '$lib/ops/store.svelte';
-	import { POLL_MS } from '$lib/ops/endpoints';
+	import { ops, eventVerbs } from '$lib/ops/store.svelte';
 	import { fmtWindowIst } from '$lib/ops/format';
-	import { t } from '$lib/i18n/strings';
-	import { tOps } from '$lib/i18n/strings.ops';
-	import type { Band } from '$lib/design/tokens';
-	import type { CorridorEvent, EventPhase } from '$lib/ops/types';
+	import { displayTitle } from '$lib/workspace/display';
+	import { selection } from '$lib/gods-eye/entities/selection.svelte';
+	import { wallData, type HistoryEvent } from '$lib/decisions/wall/wall-data.svelte';
+	import Age from '$lib/decisions/wall/Age.svelte';
+	import RowProvenance from '$lib/decisions/wall/RowProvenance.svelte';
+	import { countable, uniformLabel, uniformProvenance } from '$lib/decisions/wall/provenance';
+	import type { CorridorEvent } from '$lib/ops/types';
 
-	const KIND_ICONS: Record<string, string> = {
-		protected_movement: '⛨',
-		procession: '🛕',
-		mass_gathering: '🕉',
-		race: '🏃',
-		ceremonial: '🎖',
-		egress_surge: '🏟',
-		emergency_evacuation: '⛈',
-		work_zone: '🚧',
-		vehicle_pursuit: '➤',
-		crime_incident: '⚑',
-	};
-
-	function phaseLive(ev: CorridorEvent, phase: EventPhase, now: number): boolean {
-		if (ev.source === 'offline-fixture') return false;
-		const s = phase.startTime ? Date.parse(phase.startTime) : NaN;
-		const e = phase.endTime ? Date.parse(phase.endTime) : Infinity;
-		return Number.isFinite(s) ? now >= s && now <= e : false;
+	interface Props {
+		/** The wall's range: the closed tabs list what changed within it. */
+		window: readonly [number, number];
 	}
 
-	function stateVariant(state: string): 'pending' | 'live' | 'neutral' {
-		if (state === 'active') return 'live';
-		if (state === 'completed' || state === 'cancelled') return 'neutral';
-		return 'pending';
-	}
+	let { window: range }: Props = $props();
 
-	/** Spine segment ids with their road names (geometry registry), compact. */
-	function spineLabel(ev: CorridorEvent): string {
-		return ev.routeSegmentIds
-			.map((id) => {
-				const road = ops.roadName(id);
-				return road ? `${id} ${road}` : String(id);
-			})
-			.join(' · ');
-	}
+	type Tab = 'open' | 'completed' | 'cancelled';
+
+	const lang = $derived(ops.lang);
+	const L = (key: string, ...args: unknown[]) => t(lang, key, ...args);
 
 	let clock = $state(Date.now());
 	$effect(() => {
@@ -66,370 +63,356 @@
 		return () => clearInterval(id);
 	});
 
-	const lang = $derived(ops.lang);
+	const open = $derived(ops.events.filter((e) => e.state !== 'completed' && e.state !== 'cancelled'));
+	const inRange = (h: HistoryEvent) => (h.updatedAt ?? h.actualEnd ?? 0) >= range[0];
+	const closed = $derived(wallData.history.filter((h) => !ops.events.some((e) => e.eventId === h.event.eventId)));
+	const completed = $derived(closed.filter((h) => h.event.state === 'completed' && inRange(h)));
+	const cancelled = $derived(closed.filter((h) => h.event.state === 'cancelled' && inRange(h)));
+
+	/** The operator's tab; until they choose, Open when anything is open, else Completed. */
+	let chosen = $state<Tab | null>(null);
+	const tab = $derived<Tab>(chosen ?? (open.length || !wallData.historyUpdated ? 'open' : 'completed'));
+
+	// test and rehearsal rows are listed (and tagged) but kept out of the counts (SPEC §9.2)
+	const tabs = $derived([
+		{ id: 'open' as const, label: L('wall_ops_open'), count: countable(open).length },
+		{ id: 'completed' as const, label: L('wall_ops_completed'), count: countable(completed.map((h) => h.event)).length },
+		{ id: 'cancelled' as const, label: L('wall_ops_cancelled'), count: countable(cancelled.map((h) => h.event)).length },
+	]);
+
+	/** Title as shown: masked unless an officer is named, then the display layer. */
+	function title(ev: CorridorEvent): string {
+		return displayTitle(ops.text(ev.name), lang) || ev.eventId.slice(0, 8);
+	}
+
+	/** The event's window: its phases' span, else the planned window. */
+	function windowOf(ev: CorridorEvent, h?: HistoryEvent): [string | number | null, string | number | null] {
+		const starts = ev.phases.map((p) => p.startTime).filter((x): x is string => !!x);
+		const ends = ev.phases.map((p) => p.endTime).filter((x): x is string => !!x);
+		const a = h?.actualStart ?? ev.windowStart ?? starts.sort()[0] ?? null;
+		const b = h?.actualEnd ?? ev.windowEnd ?? ends.sort().at(-1) ?? null;
+		return [a, b];
+	}
+
+	function windowText(ev: CorridorEvent, h?: HistoryEvent): string {
+		const [a, b] = windowOf(ev, h);
+		if (a == null) return '—';
+		return b == null ? L('wall_ops_from', fmtRange(a, null, clock)) : fmtRange(a, b, clock);
+	}
+
+	function stateWord(ev: CorridorEvent): string {
+		const raw = ev.status ?? ev.state;
+		const key = `wall_state_${raw}`;
+		const w = L(key);
+		return w === key ? raw : w;
+	}
+
+	function classWord(ev: CorridorEvent): string | null {
+		return ev.protectionClass && ev.protectionClass !== 'none' ? ev.protectionClass : null;
+	}
+
+	function roads(ev: CorridorEvent): string {
+		const names: string[] = [];
+		for (const id of ev.routeSegmentIds) {
+			const n = ops.roadName(id) ?? `#${id}`;
+			if (!names.includes(n)) names.push(n);
+		}
+		return names.length > 4 ? `${names.slice(0, 4).join(', ')} +${names.length - 4}` : names.join(', ');
+	}
+
+	function pick(ev: CorridorEvent) {
+		if (ev.source === 'offline-fixture') {
+			selection.clear();
+			ops.selectEvent(ev.eventId);
+			return;
+		}
+		if (ops.selectedEventId !== ev.eventId) ops.selectEvent(ev.eventId);
+		selection.select(`event:${ev.eventId}`, { source: 'table' });
+	}
+
+	function pickHistory(h: HistoryEvent) {
+		selection.select(`event:${h.event.eventId}`, { source: 'table' });
+	}
+
+	function onKey(e: KeyboardEvent, fn: () => void) {
+		if (e.target !== e.currentTarget) return;
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			fn();
+		}
+	}
+
+	const historyRows = $derived(tab === 'completed' ? completed : tab === 'cancelled' ? cancelled : []);
+
+	/** The rows on screen: a uniform list states its provenance once, in the header (SPEC §9.2). */
+	const shown = $derived(tab === 'open' ? open : historyRows.map((h) => h.event));
+	const uniform = $derived(uniformProvenance(shown));
 </script>
 
-{#snippet headRight()}
-	<label class="preview-toggle" title={tOps(lang, 'previewToggleHint')}>
-		<input
-			type="checkbox"
-			checked={ops.previewFixtures}
-			onchange={(e) => ops.setPreviewFixtures(e.currentTarget.checked)}
-			data-testid="preview-toggle"
-		/>
-		<span class="mono">{tOps(lang, 'previewToggle')}</span>
-	</label>
+{#snippet glyphs(ev: CorridorEvent)}
+	<RowProvenance event={ev} {lang} uniform={uniform === 'emulated'} />
 {/snippet}
 
-<Panel
-	title={t(lang, 'opsTitle')}
-	sub={t(lang, 'opsSub')}
-	status={ops.boardUpdated ? { state: ops.boardStatus === 'offline' ? 'stale' : ops.boardStatus === 'mixed' ? 'mixed' : 'live', updatedAt: ops.boardUpdated } : null}
-	pollMs={POLL_MS.board}
-	lang={lang}
-	scroll
-	{...{ 'header-right': headRight }}
->
-	{#if ops.boardNote}<p class="board-note mono">{ops.boardNote}</p>{/if}
-
-	{#if ops.events.length === 0}
-		<EmptyState title={t(lang, 'opsNoEvents')} />
-	{:else}
-		<div class="event-grid">
-			{#each ops.events as ev (ev.eventId)}
-				<article
-					class="event-card st-{ev.state}"
-					class:selected={ops.selectedEventId === ev.eventId}
-					class:fixture={ev.source === 'offline-fixture'}
-					data-testid="event-card"
-					data-event-id={ev.eventId}
-					data-status={ev.status ?? ev.state}
-				>
-					<div class="card-head">
-						<span class="kind-icon" title={ev.eventKind}>{KIND_ICONS[ev.eventKind] ?? '◈'}</span>
-						<div class="titles">
-							<h3 title={ops.text(ev.name)}>{ops.text(ev.name)}</h3>
-							<span class="kind-label">{t(lang, `kind_${ev.eventKind}`) !== `kind_${ev.eventKind}` ? t(lang, `kind_${ev.eventKind}`) : ev.eventKind}</span>
-						</div>
-						{#if ev.band}
-							<BandChip band={ev.band as Band} size="sm" />
-						{:else}
-							<span class="band-unknown mono">{tOps(lang, 'bandUnknown')}</span>
-						{/if}
-					</div>
-
-					<div class="chips">
-						<Badge variant="neutral" label={ev.protectionClass} />
-						<Badge variant="neutral" label={t(lang, `crowd_${ev.crowdClass}`)} />
-						<Badge variant={stateVariant(ev.state)} label={ev.status ?? ev.state} />
-						<Badge
-							variant={ev.source === 'offline-fixture' ? 'fixture' : 'live'}
-							label={ev.source === 'live-events-api'
-								? t(lang, 'opsSourceLive')
-								: ev.source === 'live-movements-api'
-									? t(lang, 'opsSourceMovements')
-									: t(lang, 'opsSourceOffline')}
-						/>
-						{#if ev.emulated}
-							<Badge variant="emulated" label={tOps(lang, 'labelEmulated')} title={ev.metadata?.runId ? `run #${ev.metadata.runId}` : 'event-emulator'} />
-						{/if}
-					</div>
-
-					{#if ev.phases.length}
-						<div class="phases">
-							{#each ev.phases as ph, i (i)}
-								<div class="phase-row" class:live={phaseLive(ev, ph, clock)}>
-									<span class="phase-dot" class:live={phaseLive(ev, ph, clock)}></span>
-									<span class="phase-label">{ph.label}</span>
-									<span class="phase-window mono" data-testid="phase-window" data-phase-index={i}>{fmtWindowIst(ph.startTime, ph.endTime, clock)}</span>
-									{#if ph.closurePolicy?.closureType}
-										<span class="phase-policy mono">{ph.closurePolicy.closureType}{ph.closurePolicy.advanceClosureSec != null ? ` +${ph.closurePolicy.advanceClosureSec}s` : ''}</span>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					{/if}
-
-					<div class="spine">
-						<span class="spine-label">{t(lang, 'opsRouteSpine')}</span>
-						<span class="spine-ids mono" title={spineLabel(ev)}>{spineLabel(ev)}</span>
-					</div>
-
-					<EventLifecycleVerbs event={ev} compact />
-
-					<div class="row-foot">
-						<button
-							class="select-btn"
-							class:selected={ops.selectedEventId === ev.eventId}
-							type="button"
-							onclick={() => ops.selectEvent(ev.eventId)}
-						>
-							{ops.selectedEventId === ev.eventId ? t(lang, 'opsSelected') : t(lang, 'opsSelectEvent')}
-						</button>
-						<span class="age mono">
-							{#if ev.source !== 'offline-fixture' && ops.boardUpdated}
-								{tOps(lang, 'updatedAgo', Math.max(0, Math.round((clock - ops.boardUpdated) / 1000)))}
-							{/if}
-						</span>
-					</div>
-				</article>
-			{/each}
-		</div>
+{#snippet right()}
+	{#if uniform === 'emulated'}
+		<Tooltip content={L('wall_ops_uniform_tip')}>
+			<span class="uniform" data-testid="ops-uniform-provenance" data-source="emulated">
+				{#if shown.length > 1}
+					<ProvenanceTag source="emulated" compact {lang} /><span class="all">{uniformLabel(shown.length, lang)}</span>
+				{:else}
+					<ProvenanceTag source="emulated" {lang} />
+				{/if}
+			</span>
+		</Tooltip>
 	{/if}
-</Panel>
+	<Age at={ops.boardUpdated || null} {lang} />
+	<Tooltip content={L('wall_ops_preview_tip')}>
+		<span class="preview">
+			<Switch small checked={ops.previewFixtures} onchange={(c) => ops.setPreviewFixtures(c)} data-testid="preview-toggle" label={L('wall_ops_preview')} />
+		</span>
+	</Tooltip>
+{/snippet}
+
+<Section title={L('wall_ops')} icon={eventKindIcon(null)} level={2} {right} data-prim="panel" data-wall="corridor-operations">
+	<div class="tabs"><Tabs items={tabs} value={tab} onchange={(id) => (chosen = id)} height={36} label={L('wall_ops')} /></div>
+	{#if ops.boardNote && tab === 'open'}<p class="note">{ops.boardNote}</p>{/if}
+
+	{#if tab === 'open'}
+		{#if open.length === 0}
+			<div class="empty"><NonIdealState icon={eventKindIcon(null)} iconSize={32} title={L('wall_ops_none_open')} description={L('wall_ops_none_open_hint')} /></div>
+		{:else}
+			<table class="wdt ev">
+				<colgroup><col style:width="32px" /><col /><col style:width="132px" /></colgroup>
+				<thead>
+					<tr><th class="ic-col" aria-hidden="true"></th><th scope="col">{L('wall_ops_col_event')}</th><th scope="col" class="num">{L('wall_ops_col_window')}</th></tr>
+				</thead>
+				{#each open as ev (ev.eventId)}
+					{@const sel = ops.selectedEventId === ev.eventId}
+					{@const verbs = ev.source !== 'offline-fixture' && (eventVerbs(ev).length > 0 || ops.eventOutcome?.eventId === ev.eventId)}
+					<tbody
+						class={['pick', sel && 'selected is-selected', ev.source === 'offline-fixture' && 'fixture']}
+						data-testid="event-card"
+						data-event-id={ev.eventId}
+						data-status={ev.status ?? ev.state}
+						data-kind={ev.eventKind}
+					>
+						<tr class="main two" tabindex="0" aria-selected={sel} onclick={() => pick(ev)} onkeydown={(e) => onKey(e, () => pick(ev))}>
+							<td class="ic-col"><div class="c"><Icon name={eventKindIcon(ev.eventKind)} size={16} /></div></td>
+							<td>
+								<div class="c l1"><span class="ell ttl" title={title(ev)}>{title(ev)}</span>{@render glyphs(ev)}</div>
+								<div class="c l2"><span class="ell muted">{kindLabel(lang, ev.eventKind)}{classWord(ev) ? ` · ${classWord(ev)}` : ''}</span></div>
+							</td>
+							<td class="num">
+								<div class="c l1"><span class="tn">{windowText(ev)}</span></div>
+								<div class="c l2"><span class="state st-{ev.state}">{stateWord(ev)}</span></div>
+							</td>
+						</tr>
+						{#if verbs}
+							<tr class="acts">
+								<td></td>
+								<td colspan="2">
+									<!-- the verbs act on this event only: a click here never re-selects the row -->
+									<div class="verbs" role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+										<EventLifecycleVerbs event={ev} compact />
+									</div>
+								</td>
+							</tr>
+						{/if}
+						{#if sel && (ev.phases.length || ev.routeSegmentIds.length)}
+							<tr class="detail">
+								<td></td>
+								<td colspan="2">
+									{#if ev.phases.length}
+										<div class="phases">
+											{#each ev.phases as ph, i (i)}
+												<div class="phase">
+													<span class="ph-label">{ph.label}</span>
+													<span class="tn" data-testid="phase-window" data-phase-index={i}>{fmtWindowIst(ph.startTime, ph.endTime, clock)}</span>
+													{#if ph.closurePolicy?.closureType}
+														<span class="muted">{L(`wall_closure_${ph.closurePolicy.closureType}`)}{ph.closurePolicy.advanceClosureSec != null ? ` · ${L('wall_ops_advance', ph.closurePolicy.advanceClosureSec)}` : ''}</span>
+													{/if}
+												</div>
+											{/each}
+										</div>
+									{/if}
+									{#if ev.routeSegmentIds.length}
+										<div class="route"><span class="muted">{L('wall_ops_route')}</span><span class="ell" title={roads(ev)}>{roads(ev)}</span></div>
+									{/if}
+								</td>
+							</tr>
+						{/if}
+					</tbody>
+				{/each}
+			</table>
+		{/if}
+	{:else if historyRows.length === 0}
+		<div class="empty">
+			<NonIdealState
+				icon="history"
+				iconSize={32}
+				title={wallData.historyNote && !wallData.historyUpdated ? L('wall_ops_history_down') : L(tab === 'completed' ? 'wall_ops_none_completed' : 'wall_ops_none_cancelled')}
+				description={wallData.historyNote ?? L('wall_ops_none_closed_hint')}
+			/>
+		</div>
+	{:else}
+		<table class="wdt ev">
+			<colgroup><col style:width="32px" /><col /><col style:width="120px" /><col style:width="132px" /></colgroup>
+			<thead>
+				<tr>
+					<th class="ic-col" aria-hidden="true"></th>
+					<th scope="col">{L('wall_ops_col_event')}</th>
+					<th scope="col">{L('wall_ops_col_kind')}</th>
+					<th scope="col" class="num">{L('wall_ops_col_window')}</th>
+				</tr>
+			</thead>
+			{#each historyRows as h (h.event.eventId)}
+				{@const sel = selection.current === `event:${h.event.eventId}`}
+				<tbody class={['pick', sel && 'is-selected']} data-testid="event-card" data-event-id={h.event.eventId} data-status={h.event.status ?? h.event.state} data-kind={h.event.eventKind}>
+					<tr class="main" tabindex="0" aria-selected={sel} onclick={() => pickHistory(h)} onkeydown={(e) => onKey(e, () => pickHistory(h))}>
+						<td class="ic-col"><div class="c"><Icon name={eventKindIcon(h.event.eventKind)} size={16} /></div></td>
+						<td><div class="c"><span class="ell" title={title(h.event)}>{title(h.event)}</span>{@render glyphs(h.event)}</div></td>
+						<td><div class="c"><span class="ell muted">{kindLabel(lang, h.event.eventKind)}</span></div></td>
+						<td class="num"><div class="c"><span class="tn">{windowText(h.event, h)}</span></div></td>
+					</tr>
+				</tbody>
+			{/each}
+		</table>
+	{/if}
+</Section>
 
 <style>
-	.preview-toggle {
+	.tabs {
+		padding: 0 8px 0 16px;
+		border-bottom: 1px solid var(--v-line-1);
+	}
+
+	.uniform {
 		display: inline-flex;
 		align-items: center;
-		gap: var(--v-space-1);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		cursor: pointer;
-	}
-
-	.preview-toggle input {
-		accent-color: var(--v-data);
-		margin: 0;
-	}
-
-	.board-note {
-		margin: 0 0 var(--v-space-2);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		border: 1px dashed var(--v-line-2);
-		border-radius: var(--v-radius-chip);
-		padding: var(--v-space-1) var(--v-space-2);
-	}
-
-	.event-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-		gap: var(--v-gap-panel);
-	}
-
-	.event-card {
-		position: relative;
-		display: flex;
-		flex-direction: column;
-		gap: var(--v-space-2);
-		padding: var(--v-pad-panel);
-		background: var(--v-surface-2);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-panel);
-		overflow: hidden;
-		min-width: 0;
-	}
-
-	.event-card.selected {
-		border-color: var(--v-line-select);
-	}
-
-	.event-card.fixture {
-		border-style: dashed;
-	}
-
-	/* Lifecycle verbs: planned hollow, active filled + sweep, complete lifts. */
-	.event-card.st-planned {
-		border-style: dashed;
-		background: transparent;
-	}
-
-	.event-card.st-active {
-		background: var(--v-surface-2);
-	}
-
-	.event-card.st-completed,
-	.event-card.st-cancelled {
-		filter: saturate(0.35);
-		opacity: 0.72;
-		transition:
-			filter var(--v-dur-lift) var(--v-ease),
-			opacity var(--v-dur-lift) var(--v-ease);
-	}
-
-	/* The 8 s corridor sweep sheen along the active card's top edge. */
-	.event-card.st-active::after {
-		content: '';
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		height: 2px;
-		background: linear-gradient(90deg, transparent, var(--v-act-veil), transparent);
-		background-size: 40% 100%;
-		background-repeat: no-repeat;
-		animation: sweep 8s linear infinite;
-		pointer-events: none;
-	}
-
-	@keyframes sweep {
-		from {
-			background-position: -40% 0;
-		}
-		to {
-			background-position: 140% 0;
-		}
-	}
-
-	.card-head {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--v-space-2);
-	}
-
-	.kind-icon {
-		font-size: var(--v-text-md);
-		line-height: 1;
-	}
-
-	.titles {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.titles h3 {
-		margin: 0;
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-1);
-		overflow: hidden;
-		text-overflow: ellipsis;
+		gap: 4px;
+		margin-right: 8px;
+		color: var(--v-ink-2);
+		font-size: var(--v-text-xs);
 		white-space: nowrap;
 	}
 
-	.kind-label {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
+	.preview {
+		display: inline-flex;
+		margin-left: 8px;
 	}
 
-	.band-unknown {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		border: 1px dashed var(--v-line-2);
-		border-radius: var(--v-radius-chip);
-		padding: 1px var(--v-space-2);
+	.preview :global([data-ui='switch']) {
+		font-size: var(--v-text-xs);
+		color: var(--v-ink-2);
 	}
 
-	.chips {
+	.note {
+		margin: 0;
+		padding: 6px 16px;
+		color: var(--v-ink-2);
+		font-size: var(--v-text-xs);
+		border-bottom: 1px solid var(--v-line-1);
+	}
+
+	.empty {
+		padding: 20px 16px 24px;
+	}
+
+	.ev tr.two > td {
+		height: 44px;
+		padding-top: 4px;
+		padding-bottom: 4px;
+		vertical-align: middle;
+	}
+
+	.ev tr.two .l1 {
+		font-size: var(--v-text-base);
+		line-height: 18px;
+	}
+
+	.ev tr.two .l2 {
+		margin-top: 2px;
+		font-size: var(--v-text-xs);
+	}
+
+	.ev tr.two .ic-col {
+		vertical-align: top;
+		padding-top: 7px;
+	}
+
+	.ttl {
+		flex: 0 1 auto;
+	}
+
+	.state {
+		color: var(--v-ink-2);
+	}
+
+	.state.st-active {
+		color: var(--v-ink-1);
+	}
+
+	.ev tr.acts > td {
+		height: auto;
+		padding-top: 0;
+		padding-bottom: 8px;
+		overflow: visible;
+		white-space: normal;
+	}
+
+	.ev tbody.pick > tr.main + tr > td {
+		border-top: 0;
+	}
+
+	/* a row's lines read as one row: only its last line draws the divider */
+	.ev tbody > tr:not(:last-child) > td {
+		border-bottom-color: transparent;
+	}
+
+	.verbs {
 		display: flex;
-		flex-wrap: wrap;
-		gap: var(--v-space-1);
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
 	}
 
 	.phases {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
-		border-top: 1px solid var(--v-line-1);
-		padding-top: var(--v-space-2);
 	}
 
-	.phase-row {
+	.phase {
 		display: flex;
 		align-items: baseline;
-		gap: var(--v-space-2);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
+		gap: 8px;
+		min-width: 0;
+		line-height: 18px;
 	}
 
-	.phase-dot {
-		width: 5px;
-		height: 5px;
-		border-radius: var(--v-radius-pill);
-		background: var(--v-line-2);
-		flex-shrink: 0;
-		align-self: center;
-	}
-
-	.phase-dot.live {
-		background: var(--v-band-green);
-	}
-
-	.phase-label {
-		color: var(--v-ink-2);
-	}
-
-	.phase-window {
-		margin-left: auto;
-		color: var(--v-ink-3);
-	}
-
-	.phase-policy {
-		color: var(--v-ink-3);
-	}
-
-	.spine {
-		display: flex;
-		align-items: baseline;
-		gap: var(--v-space-2);
-		border-top: 1px solid var(--v-line-1);
-		padding-top: var(--v-space-2);
-	}
-
-	.spine-label {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		white-space: nowrap;
-	}
-
-	.spine-ids {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.row-foot {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--v-space-2);
-	}
-
-	.select-btn {
-		font: inherit;
-		font-size: var(--v-text-2xs);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-ink-2);
-		background: transparent;
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-btn);
-		padding: 2px var(--v-space-2);
-		cursor: pointer;
-	}
-
-	.select-btn:hover {
-		border-color: var(--v-line-select);
+	.ph-label {
+		min-width: 72px;
 		color: var(--v-ink-1);
 	}
 
-	.select-btn.selected {
-		border-color: var(--v-data);
-		color: var(--v-data);
+	.route {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		min-width: 0;
+		margin-top: 4px;
+		line-height: 18px;
 	}
 
-	.age {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
+	.muted {
+		color: var(--v-ink-2);
 	}
 
-	.mono {
-		font-family: var(--v-font-mono);
+	.tn {
+		font-variant-numeric: tabular-nums;
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.event-card.st-active::after {
-			animation: none;
-			background: var(--v-act-veil);
-		}
-
-		.event-card.st-completed,
-		.event-card.st-cancelled {
-			transition: none;
-		}
+	.fixture .ttl {
+		color: var(--v-ink-2);
 	}
 </style>

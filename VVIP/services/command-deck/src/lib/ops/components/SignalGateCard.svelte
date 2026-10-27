@@ -1,59 +1,60 @@
 <script lang="ts">
 	/**
-	 * SignalGateCard — the city signal-plan gate: writer posture (enabled,
-	 * its live state — writing / queued / idle — and the twin shadow-evals
-	 * in flight as a COUNT), the band plan table (writes vs hold), the last
-	 * plan, APPLY, RESTORE and the program history.
+	 * City signal plans (SPEC §6.3 col 3; ownership UI-S5B): the gated
+	 * signal-plan writer as the city band drives it.
 	 *
-	 * The fail-closed refusal is the FEATURE: a 409 from POST /plans/apply
-	 * renders INLINE — a firm red hairline, the words 'held at baseline',
-	 * and the refusal report expanded — never a modal, never hidden, never a
-	 * shake. RESTORE targets the selected LIVE event (a preview fixture has
-	 * no signal history and a slug id the writer cannot cast — the button is
-	 * disabled while one is selected); RESTORE ALL rebuilds every assumed
-	 * program city-wide, so it asks once more before it commits. One restore
-	 * at a time (a double click sends one POST). HISTORY lists the
-	 * snapshots/restores with their actor, in IST; officer-typed reasons
-	 * print under the plate rule. Smokes stub APPLY and RESTORE (no smoke
-	 * ever fires a writer).
-	 *
-	 * An UNKNOWN city band (its engine poll is failing — the oracle answers
-	 * 409 'city band unknown — pass band explicitly', or the band reads
-	 * stale) is never applied as a GREEN default: the card says why and the
-	 * officer picks the band to apply, explicitly, under their name.
+	 *   header   "Writer off" (or on) as a tag whose tooltip says what that
+	 *            means; the old caption chain is gone (SPEC §3.5)
+	 *   table    Band · Corridor priority · Cross-street green · Writes, the
+	 *            city's band row marked (BLACK with its hairline, BandChip)
+	 *   gate     twin shadow-evaluations in flight as a COUNT (`gate-twin`
+	 *            data-count) and the writer's live state
+	 *   actions  Apply plan, Restore (the selected LIVE event's junctions:
+	 *            `gate-restore`, disabled for a preview fixture, which has no
+	 *            signal history and an id the writer cannot cast), Restore all
+	 *            (city-wide: the first click only arms it — `gate-restore-all`
+	 *            data-armed 1 — the second commits ONE POST), History.
+	 *            Every write is under the named duty officer; one at a time.
+	 *   refusal  a 409 renders inline as "Held at baseline" with the reason
+	 *            and the report behind a disclosure — never a modal. An
+	 *            UNKNOWN city band is never applied as a Green default: the
+	 *            officer picks the band, explicitly.
 	 */
-	import Panel from '$lib/primitives/Panel.svelte';
-	import Badge from '$lib/primitives/Badge.svelte';
-	import Button from '$lib/primitives/Button.svelte';
-	import EmptyState from '$lib/primitives/EmptyState.svelte';
 	import BandChip from '$lib/primitives/BandChip.svelte';
+	import { kindIcon } from '$lib/design/icons';
+	import { Button, Reason, Section, Tag, Tooltip } from '$lib/ui';
+	import { fmtTime } from '$lib/ui/format/format';
+	import { t } from '$lib/i18n/strings';
+	import '$lib/i18n/packs.wall';
 	import { ops, isLiveUuidEvent } from '$lib/ops/store.svelte';
-	import { POLL_MS } from '$lib/ops/endpoints';
-	import { tOps } from '$lib/i18n/strings.ops';
-	import { fmtClock, istClock } from '$lib/ops/format';
+	import Age from '$lib/decisions/wall/Age.svelte';
+	import type { BandCode } from '$lib/ops/types';
 
 	const lang = $derived(ops.lang);
+	const L = (key: string, ...args: unknown[]) => t(lang, key, ...args);
+
 	const plans = $derived(ops.signalPlans);
 	const outcome = $derived(ops.signalApply);
 	const gate = $derived(plans?.gate ?? null);
 	const restorable = $derived(isLiveUuidEvent(ops.selectedEvent));
+	const busy = $derived(ops.signalRestoring !== null || ops.signalApplying);
 
 	let detailOpen = $state(false);
 	let historyOpen = $state(false);
-	/** RESTORE ALL is city-wide: the first click arms it, the second commits. */
-	let confirmRestoreAll = $state(false);
+	/** Restore all is city-wide: the first click arms it, the second commits. */
+	let armed = $state(false);
 
-	// An armed RESTORE ALL never outlives the officer who armed it.
+	// An armed Restore all never outlives the officer who armed it.
 	$effect(() => {
-		if (!ops.officerOn) confirmRestoreAll = false;
+		if (!ops.officerOn) armed = false;
 	});
 
 	async function restoreAll() {
-		if (!confirmRestoreAll) {
-			confirmRestoreAll = true;
+		if (!armed) {
+			armed = true;
 			return;
 		}
-		confirmRestoreAll = false;
+		armed = false;
 		await ops.restorePrograms(true);
 	}
 
@@ -62,439 +63,321 @@
 		(!!outcome && !outcome.applied && outcome.status === 409 && /city band unknown/i.test(outcome.refusalReason ?? '')) ||
 			ops.cityBand?.stale === true,
 	);
-	const BANDS = ['GREEN', 'AMBER', 'RED', 'BLACK'] as const;
+	const BANDS: readonly BandCode[] = ['GREEN', 'AMBER', 'RED', 'BLACK'];
 
-	const writerState = $derived.by(() => {
+	const writerWord = $derived.by(() => {
 		if (!gate) return null;
-		if (gate.writerActive) return { variant: 'pending' as const, label: tOps(lang, 'gateWriterActive') };
-		if ((gate.writerWaiters ?? 0) > 0) return { variant: 'pending' as const, label: tOps(lang, 'gateWriterQueued', gate.writerWaiters) };
-		return { variant: 'neutral' as const, label: tOps(lang, 'gateWriterIdle') };
+		if (gate.writerActive) return L('wall_sp_writer_active');
+		if ((gate.writerWaiters ?? 0) > 0) return L('wall_sp_writer_queued', gate.writerWaiters);
+		return L('wall_sp_writer_idle');
 	});
+
+	const officerReason = $derived(ops.officerOn ? null : L('wall_sp_needs_officer'));
+	const restoreReason = $derived(!restorable ? L('wall_sp_restore_needs_live') : officerReason);
 </script>
 
-<Panel
-	title={tOps(lang, 'gateTitle')}
-	sub={tOps(lang, 'gateSub')}
-	status={ops.signalPlansUpdated ? { state: ops.signalPlansNote ? 'stale' : 'live', updatedAt: ops.signalPlansUpdated } : null}
-	pollMs={POLL_MS.signals}
-	lang={lang}
->
+{#snippet right()}
+	<Age at={ops.signalPlansUpdated || null} {lang} />
 	{#if plans}
-		<div class="posture-row" data-testid="gate-posture">
-			<Badge
-				variant={plans.writerEnabled ? 'live' : 'not-deployed'}
-				label={plans.writerEnabled ? tOps(lang, 'gateWriterEnabled') : tOps(lang, 'gateWriterDisabled')}
-				title={plans.writerFlagEnv ?? undefined}
-			/>
-			{#if writerState}<Badge variant={writerState.variant} label={writerState.label} />{/if}
-			<span data-testid="gate-twin" data-count={gate?.twinInFlight ?? ''}>
-				<Badge
-					variant={(gate?.twinInFlight ?? 0) > 0 ? 'pending' : 'neutral'}
-					label={tOps(lang, 'gateTwinInFlight', gate?.twinInFlight ?? 0)}
-					title="signal-policy gate: twin shadow-evals holding the writer"
-				/>
-			</span>
-			{#if plans.cityBand}<BandChip band={plans.cityBand} size="sm" />{/if}
-			{#if plans.bandSubjects != null}<span class="subjects mono">{tOps(lang, 'gateSubjects', plans.bandSubjects)}</span>{/if}
-		</div>
+		{#if plans.writerEnabled}
+			<Tag intent="success" icon="unlock" tooltip={L('wall_sp_writer_on_tip')}>{L('wall_sp_writer_on')}</Tag>
+		{:else}
+			<Tag icon="lock" tooltip={L('wall_sp_writer_off_tip')} data-testid="gate-posture">{L('wall_sp_writer_off')}</Tag>
+		{/if}
+	{/if}
+{/snippet}
 
-		<table class="plan-table">
+<Section title={L('wall_signals')} icon={kindIcon('junction')} level={2} {right} data-prim="panel" data-wall="signal-plans">
+	{#if plans}
+		<table class="wdt plans">
+			<colgroup><col style:width="88px" /><col /><col /><col style:width="104px" /></colgroup>
 			<thead>
 				<tr>
-					<th>{tOps(lang, 'gatePlanTableBand')}</th>
-					<th class="num">{tOps(lang, 'gatePlanTableShare')}</th>
-					<th class="num">{tOps(lang, 'gatePlanTableFloor')}</th>
-					<th class="num">{tOps(lang, 'gatePlanTableWrites')}</th>
+					<th scope="col">{L('wall_sp_band')}</th>
+					<th scope="col" class="num">{L('wall_sp_priority')}</th>
+					<th scope="col" class="num">{L('wall_sp_floor')}</th>
+					<th scope="col">{L('wall_sp_writes')}</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each plans.bandPlanTable as row (row.band)}
-					<tr class:current={plans.cityBand === row.band}>
-						<td><BandChip band={row.band} size="sm" /></td>
-						<td class="num mono">{row.priorityShare != null ? row.priorityShare.toFixed(2) : '—'}</td>
-						<td class="num mono">{row.crossGreenFloorSec ?? '—'}</td>
-						<td class="num mono" class:writes={row.writes === 'writes'}>{row.writes ?? '—'}</td>
+					<tr class:is-selected={plans.cityBand === row.band} data-band={row.band}>
+						<td><div class="c"><BandChip band={row.band} size="sm" {lang} /></div></td>
+						<td class="num"><div class="c">{row.priorityShare != null ? `${Math.round(row.priorityShare * 100)}%` : '—'}</div></td>
+						<td class="num"><div class="c">{row.crossGreenFloorSec != null ? L('wall_sp_seconds', row.crossGreenFloorSec) : '—'}</div></td>
+						<td><div class="c"><span class:muted={row.writes !== 'writes'}>{row.writes === 'writes' ? L('wall_sp_writes_yes') : L('wall_sp_writes_no')}</span></div></td>
 					</tr>
 				{/each}
 			</tbody>
 		</table>
 
-		{#if plans.lastPlan}
-			<p class="last-plan">
-				{tOps(lang, 'gateLastPlan')}:
-				{#if plans.lastPlan.applied === false}
-					<strong class="held">{tOps(lang, 'gateHeldBaseline')}</strong>
-					{#if plans.lastPlan.reason}<span class="mono reason">{ops.text(plans.lastPlan.reason)}</span>{/if}
-				{:else}
-					<span class="mono">{plans.lastPlan.plannedJunctions.length} junctions</span>
-				{/if}
-			</p>
-		{/if}
+		<div class="gate">
+			<span class="tn" data-testid="gate-twin" data-count={gate?.twinInFlight ?? ''} title={L('wall_sp_twin_tip')}>{L('wall_sp_twin', gate?.twinInFlight ?? 0)}</span>
+			{#if writerWord}<span class="sep" aria-hidden="true"></span><span>{writerWord}</span>{/if}
+			{#if plans.lastPlan}
+				<span class="sep" aria-hidden="true"></span>
+				<span class="ell" title={plans.lastPlan.reason ? ops.text(plans.lastPlan.reason) : undefined}>
+					{plans.lastPlan.applied === false ? L('wall_sp_last_held') : L('wall_sp_last_plan', plans.lastPlan.plannedJunctions.length)}
+				</span>
+			{/if}
+		</div>
 
-		<!-- The APPLY half. The refusal state below is not an error path. -->
-		<div class="apply-row">
-			<Button
-				variant="primary"
-				size="sm"
-				busy={ops.signalApplying}
-				actor={ops.officerOn ? ops.dutyOfficer : null}
-				onclick={() => void ops.applyCityPlan()}
-			>
-				{tOps(lang, 'gateApply')}
+		<div class="actions">
+			<Button small disabled={busy || !ops.officerOn} disabledReason={officerReason} loading={ops.signalApplying} onclick={() => void ops.applyCityPlan()}>
+				{L('wall_sp_apply')}
 			</Button>
-			<span title={restorable ? undefined : tOps(lang, 'gateRestoreNeedsLive')}>
-				<Button
-					variant="ghost"
-					size="sm"
-					busy={ops.signalRestoring === 'event'}
-					disabled={!restorable || !ops.officerOn || ops.signalRestoring !== null}
-					onclick={() => void ops.restorePrograms(false)}
-				>
-					<span data-testid="gate-restore">{tOps(lang, 'gateRestore')}</span>
-				</Button>
-			</span>
 			<Button
-				variant={confirmRestoreAll ? 'danger-outline' : 'ghost'}
-				size="sm"
-				busy={ops.signalRestoring === 'all'}
-				disabled={!ops.officerOn || ops.signalRestoring !== null}
+				small
+				data-testid="gate-restore"
+				disabled={!restorable || !ops.officerOn || busy}
+				disabledReason={restoreReason}
+				loading={ops.signalRestoring === 'event'}
+				onclick={() => void ops.restorePrograms(false)}
+			>
+				{L('wall_sp_restore')}
+			</Button>
+			<Button
+				small
+				data-testid="gate-restore-all"
+				data-armed={armed ? '1' : '0'}
+				disabled={!ops.officerOn || busy}
+				disabledReason={officerReason}
+				loading={ops.signalRestoring === 'all'}
 				onclick={() => void restoreAll()}
 			>
-				<span data-testid="gate-restore-all" data-armed={confirmRestoreAll ? '1' : '0'}>
-					{confirmRestoreAll ? tOps(lang, 'gateRestoreAllConfirm') : tOps(lang, 'gateRestoreAll')}
-				</span>
+				{armed ? L('wall_sp_restore_all_confirm') : L('wall_sp_restore_all')}
 			</Button>
-			{#if confirmRestoreAll}
-				<button class="link" type="button" onclick={() => (confirmRestoreAll = false)}>{tOps(lang, 'gateRestoreAllKeep')}</button>
-			{/if}
+			{#if armed}<Button small minimal onclick={() => (armed = false)}>{L('wall_sp_keep')}</Button>{/if}
+			<span class="grow"></span>
 			<Button
-				variant="ghost"
-				size="sm"
+				small
+				minimal
+				icon="history"
+				pressed={historyOpen}
 				onclick={() => {
 					historyOpen = !historyOpen;
 					if (historyOpen) void ops.loadSignalHistory();
 				}}
 			>
-				{tOps(lang, 'gateHistory')}
+				{L('wall_sp_history')}
 			</Button>
 		</div>
-		{#if !restorable}<p class="hint mono">{tOps(lang, 'gateRestoreNeedsLive')}</p>{/if}
+		{#if armed}<div class="reason"><Reason text={L('wall_sp_restore_all_armed')} /></div>{/if}
 
 		{#if bandUnknown}
 			<div class="band-pick" data-testid="gate-band-unknown">
-				<p class="hint mono">{tOps(lang, 'gateBandUnknown')}</p>
-				<div class="band-row">
+				<Reason text={L('wall_sp_band_unknown')} />
+				<div class="picks">
 					{#each BANDS as b (b)}
-						<Button
-							variant="ghost"
-							size="sm"
-							busy={ops.signalApplying}
-							disabled={!ops.officerOn || ops.signalApplying}
-							onclick={() => void ops.applyCityPlan(b)}
-							title={tOps(lang, 'gateApplyBand', b)}
-						>
-							<span data-testid="gate-apply-band" data-band={b}><BandChip band={b} size="sm" /></span>
-						</Button>
+						<Tooltip content={L('wall_sp_apply_band', L(`shell_band_word_${b}`))}>
+							<button
+								type="button"
+								class="pick-band"
+								data-testid="gate-apply-band"
+								data-band={b}
+								disabled={!ops.officerOn || ops.signalApplying}
+								onclick={() => void ops.applyCityPlan(b)}
+							>
+								<BandChip band={b} size="sm" {lang} />
+							</button>
+						</Tooltip>
 					{/each}
 				</div>
 			</div>
 		{/if}
 
 		{#if outcome}
-			{#if outcome.applied}
-				<div class="outcome applied" role="status">
-					<span class="outcome-word">{tOps(lang, 'gateApplied')}</span>
-					<span class="mono">{fmtClock(outcome.at)} IST · {outcome.status}</span>
+			<div class="outcome" class:held={!outcome.applied} role="status" data-testid="gate-outcome" data-applied={outcome.applied ? '1' : '0'}>
+				<div class="o-line">
+					<span class="o-word">{outcome.applied ? L('wall_sp_applied') : L('wall_sp_held')}</span>
+					{#if !outcome.applied && outcome.refusalReason}<span class="ell">{ops.text(outcome.refusalReason)}</span>{/if}
+					<span class="grow"></span>
+					<span class="muted tn">{fmtTime(outcome.at, { seconds: true })} · {outcome.status}</span>
 				</div>
-			{:else}
-				<!-- HELD AT BASELINE — inline, dignified, in full view. -->
-				<div class="outcome held" role="status">
-					<div class="held-line">
-						<span class="held-word">{tOps(lang, 'gateHeldBaseline')}</span>
-						{#if outcome.refusalReason}
-							<span class="held-reason mono">{tOps(lang, 'gateRefusal')}: {outcome.refusalReason}</span>
-						{/if}
-						<span class="mono held-status">{outcome.status}</span>
-					</div>
-					<button class="held-toggle" type="button" onclick={() => (detailOpen = !detailOpen)}>
-						{detailOpen ? tOps(lang, 'queueHideEvidence') : tOps(lang, 'gateRefusal')} · {tOps(lang, 'queueEvidence')}
+				{#if !outcome.applied && outcome.detail}
+					<button type="button" class="o-toggle" aria-expanded={detailOpen} onclick={() => (detailOpen = !detailOpen)}>
+						{detailOpen ? L('wall_sp_hide_report') : L('wall_sp_show_report')}
 					</button>
-					{#if detailOpen && outcome.detail}
-						<pre class="held-detail mono">{JSON.stringify(ops.detail(outcome.detail), null, 2)}</pre>
-					{/if}
-				</div>
-			{/if}
+					{#if detailOpen}<pre class="o-detail">{JSON.stringify(ops.detail(outcome.detail), null, 2)}</pre>{/if}
+				{/if}
+			</div>
 		{/if}
 
 		{#if historyOpen}
 			<div class="history" data-testid="gate-history">
 				{#if ops.signalHistory.length === 0}
-					<p class="history-empty">{ops.signalHistoryNote ?? tOps(lang, 'gateHistoryEmpty')}</p>
+					<p class="muted small">{ops.signalHistoryNote ?? L('wall_sp_history_empty')}</p>
 				{:else}
-					<ul class="history-rows">
-						{#each ops.signalHistory as h (h.historyId)}
-							<li class="mono">
-								<span class="h-time">{h.capturedAt ? istClock(h.capturedAt) : '—'}</span>
-								<span class="h-kind" class:restore={h.kind === 'restore'}>{h.kind}</span>
-								<span class="h-j">J{h.junctionId ?? '—'}{ops.junctionName(h.junctionId) ? ` ${ops.junctionName(h.junctionId)}` : ''}</span>
-								<span class="h-actor">{h.actor ?? tOps(lang, 'gateHistoryUnattributed')}</span>
-								{#if h.reason}<span class="h-reason">{ops.text(h.reason)}</span>{/if}
-							</li>
-						{/each}
-					</ul>
-					{#if ops.signalHistoryNote}<p class="history-empty">{ops.signalHistoryNote}</p>{/if}
+					<table class="wdt">
+						<colgroup><col style:width="76px" /><col style:width="76px" /><col /><col /></colgroup>
+						<tbody>
+							{#each ops.signalHistory as h (h.historyId)}
+								<tr>
+									<td><div class="c tn">{h.capturedAt ? fmtTime(h.capturedAt) : '—'}</div></td>
+									<td><div class="c">{L(`wall_sp_hist_${h.kind}`) === `wall_sp_hist_${h.kind}` ? h.kind : L(`wall_sp_hist_${h.kind}`)}</div></td>
+									<td><div class="c"><span class="ell">J{h.junctionId ?? '—'}{ops.junctionName(h.junctionId) ? ` ${ops.junctionName(h.junctionId)}` : ''}</span></div></td>
+									<td><div class="c"><span class="ell muted" title={h.reason ? ops.text(h.reason) : undefined}>{h.actor ?? L('wall_sp_unattributed')}</span></div></td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
 				{/if}
 			</div>
 		{/if}
-
-		{#if plans.scope}<p class="scope mono">{plans.scope}</p>{/if}
 	{:else}
-		<EmptyState title={ops.signalPlansNote ?? tOps(lang, 'labelNotDeployed')} />
+		<p class="empty muted">{ops.signalPlansNote ?? L('wall_sp_waiting')}</p>
 	{/if}
-</Panel>
+</Section>
 
 <style>
+	.gate {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		padding: 8px 16px 0;
+		color: var(--v-ink-2);
+		font-size: var(--v-text-xs);
+		line-height: 16px;
+		white-space: nowrap;
+	}
+
+	.sep {
+		width: 1px;
+		height: 12px;
+		background: var(--v-line-2);
+	}
+
+	.actions {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
+		padding: 8px 16px 12px;
+	}
+
+	.reason {
+		padding: 0 16px 10px;
+	}
+
+	.grow {
+		flex: 1 1 auto;
+	}
+
+	.ell {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.muted {
+		color: var(--v-ink-2);
+	}
+
+	.small {
+		margin: 0;
+		font-size: var(--v-text-xs);
+	}
+
+	.tn {
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* a narrow column wraps its header onto a second line rather than cutting it */
+	.plans th {
+		white-space: normal;
+		line-height: 14px;
+		text-overflow: clip;
+	}
+
 	.band-pick {
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-1);
-		margin-top: var(--v-space-2);
-		padding: var(--v-space-2);
-		border: 1px dashed var(--v-band-amber);
-		border-radius: var(--v-radius-chip);
+		gap: 6px;
+		padding: 0 16px 12px;
 	}
 
-	.band-row {
+	.picks {
 		display: flex;
-		gap: var(--v-space-1);
-		flex-wrap: wrap;
+		gap: 6px;
 	}
 
-	.posture-row {
-		display: flex;
-		align-items: center;
-		gap: var(--v-space-2);
-		flex-wrap: wrap;
-		margin-bottom: var(--v-space-2);
-	}
-
-	.subjects {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.plan-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: var(--v-text-2xs);
-	}
-
-	.plan-table th {
-		text-align: left;
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-ink-3);
-		padding: var(--v-space-1) var(--v-space-2);
-		border-bottom: 1px solid var(--v-line-2);
-	}
-
-	.plan-table td {
-		padding: var(--v-space-1) var(--v-space-2);
-		border-bottom: 1px solid var(--v-line-1);
-		color: var(--v-ink-2);
-	}
-
-	.plan-table tr.current td {
-		background: var(--v-band-veil);
-	}
-
-	.num {
-		text-align: right;
-		font-family: var(--v-font-mono);
-	}
-
-	.last-plan {
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
-	}
-
-	.last-plan .held {
-		color: var(--v-band-red);
-	}
-
-	.last-plan .reason {
-		color: var(--v-ink-3);
-		margin-left: var(--v-space-2);
-	}
-
-	.apply-row {
-		display: flex;
-		gap: var(--v-space-2);
-		margin-top: var(--v-space-3);
-		flex-wrap: wrap;
-		align-items: center;
-	}
-
-	.link {
-		font: inherit;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
+	.pick-band {
+		display: inline-flex;
+		padding: 2px;
+		border: 1px solid var(--v-line-2);
+		border-radius: var(--v-radius-btn);
 		background: transparent;
-		border: none;
-		border-bottom: 1px dashed var(--v-line-2);
-		padding: 0;
 		cursor: pointer;
+	}
+
+	.pick-band:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
 	}
 
 	.outcome {
-		margin-top: var(--v-space-2);
-		padding: var(--v-space-2) var(--v-space-3);
-		border-radius: var(--v-radius-panel);
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-1);
-	}
-
-	.outcome.applied {
-		border: 1px solid var(--v-band-green);
-	}
-
-	.outcome-word {
+		gap: 4px;
+		margin: 0 16px 12px;
+		padding: 8px 12px;
+		border-radius: var(--v-radius-panel);
+		box-shadow: inset 0 0 0 1px var(--v-line-2);
 		font-size: var(--v-text-xs);
-		color: var(--v-band-green);
 	}
 
-	/* The firm red hairline — the doctrine's fail-closed render. */
 	.outcome.held {
-		border: 1px solid var(--v-line-1);
-		border-top: 2px solid var(--v-band-red);
+		box-shadow:
+			inset 0 0 0 1px var(--v-line-2),
+			inset 2px 0 0 var(--v-ink-2);
 	}
 
-	.held-line {
+	.o-line {
 		display: flex;
-		align-items: baseline;
-		gap: var(--v-space-3);
-		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
 	}
 
-	.held-word {
-		font-size: var(--v-text-sm);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-band-red);
+	.o-word {
+		font-weight: 600;
+		white-space: nowrap;
 	}
 
-	.held-reason {
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-2);
-	}
-
-	.held-status {
-		margin-left: auto;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.held-toggle {
+	.o-toggle {
 		align-self: flex-start;
-		font: inherit;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		background: transparent;
-		border: none;
 		padding: 0;
+		border: 0;
+		background: transparent;
+		color: var(--v-primary-text);
+		font: inherit;
 		cursor: pointer;
-		border-bottom: 1px dashed var(--v-line-2);
 	}
 
-	.held-detail {
+	.o-detail {
+		max-height: 200px;
 		margin: 0;
-		padding: var(--v-space-2);
-		max-height: 180px;
 		overflow: auto;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		background: var(--v-surface-sink);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-chip);
+		color: var(--v-ink-2);
+		font-family: var(--v-font-ui);
+		font-size: var(--v-text-xs);
 		white-space: pre-wrap;
-		word-break: break-all;
 	}
 
 	.history {
-		margin-top: var(--v-space-2);
+		padding: 0 0 8px;
 		border-top: 1px solid var(--v-line-1);
-		padding-top: var(--v-space-2);
 	}
 
-	.history-empty {
+	.history p {
+		padding: 8px 16px;
+	}
+
+	.empty {
 		margin: 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.history-rows {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		max-height: 140px;
-		overflow: auto;
-	}
-
-	.history-rows li {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--v-space-2);
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-		border-bottom: 1px solid var(--v-line-1);
-		padding: 1px 0;
-	}
-
-	.h-time {
-		color: var(--v-ink-2);
-	}
-
-	.h-kind {
-		color: var(--v-data);
-	}
-
-	.h-kind.restore {
-		color: var(--v-band-amber);
-	}
-
-	.h-actor {
-		color: var(--v-act-text);
-	}
-
-	.h-reason {
-		color: var(--v-ink-3);
-		overflow-wrap: anywhere;
-	}
-
-	.hint {
-		margin: var(--v-space-1) 0 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.plan-table td.writes {
-		color: var(--v-ink-1);
-	}
-
-	.scope {
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.mono {
-		font-family: var(--v-font-mono);
+		padding: 12px 16px;
+		font-size: var(--v-text-xs);
 	}
 </style>

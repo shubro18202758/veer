@@ -2,11 +2,13 @@
 
 Tier layout (see VVIP architecture):
     T5 strategic — pplx-decider-v1-27b served by model-host  (default :8083)
-    T4 tactical  — aditi-ps18-v7h Gemma 4 12B on llama-server (default :8084)
+    T4 tactical  — Gemma 4 12B on llama-server               (default :8084)
     embeddings   — pplx-embed-v2-late-0.6b service            (default :8085)
 
 Service URLs are resolved in this order (contract C0):
     1. Environment variables MODEL_HOST_URL / LLAMA_BASE_URL / EMBEDDING_SERVICE_URL
+       (the oracle: TRAFFIC_ORACLE_URL, else ORACLE_PORT — the port knob
+       scripts/veer_env.sh and the sandboxes export — on 127.0.0.1)
     2. The ``services:`` block of veer_models.yaml — VEER_MODELS_CONFIG when
        set, else VVIP/models-config/configs/veer_models.yaml (owned by the
        models stream; read-only for us). The retired-tree VVIP/models
@@ -31,8 +33,21 @@ from pathlib import Path
 DEFAULT_MODEL_HOST_URL = "http://127.0.0.1:8083"
 DEFAULT_LLAMA_URL = "http://127.0.0.1:8084"
 DEFAULT_EMBEDDING_URL = "http://127.0.0.1:8085"
-DEFAULT_TRAFFIC_ORACLE_URL = "http://localhost:8081"
+#: The oracle's own hand-run default (traffic_oracle __main__ PORT 8081), on
+#: 127.0.0.1 — 'localhost' resolves IPv6-first and the oracle binds IPv4. A
+#: deployed brain is always told its oracle (TRAFFIC_ORACLE_URL or
+#: ORACLE_PORT); falling back to this is logged at startup.
+DEFAULT_TRAFFIC_ORACLE_URL = "http://127.0.0.1:8081"
 DEFAULT_VALKEY_URL = "redis://localhost:6379"
+#: Bind address when HOST is not set: loopback. The x-veer-officer header is
+#: trusted only on a loopback connection, and the deck is the one LAN-facing
+#: surface (a hand-run brain on 0.0.0.0 would expose the officer gate).
+DEFAULT_BIND_HOST = "127.0.0.1"
+DEFAULT_BIND_PORT = 8080
+#: Variables deployments set for the brain that it has no client for — it
+#: does no database access, publishes nothing on NATS and calls no Ollama.
+#: Set, they are reported at startup as ignored (never silently "configured").
+UNUSED_ENV = ("VVIP_DATABASE_URL", "VVIP_NATS_URL", "OLLAMA_BASE_URL")
 
 # VVIP root discovery: <VVIP>/services/convoy-brain/src/convoy_brain/config.py
 # (the same layout in a checkout, a worktree and the container's /repo/VVIP).
@@ -52,8 +67,13 @@ def models_config_path(env: dict[str, str] | None = None) -> Path:
 # Two-tier runtime constants
 # ---------------------------------------------------------------------------
 
-#: Tactical tier model identity (served by llama-server on LLAMA_BASE_URL).
+#: Tactical tier model id on the wire: the alias llama-server serves on
+#: LLAMA_BASE_URL (infra/scripts/serve_models.sh --alias). Internal only —
+#: never shown to an operator.
 GEMMA_MODEL_ID = "aditi-ps18-v7h"
+#: The tactical tier's operator-facing name (done.tiers_used, /health,
+#: build info): a neutral label, not the served file's alias.
+GEMMA_DISPLAY_NAME = "gemma4-12b-veer"
 
 #: Strategic tier model identity (served by model-host on MODEL_HOST_URL).
 DECIDER_MODEL_ID = "pplx-decider-v1-27b"
@@ -461,8 +481,11 @@ def load_service_urls(
         or yaml_services.get("embedding")
         or DEFAULT_EMBEDDING_URL
     )
+    oracle_port = (env.get("ORACLE_PORT") or "").strip()
     traffic_oracle = (
         env.get("TRAFFIC_ORACLE_URL")
+        or (f"http://127.0.0.1:{int(oracle_port)}"
+            if oracle_port.isdigit() and 0 < int(oracle_port) < 65536 else None)
         or yaml_services.get("traffic_oracle")
         or DEFAULT_TRAFFIC_ORACLE_URL
     )
@@ -519,3 +542,27 @@ class AdaptiveParams:
 def baseline_params() -> AdaptiveParams:
     """The fail-closed parameter set — identical to today's hardcoded constants."""
     return AdaptiveParams()
+
+
+def bind_address(env: dict[str, str] | None = None) -> tuple[str, int]:
+    """``(host, port)`` the brain listens on: HOST / PORT, else loopback:8080."""
+    env = env if env is not None else dict(os.environ)
+    host = (env.get("HOST") or "").strip() or DEFAULT_BIND_HOST
+    try:
+        port = int((env.get("PORT") or "").strip() or DEFAULT_BIND_PORT)
+    except ValueError:
+        port = DEFAULT_BIND_PORT
+    return host, port
+
+
+def ignored_env(env: dict[str, str] | None = None) -> list[str]:
+    """The :data:`UNUSED_ENV` variables that are set (reported at startup)."""
+    env = env if env is not None else dict(os.environ)
+    return [name for name in UNUSED_ENV if (env.get(name) or "").strip()]
+
+
+def oracle_url_configured(env: dict[str, str] | None = None) -> bool:
+    """True when TRAFFIC_ORACLE_URL or ORACLE_PORT names the oracle."""
+    env = env if env is not None else dict(os.environ)
+    return bool((env.get("TRAFFIC_ORACLE_URL") or "").strip()
+                or (env.get("ORACLE_PORT") or "").strip().isdigit())

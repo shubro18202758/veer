@@ -1,80 +1,39 @@
 /**
- * IST clock — the ONE wall-time formatter every operator surface uses.
- *
- * The control room runs on India Standard Time whatever the browser's own
- * zone is (a deck opened on a laptop set to UTC must still print the same
- * 20:30:04 the dossier, the board and the audit stream print). Every
- * formatter here pins timeZone 'Asia/Kolkata' through Intl, so equal
- * instants always render as equal strings on every panel.
- *
- * Lives under primitives so the design-shell rows (FeedItem/AuditRow) can
- * use it without importing $lib/ops (R4 boundary); ops/format.ts re-exports
- * it for the board.
+ * IST clock — the legacy wall-time helpers, kept by name for their callers
+ * (ops/format.ts, the ops store, /comms) and DELEGATING to THE formatter,
+ * src/lib/ui/format/format.ts (SPEC §3.3, §5.2): one implementation, so
+ * equal instants render as equal strings on every surface whatever the
+ * browser's own zone (every helper pins Asia/Kolkata, 24-hour).
  */
+import { IST_ZONE as FORMAT_IST_ZONE, fmtStamp, fmtTime, istDay as formatIstDay, toMs } from '$lib/ui/format/format';
 
-export const IST_ZONE = 'Asia/Kolkata';
-
-const clockFmt = new Intl.DateTimeFormat('en-GB', {
-	timeZone: IST_ZONE,
-	hour: '2-digit',
-	minute: '2-digit',
-	second: '2-digit',
-	hourCycle: 'h23',
-});
-
-const hmFmt = new Intl.DateTimeFormat('en-GB', {
-	timeZone: IST_ZONE,
-	hour: '2-digit',
-	minute: '2-digit',
-	hourCycle: 'h23',
-});
-
-const dayFmt = new Intl.DateTimeFormat('en-GB', {
-	timeZone: IST_ZONE,
-	day: '2-digit',
-	month: 'short',
-});
-
-const ymdFmt = new Intl.DateTimeFormat('en-CA', {
-	timeZone: IST_ZONE,
-	year: 'numeric',
-	month: '2-digit',
-	day: '2-digit',
-});
+export const IST_ZONE = FORMAT_IST_ZONE;
 
 /** Epoch ms of a number or an ISO string; NaN when neither parses. */
 export function toEpochMs(v: number | string | null | undefined): number {
-	if (typeof v === 'number') return v;
-	if (typeof v === 'string' && v) return Date.parse(v);
-	return NaN;
+	return toMs(v);
 }
 
 /** HH:MM:SS in IST (24 h); '—' for an unparseable moment. */
 export function istClock(v: number | string | null | undefined): string {
-	const ms = toEpochMs(v);
-	return Number.isFinite(ms) ? clockFmt.format(ms) : '—';
+	return fmtTime(v, { seconds: true });
 }
 
 /** HH:MM in IST (24 h); '—' for an unparseable moment. */
 export function istHm(v: number | string | null | undefined): string {
-	const ms = toEpochMs(v);
-	return Number.isFinite(ms) ? hmFmt.format(ms) : '—';
+	return fmtTime(v);
 }
 
 /** The IST calendar day of a moment as YYYY-MM-DD ('' when unparseable). */
 export function istDay(v: number | string | null | undefined): string {
-	const ms = toEpochMs(v);
-	return Number.isFinite(ms) ? ymdFmt.format(ms) : '';
+	return formatIstDay(v);
 }
 
 /**
  * HH:MM in IST, prefixed with the IST date ('27 Jun 09:20') when the moment
- * is not on today's IST date — a window three days out must not read as
+ * is not on the IST day of `now` — a window three days out must not read as
  * this morning.
  */
 export function istHmDated(v: number | string | null | undefined, now = Date.now()): string {
-	const ms = toEpochMs(v);
-	if (!Number.isFinite(ms)) return '—';
-	const hm = hmFmt.format(ms);
-	return ymdFmt.format(ms) === ymdFmt.format(now) ? hm : `${dayFmt.format(ms)} ${hm}`;
+	return fmtStamp(v, now);
 }

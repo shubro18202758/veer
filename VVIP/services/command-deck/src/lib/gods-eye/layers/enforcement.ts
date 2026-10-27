@@ -50,16 +50,19 @@ import { cityRegistry } from '../entities/registry.svelte';
 import type { CityEntity } from '../city-api';
 import { displayPlate } from '../plates';
 import type { GodsEyeLayer, GodsEyeLayerContext, GodsEyeLayerInstance } from '../registry';
-import { cssColor, cssVar, withAlpha } from '../theme';
+import { canvasFont, cssColor, cssVar, withAlpha } from '../theme';
 import { clampedBillboard, clampedDot, clampedLabel, drapeAudit, ground } from './draping';
 import { siteLabelText } from './labels';
+import { kindIcon } from '$lib/design/icons';
+import { chromeOf } from '../hud/map/view';
+import { markerBillboard, tagMarker, type MarkerMeta } from '../hud/map/symbols';
 
 export const ENFORCEMENT_PICK_PREFIX = 'rec:';
 
 /**
  * Rule text shows within this camera distance (m); the pin itself always
  * shows. A PENDING recommendation (an officer must act) reads from the wall's
- * overview range; decided / withheld ones only up close — the judge view of
+ * overview range; decided / withheld ones only up close — the overview of
  * a locked pursuit stays legible instead of a stack of plates.
  */
 const LABEL_NEAR_M = 7000;
@@ -79,6 +82,43 @@ const RULE_WORD: Record<string, string> = {
 };
 
 /** The vehicle a recommendation entity is about (its prop, else its vehicle link). */
+/** Chrome v2: the rule in the operator's words (sentence case, no status words). */
+const RULE_WORDS_V2: Record<string, string> = {
+	R_SPD_SEGMENT: 'Speeding',
+	R_SIGNAL_VIOLATION: 'Red-light violation',
+	R_CLOSED_CORRIDOR_ENTRY: 'Closed-corridor entry',
+	R_STOLEN_SIGHTING: 'Stolen-vehicle sighting',
+};
+
+/** The lawful basis that makes a vehicle's penal recommendations withheld (C-N). */
+const STOLEN_BASIS = 'stolen_vehicle_fir';
+
+/**
+ * The objects that wear a decision dot (SPEC §5.3 "Decision badges", §5.4
+ * units): a vehicle with pending stolen-vehicle sightings — ONE dot on the
+ * vehicle, never one per sighting — and every pending e-challan that is not
+ * withheld (its own recommendation). Pure over the registry's rows.
+ */
+export function decisionUrns(recs: readonly CityEntity[], stolenVehicleIds: ReadonlySet<string>): Set<string> {
+	const out = new Set<string>();
+	for (const r of recs) {
+		if (r.state !== 'pending') continue;
+		const rule = typeof r.props.rule_id === 'string' ? r.props.rule_id : '';
+		const vehicle = vehicleOf(r);
+		if (rule === 'R_STOLEN_SIGHTING') {
+			if (vehicle) out.add(`vehicle:${vehicle}`);
+		} else if (!(vehicle && stolenVehicleIds.has(vehicle))) {
+			out.add(`recommendation:${r.id}`);
+		}
+	}
+	return out;
+}
+
+/** The stolen vehicles of the watchlist (their penal recommendations are withheld). */
+export function stolenVehicles(): Set<string> {
+	return new Set(ops.watchlist.filter((w) => w.lawfulBasis === STOLEN_BASIS).map((w) => w.vehicleId));
+}
+
 function vehicleOf(r: CityEntity): string | null {
 	if (typeof r.props.vehicle_id === 'string') return r.props.vehicle_id;
 	const link = r.links.find((l) => l.startsWith('vehicle:'));
@@ -173,18 +213,23 @@ function createEnforcementLayer(): GodsEyeLayerInstance {
 	let withheldCount = 0;
 	let supersededCount = 0;
 	let sightings = 0;
+	/** Chrome v2: decision units on the map (vehicles with pending sightings + pending e-challans). */
+	let units = 0;
+	/** Chrome v2: the decision units resting on an emulated read (the LayerTree row's provenance glyph). */
+	let emulatedUnits = 0;
 
 	function draw() {
 		if (!ctx || !active) return;
 		const { cesium, viewer } = ctx;
 		const recs = cityRegistry.byKind('recommendation').filter((r) => r.lon != null && r.lat != null);
 		const officer = ops.officerOn;
-		const stolen = new Set(ops.watchlist.filter((w) => w.lawfulBasis === 'stolen_vehicle_fir').map((w) => w.vehicleId));
+		const stolen = stolenVehicles();
 		const sig = JSON.stringify([
 			recs.map((r) => [r.id, r.state, r.lon, r.lat, r.props.decided_by ?? null]),
 			officer,
 			[...stolen].sort(),
 		]);
+		const v2 = chromeOf(ctx) === 'v2';
 		if (sig === lastSignature) return;
 		lastSignature = sig;
 
@@ -195,6 +240,68 @@ function createEnforcementLayer(): GodsEyeLayerInstance {
 		withheldCount = 0;
 		supersededCount = 0;
 		sightings = 0;
+		units = 0;
+		emulatedUnits = 0;
+
+		if (v2) {
+			// SPEC §5.3–5.4: the map shows the decisions that WAIT. A vehicle
+			// with pending stolen-vehicle sightings is one decision: its dot
+			// rides the vehicle's pin (the canvas reads decisionUrns), never one
+			// per sighting. A pending e-challan is its own decision: a neutral
+			// marker with the recommendation glyph wearing the orange dot.
+			// Decided, withheld and superseded rows are history (timeline,
+			// inspector), not map objects.
+			const waiting = decisionUrns(recs, stolen);
+			for (const r of recs) {
+				const rule = typeof r.props.rule_id === 'string' ? r.props.rule_id : 'rule';
+				const vehicle = vehicleOf(r);
+				if (rule === 'R_STOLEN_SIGHTING') {
+					sightings++;
+					continue;
+				}
+				const withheld = r.state === 'pending' && !!vehicle && stolen.has(vehicle);
+				if (withheld) withheldCount++;
+				else if (r.state === 'pending') pending++;
+				else approved++;
+				if (!waiting.has(r.urn)) continue;
+				const word = RULE_WORDS_V2[rule] ?? rule.replace(/^R_/, '').replace(/_/g, ' ').toLowerCase();
+				const excess = excessKmh(r);
+				const what = `${word}${excess != null ? ` +${Math.round(excess)} km/h` : ''}`;
+				const ev = (r.props.evidence ?? {}) as Record<string, unknown>;
+				const plate = displayPlate(typeof r.props.plate === 'string' ? r.props.plate : null, officer) ?? 'vehicle';
+				const meta: MarkerMeta = {
+					urn: r.urn,
+					kind: 'recommendation',
+					glyph: kindIcon('recommendation'),
+					shape: 'disc',
+					cluster: true,
+					t: r.t,
+					label: [{ text: what }],
+					labelWhen: 'hover',
+				};
+				const entity = viewer.entities.add({
+					id: `${ENFORCEMENT_PICK_PREFIX}${r.id}`,
+					position: ground(cesium, r.lon as number, r.lat as number),
+					billboard: markerBillboard(cesium, meta, { decision: true }),
+					description: `E-challan recommendation: ${what.toLowerCase()}${typeof ev.road_name === 'string' ? ` on ${ev.road_name}` : ''}, camera ${
+						r.props.camera_id ?? 'unknown'
+					}, vehicle ${plate}. Waiting for a named officer; nothing is fined automatically. Source: ${r.source === 'emulated' ? 'emulated' : 'live'}.`,
+				});
+				tagMarker(entity, meta);
+				entityIds.push(entity.id);
+			}
+			units = waiting.size;
+			// a unit is emulated when a pending row behind it is (SPEC §9.2: non-live rows carry the glyph)
+			const emulatedWaiting = new Set<string>();
+			for (const r of recs) {
+				if (r.state !== 'pending' || r.source !== 'emulated') continue;
+				const vehicle = vehicleOf(r);
+				const unit = r.props.rule_id === 'R_STOLEN_SIGHTING' ? (vehicle ? `vehicle:${vehicle}` : null) : r.urn;
+				if (unit && waiting.has(unit)) emulatedWaiting.add(unit);
+			}
+			emulatedUnits = emulatedWaiting.size;
+			return;
+		}
 
 		const act = cssVar('--v-act') ?? 'orange';
 		const data = cssVar('--v-data') ?? 'cyan';
@@ -292,7 +399,7 @@ function createEnforcementLayer(): GodsEyeLayerInstance {
 					? {
 							label: clampedLabel(cesium, {
 								text: siteText,
-								font: sitePending ? '600 12px monospace' : '12px monospace',
+								font: canvasFont(sitePending ? '600 12px var(--v-font-ui)' : '12px var(--v-font-ui)'),
 								fillColor: cssColor(
 									cesium,
 									withheld || superseded ? '--v-ink-2' : isPending ? '--v-act-text' : '--v-data',
@@ -368,8 +475,10 @@ function createEnforcementLayer(): GodsEyeLayerInstance {
 		coverageStats() {
 			const served = cityRegistry.served('recommendation');
 			const down = cityRegistry.status !== 'idle' && !served;
+			const v2 = chromeOf(ctx) === 'v2';
 			return {
-				count: entityIds.length,
+				// v2 counts decision units (SPEC §5.4), the legacy chip its pins
+				count: v2 ? units : entityIds.length,
 				loading: cityRegistry.status === 'idle',
 				hint: down
 					? 'city fusion API unavailable — no enforcement pins'
@@ -381,8 +490,16 @@ function createEnforcementLayer(): GodsEyeLayerInstance {
 				error: down ? (cityRegistry.note ?? 'recommendation source not ok') : null,
 				// + how the pins meet the ground (the 3D smoke asserts floating 0)
 				detail:
-					ctx && entityIds.length
-						? { pending, approved, withheld: withheldCount, superseded: supersededCount, sightings, ...drapeAudit(ctx.viewer, entityIds) }
+					ctx && (entityIds.length || v2)
+						? {
+								pending,
+								approved,
+								withheld: withheldCount,
+								superseded: supersededCount,
+								sightings,
+								...(v2 ? { units, emulated: emulatedUnits } : {}),
+								...drapeAudit(ctx.viewer, entityIds),
+							}
 						: { pending, approved, withheld: withheldCount, superseded: supersededCount, sightings },
 				via: 'city-api',
 			};
@@ -400,5 +517,6 @@ export const enforcementLayer: GodsEyeLayer = {
 	requiresKeyId: null,
 	pickPrefix: ENFORCEMENT_PICK_PREFIX,
 	defaultOn: true,
+	group: 'enforcement',
 	create: createEnforcementLayer,
 };

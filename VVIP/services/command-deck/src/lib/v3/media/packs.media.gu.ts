@@ -1,0 +1,58 @@
+/**
+ * packs.media — the GU strings (the one copy that runs; see ./packs.media.ts).
+ */
+import type { MediaKey } from './packs.media';
+
+type Fn = (...args: unknown[]) => string;
+const s = (v: unknown) => String(v ?? '');
+
+export const gu: Record<MediaKey, string | Fn> = {
+	v3i_ref_photo: 'સંદર્ભ ફોટો · લાઇવ નથી',
+	v3i_photo_alt: (title: unknown) => `${s(title)}નો સંદર્ભ ફોટો, લાઇવ છબી નથી`,
+	v3i_photo_tip: (title: unknown, credit: unknown) => `${s(title)}. ${s(credit)}. આ જગ્યા કેવી દેખાય છે, હમણાં ત્યાં શું થઈ રહ્યું છે તે નહીં.`,
+	v3i_illustration: 'ચિત્રણ',
+	v3i_art_alt: (kind: unknown) => `ચિત્રણ: ${s(kind)}`,
+	v3i_vehicle_alt: (cls: unknown) => `વાહન વર્ગનું ચિત્રણ: ${s(cls)}`,
+	v3i_convoy_alt: 'ચિત્રણ: આગળનું વાહન, સુરક્ષિત કાર અને પાછળનું વાહન',
+	v3i_cls_car: 'કાર',
+	v3i_cls_suv: 'યુટિલિટી વાહન',
+	v3i_cls_two_wheeler: 'ટુ-વ્હીલર',
+	v3i_cls_auto_rickshaw: 'ઓટો-રિક્ષા',
+	v3i_cls_bus: 'બસ',
+	v3i_cls_truck: 'ટ્રક',
+	v3i_cls_tempo: 'ટેમ્પો',
+	v3i_cls_ambulance: 'એમ્બ્યુલન્સ',
+	v3i_cls_patrol: 'પેટ્રોલિંગ વાહન',
+	v3i_cls_fire_tender: 'ફાયર ટેન્ડર',
+	v3i_cls_convoy: 'કાફલો',
+	v3i_cls_convoy_zplus: 'ઝેડ પ્લસ વર્ગનો કાફલો, પાછળ એમ્બ્યુલન્સ સાથે',
+	v3i_cls_convoy_y: 'વાય વર્ગની સુરક્ષા, એક આગળનું વાહન',
+	v3i_cls_convoy_x: 'એકલી સુરક્ષિત કાર, એક્સ વર્ગ',
+	v3i_scene_dawn: 'ચિત્રણ: પરોઢે અમદાવાદ, નદી અને તેના પુલ',
+	v3i_scene_day: 'ચિત્રણ: દિવસે અમદાવાદ, રિવરફ્રન્ટ ઉપર પતંગો',
+	v3i_scene_dusk: 'ચિત્રણ: સાંજે અમદાવાદ, નદી પર પહેલી રોશની',
+	v3i_scene_night: 'ચિત્રણ: રાત્રે અમદાવાદ, ઝગમગતો રિવરફ્રન્ટ',
+	'v3i_scene_all-clear': 'ચિત્રણ: શાંત શહેર, રિવરફ્રન્ટના સિગ્નલ લીલા',
+	v3i_mark_alt: (name: unknown) => `${s(name)}નું ચિહ્ન`,
+	v3i_marks_credit: 'એજન્સી અને સ્ત્રોતનાં ચિહ્નો તેમના માલિકોનાં છે. વીર એક પ્રોટોટાઇપ છે અને તેમની સાથે સંકળાયેલું કે તેમના દ્વારા સમર્થિત નથી.',
+	v3i_photos_credit: 'સંદર્ભ ફોટા: વિકિમીડિયા કૉમન્સના યોગદાનકર્તાઓ, દરેક ફોટો પોતાના લાઇસન્સ હેઠળ.',
+	v3i_photos_link: 'ફોટો શ્રેય',
+	v3i_art_credit: 'વાહન અને દૃશ્ય કલાકૃતિ: મૌલિક ચિત્રણ, ફોટો કે સેન્સર છબી નહીં.',
+	v3i_reported_by: (name: unknown) => `જાણ: ${s(name)}`,
+	v3i_on_map: 'જગ્યાનો નકશો',
+	v3i_agency_police: 'અમદાવાદ શહેર પોલીસ',
+	v3i_agency_ems: '108 કટોકટી સેવા',
+	v3i_agency_municipal: 'અમદાવાદ મ્યુનિસિપલ કોર્પોરેશન',
+	v3i_agency_disaster: 'રાષ્ટ્રીય આપત્તિ વ્યવસ્થાપન સત્તામંડળ',
+	v3i_agency_imd: 'ભારત હવામાન વિભાગ',
+	v3i_agency_metro: 'ગુજરાત મેટ્રો રેલ',
+	v3i_agency_brts: 'જનમાર્ગ બસ રેપિડ ટ્રાન્ઝિટ',
+	v3i_agency_amts: 'અમદાવાદ મ્યુનિસિપલ ટ્રાન્સપોર્ટ સર્વિસ',
+	v3i_agency_osm: 'ઓપનસ્ટ્રીટમેપ',
+	v3i_agency_citizens: 'નાગરિકો',
+	v3i_gal_keyart: 'મુખ્ય ચિત્ર',
+	v3i_gal_shots: 'વાહન ચિત્રો',
+	v3i_gal_scenes: 'શહેરનાં દૃશ્યો',
+	v3i_gal_photos: 'સંદર્ભ ફોટા',
+	v3i_gal_marks: 'એજન્સી અને સ્ત્રોતનાં ચિહ્નો',
+};

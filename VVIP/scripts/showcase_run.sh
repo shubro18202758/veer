@@ -52,7 +52,7 @@
 #          this element PASSES; signalPlanShifts counts COMMITTED writes.
 #
 # What this script proves, in order:
-#   1. HEALTH   — the fleet's containers + host models + emulator (judged
+#   1. HEALTH   — the fleet's containers + host models + emulator (checked
 #                 on connectivity) + deck (one operator sign-in), fail
 #                 fast with the exact fix hint if not (and it brings up
 #                 the one thing the flagship needs: VVIP_SIGNAL_POLICY_WRITER
@@ -76,7 +76,7 @@
 #                 run's emulator run ids and event ids) + nonzero exit on
 #                 ANY failed assertion.
 #
-# Approvals: in the judged demo a signed-in HUMAN approves on /ops; this
+# Approvals: in a live demo a signed-in HUMAN approves on /ops; this
 # script runs unattended, so every approval it makes (the Jan Rakshak
 # dispatch, the stolen-vehicle sighting that authorises the pursuit) is
 # recorded under the officer "Scripted demo officer (showcase script)".
@@ -89,7 +89,7 @@
 #        *_URL/*_PORT for the services, DECK_URL/DECK_PORT for the deck,
 #        COMPOSE_PROJECT / COMPOSE_FILES / *_CONTAINER for the fleet
 #        (DECK_CONTAINER= or EMULATOR_CONTAINER= empty: that service is
-#        served outside docker, e.g. a private deck preview — judged over
+#        served outside docker, e.g. a private deck preview — checked over
 #        HTTP only).
 #        FLAG_RUN_TIMEOUT_SEC / SWEEP_RUN_TIMEOUT_SEC bound the emulator
 #        run polls (C-G runs are asynchronous).
@@ -138,7 +138,7 @@ DECK_ORIGIN="$DECK_CONTAINER_URL"
 # COMPOSE_PROJECT drives the derived container names (project-service), so a
 # parallel stack needs one override, not eight; any single *_CONTAINER can
 # still be pinned explicitly (DECK_CONTAINER= / EMULATOR_CONTAINER= empty:
-# served outside docker, judged over HTTP only).
+# served outside docker, checked over HTTP only).
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-vvip-argus}"
 COMPOSE_FILES="${COMPOSE_FILES:--f compose.yml -f compose.gb10-override.yml -f compose.argus-override.yml}"
 PG_CONTAINER="${POSTGIS_CONTAINER:-${COMPOSE_PROJECT}-postgis}"
@@ -361,7 +361,7 @@ log "phase 1: fleet + host-model health (fail fast)"
 
 n_fleet=0
 for c in "$PG_CONTAINER" "$VALKEY_CONTAINER" "$NATS_CONTAINER" "$ORACLE_CONTAINER" "$BRAIN_CONTAINER" "$INGRESS_CONTAINER" "$DECK_CONTAINER" "$EMULATOR_CONTAINER"; do
-    [ -n "$c" ] || continue   # served outside docker here: judged over HTTP below
+    [ -n "$c" ] || continue   # served outside docker here: checked over HTTP below
     [ "$(docker inspect "$c" --format '{{.State.Running}}' 2>/dev/null)" = "true" ] \
         || die_hint "container $c is not running" \
             "bash $VVIP_DIR/scripts/veer_up.sh (the live stack) — or bring up the private stack this run is pointed at"
@@ -378,20 +378,22 @@ cb=$(health "$BRAIN_URL/health" 15)
 printf '%s' "$cb" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status")=="ok" and d.get("strategic_tier",{}).get("model_host")=="connected" and d.get("tactical_tier",{}).get("llama_server")=="connected" else 1)' 2>/dev/null \
     || die_hint "convoy-brain $BRAIN_URL/health not ok (decider+gemma must be connected)" \
         "check the host models (systemctl --user status veer-models.target), then docker restart $BRAIN_CONTAINER; body was: $cb"
-# The ONE deck: GET / IS the Convoy Command cockpit — the restored VVIP
-# template home (design-smoke contract: 200 + data-template="convoy-command");
-# /ops remains the situation wall on the SAME origin the canvas uses.
-deck_root="$(health "$DECK_CONTAINER_URL/" 15)"
-if [ "$(hcode "$DECK_CONTAINER_URL/" 15)" = "200" ] \
+# The ONE deck: GET /analyst IS the Convoy Command cockpit — the restored VVIP
+# template home, moved off / by the V3 root flip (/ is Home; design-smoke contract:
+# 200 + data-template="convoy-command"); /ops remains the situation wall on the
+# SAME origin the canvas uses.
+deck_root="$(health "$DECK_CONTAINER_URL/analyst" 15)"
+if [ "$(hcode "$DECK_CONTAINER_URL/analyst" 15)" = "200" ] \
+   && [ "$(hcode "$DECK_CONTAINER_URL/" 15)" = "200" ] \
    && printf '%s' "$deck_root" | grep -q 'data-template="convoy-command"' \
    && [ "$(hcode "$DECK_CONTAINER_URL/ops" 15)" = "200" ]; then
-    ok "command-deck $DECK_CONTAINER_URL serving the cockpit (200 + convoy-command template; /ops 200)"
+    ok "command-deck $DECK_CONTAINER_URL serving the cockpit (/analyst 200 + convoy-command template; / 200; /ops 200)"
 else
-    die_hint "command-deck $DECK_CONTAINER_URL not serving the cockpit (want / = 200 + convoy-command template, /ops = 200)" \
+    die_hint "command-deck $DECK_CONTAINER_URL not serving the cockpit (want /analyst = 200 + convoy-command template, / = 200, /ops = 200)" \
         "cd $INFRA_DIR && docker compose -p $COMPOSE_PROJECT $COMPOSE_FILES up -d --no-deps --build command-deck"
 fi
 
-# Emulator health is judged on CONNECTIVITY: every seam it probes for real
+# Emulator health is assessed on CONNECTIVITY: every seam it probes for real
 # (store, Valkey, NATS, the oracle) must answer. A 'degraded' status for
 # another reason (the last run failed, the living city idle) is reported,
 # never fatal.
@@ -676,7 +678,7 @@ JAN_RAKSHAK_DISPATCHED=$([ "$JR_OK" = "yes" ] && echo true || echo false)
 #     the C7 guard's decision must be fully auditable (ruling on record).
 log "phase 4d: city signal-policy engine vs the situation band"
 SIGNALS_JSON="$SHOWCASE_DIR/signal_policy.json"
-ORACLE="$ORACLE_URL" EVENT="$FLAG_EVENT_ID" python3 - > "$SIGNALS_JSON" <<'PYEOF'
+ORACLE="$ORACLE_URL" EVENT="$FLAG_EVENT_ID" OFFICER="$OFFICER" python3 - > "$SIGNALS_JSON" <<'PYEOF'
 import json, os, urllib.request, urllib.error
 from datetime import datetime, timedelta, timezone
 
@@ -705,9 +707,12 @@ code, replay = post("/api/v1/simulate/replay",
 band_live = get("/api/v1/signals/plans").get("city_band")
 # 3. the operator action: apply the live band's city plan for the flagship
 band = band_live if band_live in ("AMBER", "RED", "BLACK") else "RED"
+# the officer is named: the oracle refuses an unnamed city signal write
+# (VVIP_REQUIRE_OFFICER=1, compose.argus-override.yml)
 code_apply, apply_resp = post("/api/v1/signals/plans/apply",
     {"band": band, "event_id": os.environ["EVENT"],
-     "route_segment_ids": [1005, 1015, 1001, 1006]})
+     "route_segment_ids": [1005, 1015, 1001, 1006],
+     "officer": os.environ["OFFICER"]})
 detail = apply_resp.get("detail", apply_resp) if code_apply != 200 else apply_resp
 # 4. the auditable decision surface
 plans = get("/api/v1/signals/plans")
@@ -873,7 +878,7 @@ NOTE = "pursuit authorised on a reported-stolen vehicle (evidence, no fine)"
 
 def call(path, body=None):
     """(HTTP status, body) — a refusal is RECORDED, never fatal: the
-    artifact must always land so the assertions judge real state."""
+    artifact must always land so the assertions check real state."""
     req = urllib.request.Request(os.environ["ORACLE"] + path,
         data=None if body is None else json.dumps(body).encode(),
         headers={"Content-Type": "application/json"})
@@ -991,8 +996,13 @@ if approval and approval.get("status") == "approved":
                         "Vehicles only (C6); the interception plan assists the operator."),
         # the emulator's sweep belt: a drivable chain of the real network
         "route_spines": [{"label": "old-city sweep belt", "segment_ids": [1015, 1012, 1049, 1013]}],
+        # HON-4: the pursued vehicle exists only in the emulator's ANPR sweep
+        # and this script opens the pursuit unattended — the event is
+        # EMULATED (the oracle badges metadata.source 'emulated'), never live
         "metadata": {"vehicle_id": vid, "recommendation_id": rec["recommendation_id"],
-                     "fir": fir, "opened_by": officer},
+                     "fir": fir, "opened_by": officer,
+                     "source": "emulated", "scripted_by": "scripts/showcase_run.sh",
+                     "fir_is_demo": True},
     })
     pursuit = doc if code < 300 else refused(code, doc)
 
@@ -1251,7 +1261,7 @@ fi
 
 # reversible state: nothing was committed, but restore is still exercised
 curl -s -X POST "$ORACLE_URL/api/v1/signals/restore" -H 'Content-Type: application/json' \
-    -d "{\"event_id\":\"$FLAG_EVENT_ID\"}" > "$SHOWCASE_DIR/signals_restore.json" 2>/dev/null || true
+    -d "{\"event_id\":\"$FLAG_EVENT_ID\",\"officer\":\"$OFFICER\"}" > "$SHOWCASE_DIR/signals_restore.json" 2>/dev/null || true
 
 # 8d. leave the oracle as found: when phase 1b switched the signal-policy
 #     writer on for this run, the oracle goes back to its pre-run value now
@@ -1407,7 +1417,7 @@ summary = {
   "approvals": {
     "officer": os.environ["OFFICER"],
     "note": "this script runs unattended: every approval it makes is recorded under this "
-            "officer label; in the judged demo a signed-in human approves on /ops",
+            "officer label; in a live demo a signed-in human approves on /ops",
   },
   "signal_policy_writer": {
     "recreated_for_this_run": os.environ["WRITER_RECREATED"] == "1",

@@ -33,8 +33,8 @@ ETHICS RAILS (C6) enforced here, not by convention:
     * retention is reaped by store.REAPER — at most once per 10 minutes,
       serialized across processes, and never at the expense of a decided
       e-challan's evidence; an active earmark can only extend a vehicle's
-      retention.  A failing reap is reported (GET /retention), never
-      silent.
+      retention; full-mark lookup audit rows go after the 90-day cap.  A
+      failing reap is reported (GET /retention), never silent.
     * no read path returns a sighting stamped in the future.
     * vehicles only: no person-directed field exists on any path.
 
@@ -59,7 +59,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
-from traffic_oracle.city.common import clean_text, named_actor
+from traffic_oracle.city.common import clean_text, mask_plate, named_actor
 from traffic_oracle.enforcement.engine import FutureSightingError
 from traffic_oracle.units.router import attributed_actor, authenticated_officer
 from traffic_oracle.vehicles import store
@@ -104,6 +104,39 @@ EARMARK_STATES = ("watch", "flagged")
 #: The one answer for a vehicle that may not disclose individual reads
 #: (C6) — deliberately count-free and identical for unknown vehicle ids.
 NO_LAWFUL_BASIS_DETAIL = "no lawful basis to disclose individual reads for this vehicle"
+
+#: The 409 body when nobody is named on a full-mark lookup (an ASCII
+#: hyphen, so the deck can substring-match it) — pinned by the
+#: FIX-C-PLATESEARCH contract; nothing was looked up and nothing written.
+OFFICER_REQUIRED_DETAIL = {
+    "error": "officer-required",
+    "reason": "x-veer-officer header absent - a full-mark vehicle lookup is "
+              "officer-only and audited; nothing was looked up and nothing "
+              "was written",
+}
+
+#: The 422 body for a lookup whose plate is not a registration mark.  The
+#: input is NEVER echoed (normalize_plate's own message repeats it, and a
+#: near-mark is a mark in all but one character).
+LOOKUP_INVALID_PLATE_DETAIL = (
+    "not a registration plate: expected a state code, a district number, an optional series and a "
+    "4-digit number (for example 'GJ 01 AB' then 4 digits), or a BH-series plate (the input is not "
+    "echoed back)"
+)
+
+#: Bounds of the lookup's own parameters — checked in the handler, AFTER
+#: the officer gate, so an anonymous caller never gets a 422 (409 first).
+LOOKUP_PLATE_MAX_LEN = 32
+LOOKUPS_LIMIT_DEFAULT = 50
+LOOKUPS_LIMIT_MAX = 200
+
+#: The honest sentence for a vehicle that discloses NOTHING under C6 —
+#: server copy, shown verbatim (pinned by the FIX-C-PLATESEARCH
+#: contract; the em-dash is part of the sentence).
+NO_BASIS_NOTE = (
+    "No lawful basis to show this vehicle's camera reads — earmark it "
+    "with a lawful basis to proceed"
+)
 
 
 #: Officer names on this router: the shared named-actor rule, up to 120
@@ -435,14 +468,229 @@ async def retention_status() -> dict:
     return {
         "default_retention_days": SIGHTING_RETENTION_DAYS_DEFAULT,
         "earmark_retention_cap_days": 90,
+        "lookup_audit_retention_days": store.LOOKUP_AUDIT_RETENTION_DAYS,
         "policy": (
             "sightings of vehicles without an active earmark are kept "
             f"{SIGHTING_RETENTION_DAYS_DEFAULT} days; an active earmark "
             "(lawful basis) keeps them up to its retention_days (cap 90), "
             "never less than the default; a sighting cited by a decided "
-            "e-challan recommendation is kept as its evidence"
+            "e-challan recommendation is kept as its evidence; the audit "
+            "of full-mark lookups is kept "
+            f"{store.LOOKUP_AUDIT_RETENTION_DAYS} days"
         ),
         "reaper": reaper,
+    }
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Full-mark lookup — officer-only, audited (FIX-C-PLATESEARCH)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/lookup")
+async def lookup_vehicle(
+    request: Request,
+    plate: str | None = Query(
+        default=None,
+        description=f"the full registration mark (1..{LOOKUP_PLATE_MAX_LEN} "
+                    "characters; checked after the officer gate)",
+    ),
+) -> dict:
+    """Look up ANY vehicle by its FULL registration mark.
+
+    The rule (FIX-C-PLATESEARCH, FIX-AUDIT-A): a NAMED duty officer is
+    required — the deck-verified ``x-veer-officer`` header (loopback only,
+    units/router.py), checked BEFORE the plate (its presence, length and
+    shape: ``plate`` carries no FastAPI constraint, so an anonymous caller
+    gets the 409 for a malformed mark too, never a 422), the pool and any
+    read or write — an anonymous caller learns nothing (409
+    officer-required; nothing is written).  A body or query officer claim
+    (``?officer=``, a JSON ``officer``) is never read here — header-only
+    attribution is the point.  Every COMPLETED lookup, found or not,
+    writes exactly ONE ``corridor.vehicle_lookup_audit`` row: officer,
+    time, the MASKED mark, found and the disclosure class — no hash of the
+    mark (migration 025 dropped 024's reversible ``mark_sha256``).  The
+    raw mark is never stored, logged or errored in clear: the audit holds
+    the mask; this route logs only the mask; a malformed plate's 422 does
+    not echo it; and uvicorn's access line for the request (every request,
+    the anonymous 409 included) has its ``plate=`` value masked by
+    ``logfilters.MarkMaskingFilter`` on ``uvicorn.access`` (installed by
+    ``create_app``).  The full mark leaves only in this 200 body, to the
+    named officer.  C6 is NOT widened: ``reads`` leaves only through the
+    existing lawful-disclosure predicate (``store.disclosure_basis``) — an
+    ACTIVE earmark discloses the whole trail, recommendation evidence alone
+    discloses the evidence reads, and neither withholds every read with an
+    honest note instead of a 404 (the officer legitimately learned the
+    vehicle exists).  Reads are the /sightings default cap (100), never a
+    client limit.  Like /sightings, the throttled retention reap
+    (``store.REAPER``) is attempted first — before the vehicle row and the
+    disclosure basis — so a reaped read is never disclosed; it also reaps
+    audit rows older than ``store.LOOKUP_AUDIT_RETENTION_DAYS`` (90).
+    """
+    officer = authenticated_officer(request)
+    if officer is None:
+        raise HTTPException(409, OFFICER_REQUIRED_DETAIL)
+    if not plate or len(plate) > LOOKUP_PLATE_MAX_LEN:
+        raise HTTPException(422, LOOKUP_INVALID_PLATE_DETAIL)
+    try:
+        canonical = normalize_plate(plate)
+    except InvalidPlate:
+        raise HTTPException(422, LOOKUP_INVALID_PLATE_DETAIL) from None
+    pool = _pool(request)
+    mark_masked = mask_plate(canonical)
+    now = datetime.now(timezone.utc)
+    async with pool.acquire() as conn:
+        await store.REAPER.maybe_reap(conn, _reap_cutoff(now))
+        vehicle = await store.vehicle_by_plate(conn, canonical)
+        read_rows: list = []
+        note: str | None = None
+        if vehicle is None:
+            found = False
+            vid = None
+            vehicle_class = None
+            earmark = None
+            recommendations: list[dict] = []
+            pursuits: list[dict] = []
+            disclosure = "none"
+        else:
+            found = True
+            vid = vehicle["vehicle_id"]
+            vehicle_class = vehicle["vehicle_class"]
+            basis = await store.disclosure_basis(conn, vid)
+            if basis.earmarked:
+                disclosure = "active_earmark"
+            elif basis.lawful_reads:
+                disclosure = "evidence_only"
+            else:
+                disclosure = "none"
+            erow = await store.active_earmark_for_vehicle(conn, vid)
+            if erow is None:
+                earmark = None
+            else:
+                earmark = {
+                    "state": erow["state"],
+                    "reason": erow["reason"],
+                    "lawful_basis": erow["lawful_basis"],
+                    "retention_until": _iso(erow["retention_until"]),
+                }
+            # the SAME fetch either way: SQL_LAWFUL_SIGHTINGS already
+            # composes SQL_LAWFUL_READ, so without an earmark it returns
+            # exactly the evidence reads — no second, widened query
+            if basis.discloses:
+                read_rows = await store.fetch_sightings(conn, vid, 100)
+            else:
+                note = NO_BASIS_NOTE
+            recommendations = [
+                {
+                    "recommendation_id": str(r["recommendation_id"]),
+                    "rule_id": r["rule_id"],
+                    "status": r["status"],
+                }
+                for r in await store.open_recommendations_for_vehicle(conn, vid)
+            ]
+            pursuits = [
+                {
+                    "event_id": str(r["event_id"]),
+                    "status": r["status"],
+                    "recommendation_id": r["recommendation_id"],
+                }
+                for r in await store.pursuits_for_vehicle(conn, vid)
+            ]
+        # one audit row per COMPLETED lookup, found or not — the last
+        # statement of the call (a failed read aborts with no audit row)
+        audit_row = await store.insert_lookup_audit(
+            conn, officer, mark_masked, found, disclosure
+        )
+    logger.info(
+        "vehicles.vehicle_looked_up",
+        mark_masked=mark_masked,  # the canonical mark is never logged
+        found=found,
+        disclosure=disclosure,
+        officer=officer,
+    )
+    return {
+        "found": found,
+        "mark": canonical,
+        "mark_masked": mark_masked,
+        "vehicle_id": str(vid) if vid is not None else None,
+        "vehicle_class": vehicle_class,
+        "earmark": earmark,
+        "open_recommendations": recommendations,
+        "open_pursuits": pursuits,
+        "disclosure": disclosure,
+        "reads": [
+            {
+                "sighting_id": str(r["sighting_id"]),
+                "plate": r["plate"],
+                "camera_id": r["camera_id"],
+                "t": _iso(r["t"]),
+                "position": _position(r["lon"], r["lat"]),
+                "speed_kmh": r["speed_kmh"],
+                "heading": r["heading"],
+                "vehicle_class": r["vehicle_class"],
+                "source": r["source"],
+                "run_id": r["run_id"],
+                "matched_plate_hit": r["matched_plate_hit"],
+            }
+            for r in read_rows
+        ],
+        "note": note,
+        "source": _badge([r["source"] for r in read_rows]),
+        "audit": {
+            "officer": officer,
+            "looked_up_at": _iso(audit_row["looked_up_at"]),
+            "mark_masked": mark_masked,
+            "found": found,
+            "disclosure": disclosure,
+        },
+    }
+
+
+@router.get("/lookups")
+async def list_lookups(
+    request: Request,
+    limit: str | None = Query(
+        default=None,
+        description=f"rows to return, 1..{LOOKUPS_LIMIT_MAX} (default "
+                    f"{LOOKUPS_LIMIT_DEFAULT}; checked after the officer gate)",
+    ),
+) -> dict:
+    """The lookup audit trail, newest first — masked marks only.
+
+    Same rule and same 409 ordering as ``/lookup`` (the list names
+    officers and masked marks, so it is officer-only too): the
+    deck-verified ``x-veer-officer`` header is checked before ``limit``
+    (an anonymous caller gets the 409 whatever the limit) and before the
+    pool, and READING the audit writes no row.  A row carries the masked
+    mark and nothing else about it (migration 025 dropped the hash).  Rows
+    older than ``store.LOOKUP_AUDIT_RETENTION_DAYS`` are reaped by the
+    retention reaper (see ``/lookup``); ``limit`` bounds the read.
+    """
+    officer = authenticated_officer(request)
+    if officer is None:
+        raise HTTPException(409, OFFICER_REQUIRED_DETAIL)
+    try:
+        rows_wanted = int(limit) if limit is not None else LOOKUPS_LIMIT_DEFAULT
+    except ValueError:
+        rows_wanted = 0
+    if not 1 <= rows_wanted <= LOOKUPS_LIMIT_MAX:
+        raise HTTPException(422, f"limit must be an integer 1..{LOOKUPS_LIMIT_MAX}")
+    pool = _pool(request)
+    async with pool.acquire() as conn:
+        rows = await store.fetch_lookup_audits(conn, rows_wanted)
+    return {
+        "lookups": [
+            {
+                "id": str(r["id"]),
+                "looked_up_at": _iso(r["looked_up_at"]),
+                "officer": r["officer"],
+                "mark_masked": r["mark_masked"],
+                "found": r["found"],
+                "disclosure": r["disclosure"],
+            }
+            for r in rows
+        ],
+        "count": len(rows),
     }
 
 
@@ -612,6 +860,8 @@ __all__ = [
     "LAWFUL_BASIS_CODES",
     "EARMARK_STATES",
     "NO_LAWFUL_BASIS_DETAIL",
+    "NO_BASIS_NOTE",
+    "OFFICER_REQUIRED_DETAIL",
     "SIGHTING_RETENTION_DAYS_DEFAULT",
     "persist_read",
 ]

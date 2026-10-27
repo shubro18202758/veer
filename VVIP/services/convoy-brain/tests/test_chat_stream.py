@@ -15,7 +15,7 @@ import json
 import pytest
 
 from convoy_brain import __main__ as brain_main
-from convoy_brain.config import DECIDER_MODEL_ID, GEMMA_MODEL_ID
+from convoy_brain.config import DECIDER_MODEL_ID, GEMMA_DISPLAY_NAME
 from convoy_brain.decider import DeciderBrain
 from convoy_brain.memory.convoy_context import ConvoyContext
 from convoy_brain.orchestrator import Orchestrator, chunk_prose, final_prose
@@ -118,7 +118,7 @@ class TestStreamContract:
         done = events[-1]["data"]
         assert done["session_id"]
         assert done["tiers_used"][0] == "decider:" + DECIDER_MODEL_ID
-        assert "gemma:" + GEMMA_MODEL_ID in done["tiers_used"]
+        assert "gemma:" + GEMMA_DISPLAY_NAME in done["tiers_used"]
         assert done["degraded"] is False
         assert done["operator_alerts"] == []
 

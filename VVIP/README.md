@@ -7,9 +7,8 @@
 </h1>
 
 <p align="center">
-  <strong>Born as the VVIP Convoy Orchestration Platform — and elevated by the paradigm
-  shift our mentor pushed us to take seriously: VVIP routing is <em>one component among
-  many</em>. One engine now schedules, predicts and releases road-network occupancy for
+  <strong>Born as the VVIP Convoy Orchestration Platform, now built on one premise:
+  VVIP routing is <em>one component among many</em>. One engine now schedules, predicts and releases road-network occupancy for
   eight corridor-event classes (protected movements, processions, mass gatherings, races,
   ceremonials, stadium egress, flood evacuations, work zones), carries a stolen-vehicle
   report from FIR to ranked interception plan on the same rails, and puts every agency on
@@ -54,46 +53,77 @@
 <br/>
 
 <p align="center">
-  <img width="840" alt="The /ops situation wall on the live stack (2026-10-24 01:26 IST, staged for judging) — band GREEN, one pending decision, the wall canvas on the photorealistic 3D city" src="showcase/showcase_ops_wall.png" />
+  <img width="840" alt="The /ops situation wall on the live stack (2026-10-24 01:26 IST, staged demo state) — band GREEN, one pending decision, the wall canvas on the photorealistic 3D city" src="showcase/showcase_ops_wall.png" />
 </p>
 <p align="center">
-  <img width="840" alt="The God's-eye city in photorealistic 3D on the live stack (2026-10-24 01:25 IST, staged for judging) — the 49 real roads draped on Google's 3D tiles in the simulated feed's colours, City Vitals and the fusion rail, 110 entities" src="showcase/showcase_gods_eye_city.png" />
+  <img width="840" alt="The God's-eye city in photorealistic 3D on the live stack (2026-10-24 01:25 IST, staged demo state) — the 49 real roads draped on Google's 3D tiles in the simulated feed's colours, City Vitals and the fusion rail, 110 entities" src="showcase/showcase_gods_eye_city.png" />
 </p>
 
 ## ⚡ The Interface — one command-deck, every audience
 
 **The canonical interface is the SvelteKit command-deck at
 `http://127.0.0.1:5273`** — opened in a browser on the GB10 box itself
-(container `vvip-argus-command-deck`). `/` is the **Convoy Command
-cockpit** (the restored VVIP template home) and `/ops` the situation wall
-beside it; operators **sign in by name with the duty PIN** (the operator
-gate), and every officer action from then on is recorded under that name.
-Every audience lands on the same deck:
+(container `vvip-argus-command-deck`). The **V3 interface** (built
+2026-10-26/27, **live on the stack since 2026-10-27**) puts a simple default
+in front of the whole machine: `/` is **Home** — what needs the duty officer, what is happening,
+what is coming — and every power tool of the earlier deck is kept one
+click deeper under **Analyst**. Operators **sign in by name with the duty
+PIN** (the operator gate), and every officer action from then on is
+recorded under that name. Every operator page wears the same shell — a
+left rail (Home · Map · Decide · Plan · Assistant · Advisories, Analyst
+below), a slim top bar (one search, a menu holding language and the
+secondary items, an alerts bell with a soft chime on by default for each
+new waiting decision, and the named-officer pill) and, while something is
+live, a thin live-operations strip. The look is neutral — black, white and
+greys, colour kept for meaning (orange: a named officer must decide; red: a
+stolen or watchlisted vehicle; green: approved or healthy; teal: a protected
+route; blue: links and the assistant) — and every surface carries imagery:
+studio shots of each vehicle class and convoy, key art for every event kind,
+time-of-day Ahmedabad scenes, credited reference photos of the city's places
+(always captioned "Reference photo · not live") and the agencies' and data
+sources' marks (their owners' marks; Veer is not affiliated with or endorsed
+by them). Every audience lands on the same deck:
 
-| Surface | Route | Theme | What it is |
+| Surface | Route | Look | What it is |
 |---|---|---|---|
-| **Convoy Command** | `/` | `command` (graphite) | The cockpit: full-bleed God's-eye canvas, the two-tier planner with its RECOMMENDED ribbon, the officer-gated escort and its HUD — where an **AI proposal waits for the officer's APPROVE / REJECT** |
-| **Situation wall** | `/ops` | `command` | Band masthead (city state RED/AMBER/GREEN/BLACK), Corridor Operations Board, Pursuit & Watchlist console, Decision Queue (human approvals — e-challans, stolen-vehicle sightings, escort proposals), Jan Rakshak Dispatch, City Signal Plans, the AMA module card, the Decision-Audit Stream — and the wall God's-eye canvas |
-| **God's-eye cinematic** | `/gods-eye` | `command` | The fullscreen CesiumJS city — **photorealistic 3D Ahmedabad for signed-in operators** (Google Photorealistic 3D Tiles + Cesium World Terrain + Bing aerial imagery) with its overlays draped on the city, eleven integrity-validated layers, FLIR-class sensor modes, share links |
-| **Citizen Advisory** | `/citizen` | `daylight` (paper) | Public, no sign-in: plain-language band strip + event cards — which stretch, when, how long, the alternate; emulated events badged SIMULATED FEED · EMULATED, never LIVE |
-| **108 Green Corridor** | `/driver` | `daylight` | Public: request → awaiting the duty officer → approved by a named officer on `/ops` → open window with live countdown and the golden-hour counter (with no live event up, a labelled scripted fallback walks evaluating → proposal instead) |
-| **Comms desk** | `/comms` | `command` | Trilingual advisory columns — EN / हिंदी / ગુજરાતી carrying the same facts verbatim |
-| **Chat console** | `/chat` | `command` | Operator chat with the two-tier brain — answers grounded in the city picture, map moves offered as suggestions the operator applies |
+| **Home** | `/` (also `/home`) | V3 night | The first screen: the decision with the soonest deadline featured with its countdown over the real map of its place, a city pulse over a time-of-day scene, and rails of picture cards — map, vehicle shot, key art or place photo (Needs your decision, Live operations, Reported in the city, Coming up) |
+| **Decide** | `/decide`, `/decide/<unit>` | V3 night | One card per decision beside the real map of the place: what, why, what changes, pick an option, and one button carrying the named officer — **an AI proposal waits for the officer's approve / reject**; no officer named, no decision |
+| **Object page** | `/o/<urn>` | V3 night | Every record — event, OSINT report, vehicle, place, operation, junction, camera, dispatch, recommendation, sighting — gets a page: a hero map, key facts, a timeline and the actions, with the full record, sources and an "ask about it" panel in tabs |
+| **City map** | `/map` | V3 night | The God's-eye canvas, clean by default: opens on the natural-colour photoreal 3D city when the deck has an ion key (`VEER_CESIUM_ION_TOKEN`), the city map otherwise; a compact summary, a collapsible layers panel on the left, a "Now" list, corridor stats in their own closed panel, a terse legend, focus on one event, and a satellite / map style switch |
+| **Assistant** | `/assistant` | V3 night | The two-tier brain as a conversation: short answers with tappable object chips, proposals as cards that open in Decide (never an approve button here), one-line honest cautions |
+| **Planner** | `/plan` | V3 night | "Plan a movement" on its own page: where to, routes with the RECOMMENDED ribbon, launch (waiver + named officer), live — the escort still starts only when a named officer launches it |
+| **Analyst** | `/analyst` | V3 night | The workspace — the former Convoy Command cockpit: full-bleed God's-eye canvas, the two-tier planner, the officer-gated escort and its HUD, graph, table, timeline, inbox, every power tool. Its sub-nav band joins **Workspace · Situation wall · City map · Assistant** |
+| **Situation wall** | `/ops` (under Analyst) | V3 night | Band masthead (city state RED/AMBER/GREEN/BLACK), Corridor Operations Board, Pursuit & Watchlist console, Decision Queue (human approvals — e-challans, stolen-vehicle sightings, escort proposals), Jan Rakshak Dispatch, City Signal Plans, the AMA module card, the Decision-Audit Stream — and the wall God's-eye canvas |
+| **God's-eye cinematic** | `/gods-eye` (under Analyst) | V3 night | The fullscreen CesiumJS city — **photorealistic 3D Ahmedabad for signed-in operators** (Google Photorealistic 3D Tiles + Cesium World Terrain + Bing aerial imagery) with its overlays draped on the city, eleven integrity-validated layers, FLIR-class sensor modes, share links |
+| **Chat console** | `/chat` (under Analyst) | V3 night | The v2 operator chat with the two-tier brain — answers grounded in the city picture, map moves offered as suggestions the operator applies |
+| **Advisories** | `/comms` | V3 night | Event list on the left, the selected event framed on a satellite-style map, the EN / हिंदी / ગુજરાતી drafts side by side carrying the same facts verbatim, the status "Drafted — not delivered", and the draft log and dispatch threads behind a side sheet |
+| **Citizen Advisory** | `/citizen` | V3 day (public) | Public, no sign-in: one plain posture sentence, hold cards each topped by a map of the stretch — solid line = live, **dashed = emulated / fixture / unverified** — the alternate, and the SIMULATED FEED · EMULATED badge on emulated events, never LIVE |
+| **108 Green Corridor** | `/driver` | V3 day (public) | Public, Gujarati first: the golden-hour clock, four large steps — request → awaiting the duty officer → approved by a named officer → open window with live countdown. No approve control, no location collected, no registration mark; with no live event up, a labelled scripted fallback walks the steps and sends nothing |
+
+The operator pages carry honest labels everywhere — EMULATED, SIMULATED,
+UNVERIFIED-OSINT, NEWS-REPORTED, OFFICIAL-VERIFIED — and registration marks
+are masked unless a duty officer is named. Old `/#v=…`-style bookmarks of
+the former root are handed to `/analyst#…`.
 
 Per-surface acceptance is a camera, not a claim:
-`services/command-deck/tests/screens-verify.mjs` photographs **six
-surfaces — `/ops`, `/gods-eye`, `/citizen`, `/driver`, `/comms`, `/chat` —
-under SwiftShader software-WebGL and proves each page's key elements plus a
-non-blank PNG** (the cockpit `/` is held by `tests/design-smoke.mjs`; the
-camera drives `/driver` end to end only in
-its labelled scripted fallback; on a live deck it checks the idle request
-card and never files a 108 request) — **40/40 checks green** (re-executed
-on the live deck on 2026-10-24 at 00:21 IST, exit 0, `/driver` in its
-scripted fallback; manifest:
+`services/command-deck/tests/screens-verify.mjs` photographs six
+earlier surfaces — `/ops`, `/gods-eye`, `/citizen`, `/driver`, `/comms`,
+`/chat` — under SwiftShader software-WebGL and proves each page's key
+elements plus a non-blank PNG (it also checks the OSINT and decision-support
+sections on their `/design` fixture pages when a deck serves them; the
+workspace is held by `tests/design-smoke.mjs` at `/analyst`, and the V3
+screens by the `tests/v3-*` and `home` / `decide` / `object-page` /
+`root-flip` smokes — see `TECHNICAL_DOCS.md` §18; the camera drives
+`/driver` end to end only in its labelled scripted fallback; on a live deck
+it checks the idle request card and never files a 108 request). Its last
+recorded run on the live deck — **40/40 checks green** (2026-10-24 00:21
+IST, exit 0, `/driver` in its scripted fallback; manifest:
 `tests/artifacts/screens/screens_manifest.json`, shots
-`tests/artifacts/screens/screen_{ops,gods-eye,citizen,driver,comms,chat}.png`;
-the hero screenshots on this page were recaptured on the live stack the
-same night — the operator views in photorealistic 3D).
+`tests/artifacts/screens/screen_{ops,gods-eye,citizen,driver,comms,chat}.png`)
+— **predates the V3 interface**; it was not re-executed on the live deck
+after V3 because V3 is not deployed there yet. The hero screenshots on this
+page were captured on the live stack the same night, before V3, so they show
+the earlier look of `/ops` and `/gods-eye`.
 
 > **Demo honesty note:** the deck is the backend-wired canonical surface,
 > running against the live stack on the box. The React `frontend/` is
@@ -121,9 +151,9 @@ owner, who is the victim** (an e-challan approval on that plate is refused,
 the pursuit → **pgRouting interception plan** (choke junctions ranked off
 the latest sighting) → **live trace on the God's-eye canvas** — while a
 **Jan Rakshak unit** is dispatched to the spillover and the **city
-signal-policy guard** refuses an uncalibrated commit, audited. In the judged
-demo every approval is made live by a signed-in human on `/ops`; the script
-stops at PENDING wherever a gate does not truly need one.
+signal-policy guard** refuses an uncalibrated commit, audited. When an
+operator runs the demo, every approval is made live by a signed-in human on
+`/ops`; the script stops at PENDING wherever a gate does not truly need one.
 
 **Run live on the deployed stack on the night of 2026-10-23/24 —
 SHOWCASE PASS three times** (once alone at 23:51 IST, then twice under the
@@ -151,7 +181,7 @@ end; the signal-policy guard refused the uncalibrated commit (409
 field observations). No fine anywhere in the chain.
 
 **The hero shots recaptured** on 2026-10-24 at 01:25–01:26 IST on the
-live stack in its clean, staged judging state (after `demo_reset.sh`),
+live stack in its clean, staged demo state (after `demo_reset.sh`),
 the three operator views on `PHOTOREAL 3D · GOOGLE`: the 3D city at rest
 (110 entities), the pursuit-trace camera on the stolen vehicle's trace
 centroid (EMULATED reads; the trace as it stood at capture, a 13-point
@@ -170,7 +200,7 @@ injects **causes only** (schedules, weather, incidents, requests, ANPR
 reads) through real APIs; every decision, band transition and escalation
 quoted above was made by the real stack, and every approval in the run
 was the script's, recorded as `Scripted demo officer (showcase script)` —
-in the judged demo a signed-in human makes every approval. History, kept:
+when an operator runs the demo, a signed-in human makes every approval. History, kept:
 the artifacts before this run (2026-10-18) predated the real roads and
 the stolen-vehicle rule — their pursuit stood on an e-challan the script
 had approved under a cast officer name, exactly what the platform now
@@ -211,7 +241,7 @@ Instead of shutting down roads 30 minutes early, the platform:
 - 🧠 **Forecasts** traffic conditions 5–30 minutes ahead — today through **t0-alpha**, a third-party zero-shot ONNX INT8 foundation forecaster (Apache-2.0) baked into the oracle image and reading the synthetic feed's history, with a heuristic cache as the last rung; our own DSTGAT architecture is implemented in real PyTorch, but **no trained DSTGAT weights ship yet** (`models/onnx/` is empty — see the honesty note under Neural Traffic Forecasting)
 - 🛣️ **Optimizes** convoy routes on request — an OR-Tools optimum plus pgRouting k-shortest alternatives (up to 5 candidates by default), each scored for time, disruption, security and complexity
 - ⏱️ **Activates diversions just 60–180 seconds before** the convoy reaches each segment — not minutes
-- 🤖 **Runs a two-tier AI command mind** — a 27B strategic **decider** that owns strategy and tool selection, and a Gemma 4 12B **tactical** tier that drafts tool arguments and composes the operator-facing narrative (dossiers, advisories, chat answers; a deterministic heuristic floor answers when it is down) — both resident on the edge box, no cloud
+- 🤖 **Runs a two-tier AI command mind** — a 27B strategic **decider** that owns strategy and tool selection, and a Gemma 4 12B **tactical** tier that drafts tool arguments and composes the operator-facing chat answer (a deterministic heuristic floor answers when it is down) — both resident on the edge box, no cloud. A **grounding validator in code** (`convoy_brain/grounding.py`) checks every drafted tool argument and every sentence of an answer against what the tools actually returned: an unsupported road, figure, time, vehicle position or unit ETA is removed and the answer says so, and a subject no lookup found is answered with a plain "not in the city picture"
 - 🛰️ **Renders one God's-eye city canvas** — photorealistic 3D Ahmedabad for signed-in operators (Google Photorealistic 3D Tiles over Cesium World Terrain) with its overlays draped on it — corridor events, earmarked vehicle traces, signals, agency units, cameras, live congestion — that every agency shares, fullscreen or embedded in `/ops`; public pages stay keyless
 - 🗺️ **Runs on Ahmedabad's real roads** — the 49-segment, 34-junction, ~192 km city network is traced on OpenStreetMap (© OpenStreetMap contributors, ODbL 1.0): every segment on the real road of its name, every junction on a real intersection
 - 🚨 **Carries the enforcement family** — earmark → ANPR sightings → deterministic recommendations → human approval → operator-initiated pursuit → pgRouting interception plan — vehicles only, lawful basis recorded, retention capped, and **never a fine on a reported-stolen vehicle's owner**
@@ -256,7 +286,7 @@ sweep, `scenarioConfig` only; the `event_kind`/`crowd_class` axes come from
 the emulator's hardcoded profiles
 (`services/event-emulator/src/event_emulator/use_case_library.json` +
 `profiles.py`), which match the twin's values. Each case's documented
-reality, Viksit Bharat relevance and engine expression are written up in
+reality, public relevance and engine expression are written up in
 **[`docs/USE_CASES.md`](docs/USE_CASES.md)** — including the flagship
 composite ("God's Eye Morning": Rath Yatra + monsoon + one ambulance + the
 full stolen-vehicle chain) that `scripts/showcase_run.sh` proves end-to-end
@@ -273,7 +303,7 @@ renders both families on one shared 3D picture.
   <img width="840" alt="Pursuit trace — the God's-eye camera on the stolen vehicle's trace centroid (EMULATED reads) in photorealistic 3D (2026-10-24): a STOLEN · NO FINE · APPROVED sighting pin, and SUPERSEDED · STOLEN on a pre-rule e-challan kept as audit history" src="showcase/showcase_pursuit_trace.png" />
 </p>
 <p align="center">
-  <img width="360" alt="Citizen Advisory — the public Daylight page in the staged judging state: no corridor hold announced, no pursuit, no plate" src="showcase/showcase_citizen_advisory.png" />
+  <img width="360" alt="Citizen Advisory — the public Daylight page in the staged demo state: no corridor hold announced, no pursuit, no plate" src="showcase/showcase_citizen_advisory.png" />
 </p>
 
 ## 🧠 The Intelligence Stack
@@ -282,15 +312,16 @@ Five tiers, decider at the top, all resident on the one edge box. The
 model hosts are systemd `--user` units on loopback (decider `:8083`, Gemma
 `:8084`, embeddings `:8085`); the platform services run as the `vvip-argus`
 compose project (brain `:8092`, traffic-oracle `:8091`, the event emulator
-`:8090`, PostGIS `:56434` with migrations **001–020**, Valkey `:6380`, NATS
+`:8090`, PostGIS `:56434` with migrations **001–025**, Valkey `:6380`, NATS
 `:4223`, the deck `:5273`), host-networked so the loopback model hosts are
 reachable — `bash scripts/veer_up.sh --status` prints the 11-row readiness
-table:
+table (12 rows with the optional OSINT ingress, `VEER_OSINT=1`, loopback
+`:8093`):
 
 | Tier | What | Where | Owns |
 |---|---|---|---|
 | **T5 · Strategic** | `pplx-decider-v1-27b` (BF16, 52,170,802,640 B across 11 shards) | model-host `:8083` | Strategic decisions + **tool selection**, asked as typed `choice`/`noul`/`score` questions — never chat |
-| **T4 · Tactical** | `aditi-ps18-v7h` **Gemma 4 12B** (Q4_K_M GGUF, 7,381,382,880 B) | llama-server `:8084` (build 69bf643) | Tool-argument drafting against MCP inputSchemas (1 repair round), dossiers, trilingual advisories, `/chat` narration |
+| **T4 · Tactical** | **Gemma 4 12B** (Q4_K_M GGUF, 7,381,382,880 B; reported by the brain as `gemma4-12b-veer`) | llama-server `:8084` (build 69bf643) | Tool-argument drafting against MCP inputSchemas (1 repair round) and `/chat` narration — both checked against tool results by the grounding validator |
 | **T3 · Numeric** | forecast ladder (t0-alpha ONNX INT8 foundation rung → DSTGAT rung, no weights yet → heuristic) · HistGBT ETA (untrained: labelled fallback) · OR-Tools CP-SAT/MIP · pgRouting | traffic-oracle `:8091` | The deterministic tool surface the decider chooses among |
 | **T2 · Adaptive** | SituationEngine (deterministic classifier) + hysteresis/escalation/shadow-eval | traffic-oracle `:8091` | Situation class (GREEN/AMBER/RED/BLACK) → protocol-floored movement parameters, published via Valkey |
 | **T1 · Embedding spine** | `pplx-embed-v2-late-0.6b` (128-d multivector, MaxSim) + `bge-m3` (1024-d dense) | embedding-service `:8085` | "Similar past situations" memory over incidents and scenario runs |
@@ -359,20 +390,27 @@ source (grammar-constrained generation, per-call token budgets and wall
 clocks, a decider health-probe latch fix, and the bench client's own
 `str` coercion) with **no evaluation threshold touched**.
 
-**Tests and gates on this tree (wave 4).** The gate venv collects
-**2709 pytest tests** — convoy-brain 635, corridor-store importer 22 +
-store 107, embedding-service 113, event-emulator 328, traffic-oracle 1500,
-plus the command-deck's own 4 proxy-guard tests — and signal-ingress's
-`cargo test --locked` passes **120/120** (both re-run on the deployed tree
-on 2026-10-24, after the tier-0 fix: every pytest suite whole — 2624
-passed, 85 skipped themselves for want of an optional dependency or a
-scratch store (a database, a Valkey) — the collection by the consistency oracle's own
-discovery, cargo in `rust:alpine` on a clean target directory). The acceptance ladder `scripts/verify_all.sh` runs
+**Tests and gates on this tree.** The gate venv collects **5119 pytest
+tests** (`--collect-only` per suite, counted 2026-10-26) — convoy-brain 743,
+corridor-store importer 22 + store 146, embedding-service 113,
+event-emulator 331, traffic-oracle 2168, the four OSINT packages
+(osint-common 444, osint-ingress 382, osint-geo 390, osint-analysis 360),
+plus the command-deck's own 20 Python tests — and signal-ingress's
+`cargo test --locked` passes **120/120**. The last whole-suite runs after
+the 2026-10-26 fix rounds: traffic-oracle 2064 passed / 104 skipped,
+convoy-brain 742 passed / 1 skipped, event-emulator 318 passed / 13
+skipped, osint-common 444 passed, osint-ingress 381 passed / 1 skipped,
+osint-geo 390 passed, osint-analysis 360 passed (a skip is a test whose
+optional dependency or scratch store — a database, a Valkey — is absent).
+History, kept: the wave-4 tree collected 2709 (2624 passed, 85 skipped,
+2026-10-24). The acceptance ladder `scripts/verify_all.sh` runs
 OFFLINE by default — scripts-syntax, gods-eye-check, gods-eye-canvas,
-design-smoke (`/` IS the Convoy Command cockpit), deck-ui (the hermetic
+design-smoke (`/analyst` IS the Convoy Command cockpit, the Analyst workspace), deck-ui (the hermetic
 ops-wall smoke incl. the plate-masking group, the contract and unit
-tests), every pytest suite run whole, cargo, display-geometry,
-ingress-segments, submission-consistency, then the six wave tiers — and
+tests), every pytest suite run whole, osint-offline (the offline OSINT
+smoke and the gazetteer check), cargo, display-geometry, ingress-segments,
+the docs-consistency oracle (`scripts/submission_consistency_check.mjs`),
+then the six wave tiers — and
 `--live` signs in to the deck once through `scripts/deck_session.sh`,
 then runs the `demo_reset.sh` dry-run, the live deck smokes and the live
 model tiers. **On the deployed live stack (2026-10-23/24)** both ran green
@@ -380,7 +418,7 @@ inside the 22-step live acceptance — 19 steps green first time; the
 tier-0 gate and two canvas smokes failed, were fixed (the decider's route
 options keyed on their own segments, a pre-movement answer also filed
 under the movement's own decision doc; the acceptance debris cleared by
-the pre-judging reset) and their failed checks re-ran green
+the demo reset) and their failed checks re-ran green
 ([`TECHNICAL_DOCS.md`](TECHNICAL_DOCS.md) §13). History, kept: the
 2026-10-17/18 waves drove the then-ladder green after one fix round
 (`verify_all.sh` ALL TIERS PASSED; `showcase_run.sh` SHOWCASE PASS,
@@ -592,7 +630,7 @@ machine-readable data at `GET /api/v1/adaptive/module`:
 ### 🛰️ The God's-Eye City Canvas — real 3D Ahmedabad
 
 The shared picture five hierarchies never had: a CesiumJS city embedded
-as the centerpiece of `/` and `/ops` and as the fullscreen `/gods-eye`
+as the centerpiece of `/analyst` and `/ops`, behind `/map`, and as the fullscreen `/gods-eye`
 cinematic. **Signed-in operators see photorealistic 3D Ahmedabad** —
 Google Photorealistic 3D Tiles over Cesium World Terrain with Bing aerial
 imagery, keyed by the deck's Cesium ion token, which is handed only to a
@@ -605,7 +643,7 @@ level and no building hides them — every overlay layer audits **0
 floating** entities on the 3D city, the e-challan pins and the pursuit
 included, and the selection halo, the AI's agent notes and the REPLAY of
 a recorded run stand on the ground too. City Command opens on a
-judge-grade oblique — the live action framed at −42° (measured on the
+close oblique view — the live action framed at −42° (measured on the
 merged tree: the camera 2.3–2.7 km up; on the live stack: 2945 m), or,
 with nothing in action, the
 old city and the Sabarmati at −40° — with the Google, Cesium ion and
@@ -618,7 +656,7 @@ the merged tree with a keyed, signed-in preview: `imageryMode`
 `ion-photoreal`, 0 CSP violations, and the ion token served only to a
 signed-in operator — and again on the live stack after the deploy
 (2026-10-24: every overlay layer 0 floating, 0 CSP violations on
-`/gods-eye`, `/` and `/ops`; the hero shots on this page). Eleven integrity-validated layers, FLIR White-Hot /
+`/gods-eye`, `/` (then the cockpit; now `/analyst`) and `/ops`; the hero shots on this page). Eleven integrity-validated layers, FLIR White-Hot /
 Black-Hot sensor modes, share links that restore the exact view, the AMA
 band chip. Architecture, the measured layer table, the emulated/real
 split extended to ANPR, and the ethics rails:
@@ -664,15 +702,49 @@ pursuit of a stolen car based on an e-challan, and a second pursuit from
 an approval that already authorised one; `/ops` never offers a spent
 approval as the basis. Vehicles only, via ANPR plates — no face, no person, no
 person-directed field on any path; plates are **masked** on every surface
-until a named officer is signed in; and Jan Rakshak, police, traffic, 108
-and fire are dispatchable agencies through the same human-approved,
-audited dispatch channel. Camera sites are built to integrate the
+until a named officer is signed in. For Jan Rakshak, police, traffic, 108
+and fire, Veer records a human-approved, audited dispatch request per
+agency; there is no agency CAD or radio integration, and the units shown
+on the map are emulated. Camera sites are built to integrate the
 state's existing ICCC / CCTV / ITMS inventory — Veer strengthens those
 programmes; it does not replace them.
 
 <br/>
 
-### 🖥️ The `/ops` Situation Wall — the operator's wall (the cockpit `/` links here)
+### 📰 OSINT event intelligence and decision support (places, never persons)
+
+**OSINT is off by default** (`VEER_OSINT=0`); with `VEER_OSINT=1` the
+`osint-ingress` service (loopback `:8093`) reads public sources — GDELT,
+Google News, Reddit and the NDMA SACHET CAP alerts — and the oracle fuses
+them into **situations at places** (a road, a junction, a neighbourhood,
+a district), never into anything about a person. Every situation carries
+its honest label (`OFFICIAL-VERIFIED`, `NEWS-REPORTED`, `UNVERIFIED-OSINT`,
+or `SIMULATED` for the developer-written sandbox capture); a news or
+social URL is never stored or shown (the outlet's domain and a hash
+only); syndicated copies of one story count as one source. A
+neighbourhood-level report stays area-level and keeps no road anchor, and
+no report keeps a road segment more than 900 m away. Names and ages are
+redacted at parse; there is no NER, so the honest figure is the
+**held-out recall** on a corpus written blind and never tuned on:
+latin-script names 0.882, Indic-script names 1.0 (withheld as
+`[WITHHELD]`), age markers 0.895 — a name with no cue word, no listed
+surname and no role noun, or an ALL-CAPS headline, can survive
+(`services/osint-ingress/README.md`). A surfaced situation becomes a
+corridor event only when **a named officer promotes it**.
+
+**Decision support** (migration 022) proposes ranked courses of action for
+an event — AHP weights, a lexical veto and TOPSIS over nine criteria, with
+the digital twin behind each option (a seeded surrogate when
+the twin or the road graph does not answer) — and a **named officer approves,
+rejects or defers** (409 without one). Two criteria are labelled for what
+they are: the public-safety figure is a fixed prior by the option's
+actions, not a simulated outcome, and "speed of effect" is a nominal time
+per option kind, not a unit's ETA. An approval writes no field action: it
+creates dispatch requests, each then decided on its own.
+
+<br/>
+
+### 🖥️ The `/ops` Situation Wall — the operator's wall (under Analyst)
 
 The canonical operator surface (`/ops` on the command-deck at `:5273`,
 behind the operator sign-in) is a **situation wall** designed for 24/7
@@ -718,7 +790,7 @@ demo** — its scripted simulation still runs with no backends.
 
 A dedicated clearance system allows emergency vehicles to request corridor access during active convoy movements:
 
-- A 108 ambulance driver files a one-tap request on the public `/driver` page (ambulance-only, capped per client); fire, police and Jan Rakshak units are dispatched by an operator through the same audited channel
+- A 108 ambulance driver files a one-tap request on the public `/driver` page (ambulance-only, capped per client); for fire, police and Jan Rakshak an operator records a dispatch request through the same audited channel (Veer has no agency CAD or radio integration; the units on the map are emulated)
 - The request lands in the duty officer's Decision Queue with its event, stretch and waypoint junction — it never approves itself
 - Duty officers can **approve or defer** with one click
 - An approved request opens a corridor window timed from the event's hold, with the live countdown on the driver's own page
@@ -796,7 +868,7 @@ Capabilities" and `TECHNICAL_DOCS.md` §2.9):
               │ :8084 Gemma 4  │  │      │  ┌──────▼───────┐
               │ 12B tactical   │  │      │  │  PostGIS     │   49 OSM road segments
               ├────────────────┤  │      │  │  + Valkey    │   pgRouting + pgvector
-              │ embedding-svc  │  │      │  │  + DuckDB    │   migrations 001–020
+              │ embedding-svc  │  │      │  │  + DuckDB    │   migrations 001–025
               │ :8085 memory   │  │      │  └──────────────┘
               └────────────────┘  │      │
                           ┌───────▼──────┐
@@ -820,8 +892,8 @@ Capabilities" and `TECHNICAL_DOCS.md` §2.9):
 | **Signal Ingress** | Rust | Four traffic-feed adapters with inline Tier-1 anomaly detection over the 49-segment network — edge-synthetic today (no live connector yet), every row labelled `synthetic` |
 | **Traffic Oracle** | Python | ML predictions, route optimization, anomaly detection, adaptive situation layer — plus the watchlist/enforcement routers (earmarks, sightings, e-challans, interception plans), the agency dispatch channel and the gated city signal-plan writer |
 | **Convoy Brain** | Python | Decider-supervised agent orchestration — the "thinking" layer: planning, the live escort (where the AI only proposes and a named officer approves every switch), chat, MCP |
-| **Corridor Store** | PostgreSQL | Spatial database with the real-road network (OpenStreetMap), traffic history, graph routing, memory embeddings, generalized `events.*` schema, vehicle watchlist + city coordination tables (migrations 001–020) |
-| **command-deck (canonical UI)** | TypeScript/SvelteKit | The interface for every audience at `:5273` behind the operator PIN gate — `/` Convoy Command, `/ops` situation wall, `/gods-eye` cinematic (3D for signed-in operators), `/citizen` + `/driver` public surfaces, `/comms` trilingual desk, `/chat`. The React `frontend/` is the offline fallback demo, not a service |
+| **Corridor Store** | PostgreSQL | Spatial database with the real-road network (OpenStreetMap), traffic history, graph routing, memory embeddings, generalized `events.*` schema, vehicle watchlist + city coordination tables, the OSINT `osint.*` and decision-support `decision.*` schemas, the officer lookup audit (migrations 001–025) |
+| **command-deck (canonical UI)** | TypeScript/SvelteKit | The interface for every audience at `:5273` behind the operator PIN gate — V3: `/` Home, `/decide`, `/o/<urn>` object pages, `/map`, `/assistant`, `/plan`, Advisories `/comms`, and Analyst `/analyst` (the Convoy Command workspace) with `/ops` situation wall, `/gods-eye` cinematic (3D for signed-in operators) and `/chat` beneath it; `/citizen` + `/driver` public surfaces in the V3 day look. The React `frontend/` is the offline fallback demo, not a service |
 | **event-emulator** | Python | The emulated half — injects the use-case library's causes through the real APIs, including emulated ANPR camera reads (`:8090`; `TECHNICAL_DOCS.md` §2.9) |
 | **model-host** | Python | Serves the 27B strategic decider as typed questions (`:8083`) |
 | **llama-server** | llama.cpp | Serves Gemma 4 12B tactical completions (`:8084`) |
@@ -847,7 +919,7 @@ VVIP/
 ├── 📚 docs/
 │   ├── USE_CASES.md                      ← The use-case library (8 corridor classes + the
 │   │                                        enforcement family, each with documented reality,
-│   │                                        Viksit Bharat relevance, and its runnable scenario)
+│   │                                        public relevance, and its runnable scenario)
 │   ├── GODS_EYE_INTEGRATION.md           ← The God's-eye canvas: architecture, the emulated/
 │   │                                        real split extended to ANPR, the ethics rails
 │   └── ACTIVE_MOVEMENT_ADAPTATION.md     ← The named AMA module (R9): six stages, HTTP surface
@@ -865,7 +937,7 @@ VVIP/
 │   │   │   ├── NotificationBell.jsx      ← Emergency clearance system
 │   │   │   └── ...
 │   │   ├── context/ConvoyContext.jsx      ← Global state management
-│   │   ├── hooks/useLiveData.js          ← Real-time data subscriptions
+│   │   ├── hooks/useLiveData.js          ← Polling hooks over the API client
 │   │   ├── services/api.js              ← Backend API client
 │   │   └── views/                        ← Route planning & comms views
 │   ├── package.json
@@ -885,7 +957,7 @@ VVIP/
 │   │       │   └── heuristics.py         ← Deterministic floor of the fallback chain
 │   │       ├── agents/                   ← 4 tactical agents (+ an unwired community-liaison draft agent)
 │   │       ├── workflows/                ← 3 state-machine workflows
-│   │       ├── mcp/                      ← 28 MCP tools + 4 resources + 3 prompts (server.py, prompts.py); read-only rail
+│   │       ├── mcp/                      ← 29 MCP tools + 4 resources + 3 prompts (server.py, prompts.py); read-only rail
 │   │       └── memory/                   ← Convoy state + decisions audit log
 │   │
 │   ├── model-host/                       ← T5 strategic tier (:8083)
@@ -901,10 +973,14 @@ VVIP/
 │   │       ├── optimize/                 ← Route optimizer + diversion planner
 │   │       ├── adaptive/                 ← SituationEngine + params + escalation
 │   │       ├── anomaly/                  ← Tier-1 anomaly stream → anomaly_log
+│   │       ├── osint/                    ← OSINT situations (places, never persons); a named
+│   │       │                               officer promotes one to a corridor event
+│   │       ├── decision_support/         ← Courses of action, MCDA, wargame; a named officer decides
 │   │       ├── ingest/                   ← NATS → database pipeline
 │   │       └── runtime/                  ← Unified-memory management
 │   │
-│   ├── signal-ingress/                   ← Rust Real-Time Data Ingestion
+│   ├── signal-ingress/                   ← Rust streaming ingestion (fed by the
+│   │                                        synthetic feed today, every row labelled)
 │   │   └── src/
 │   │       ├── feeds/                    ← traffic data source adapters
 │   │       ├── pipeline/                 ← Bounded channel batching
@@ -912,19 +988,25 @@ VVIP/
 │   │       └── publish/                  ← Arrow IPC → NATS streaming
 │   │
 │   ├── corridor-store/                   ← Spatial Database
-│   │   ├── migrations/                   ← 001–020 (PostGIS + pgRouting + pgvector, events,
-│   │   │                                   watchlist, city assets, 020 = OSM geom_source)
+│   │   ├── migrations/                   ← 001–025 (PostGIS + pgRouting + pgvector, events,
+│   │   │                                   watchlist, city assets, 020 = OSM geom_source,
+│   │   │                                   021/023 OSINT, 022 decision support,
+│   │   │                                   024–025 officer lookup audit)
 │   │   ├── seed/                         ← The real-road network (generated from OSM) +
 │   │   │                                   synthetic observations; NOTICE.md (ODbL)
 │   │   └── importer/                     ← OpenStreetMap → PostGIS loader
 │   │
 │   └── command-deck/                     ← ★ CANONICAL INTERFACE (SvelteKit, :5273):
-│       └── src/                          │   / cockpit · /ops wall · /gods-eye ·
+│       └── src/                          │   / Home · /decide · /map · /analyst
 │           ├── hooks.server.ts           ← loopback proxy + operator gate + CSP
+│           ├── lib/v3/                   ← the V3 shell, screens, tokens, map thumbnails
 │           ├── lib/gods-eye/             ← the CesiumJS city: 11 layers, 3D draping
 │           ├── lib/design/               ← tokens.css/tokens.ts — the one design-token
 │           │                               contract (command graphite + Daylight)
 │           └── lib/ops/components/template/ ← the restored VVIP cockpit parts
+│
+├── 🛰️ services/osint-{common,ingress,geo,analysis}/ ← Event intelligence about places and
+│                                           situations (off by default, VEER_OSINT=1)
 │
 ├── 🎭 services/event-emulator/           ← The emulated half of the corridor stack
 │   └── src/event_emulator/               ← Injects CAUSES ONLY (procession schedules,
@@ -1006,23 +1088,37 @@ bash scripts/veer_env.sh --set VEER_CESIUM_ION_TOKEN - # optional: photorealisti
 
 **3. Bring the stack up**
 ```bash
-bash scripts/veer_up.sh            # model units → compose up → migrate 001–020 → seed the
-                                   # real-road network → converge → READY 11/11
+bash scripts/veer_up.sh            # model units → PostGIS alone → migrate 001–025 → seed the
+                                   # real-road network → every service up → converge → READY 11/11
 bash scripts/veer_up.sh --status   # read-only readiness table (postgis … embeddings)
+bash scripts/veer_up.sh --build    # rebuild the service images first (PostGIS image NOT rebuilt;
+                                   # --rebuild-postgis opts in and recreates the store container,
+                                   # its data stays on the postgis_data volume)
 ```
+The order is fixed so that a `veer_up.sh` bring-up never starts a service
+against an older schema: build (with `--build`) → PostGIS up and healthy →
+migrations → seed → every service up → the services that cache the road
+network restarted once after a network step. (At boot, Docker's restart
+policy starts the existing containers before `veer-up.service` runs.) The oracle and the brain require a named officer
+for officer actions by default (`VVIP_REQUIRE_OFFICER=1` in
+`infra/compose.argus-override.yml`): an unnamed earmark create or clear,
+or a city signal-plan apply or restore, is refused with 422.
+`scripts/veer_env.sh --set VVIP_REQUIRE_OFFICER 0` relaxes both services.
 From then on the stack **starts itself at boot** (`veer.target`:
 the model units + `veer-up.service`) — verified by real reboots on
 2026-10-23: `READY 11/11` in **4 min 25 s** with no manual command.
 
 **4. Open the deck — `http://127.0.0.1:5273`** in a browser on the box,
-then **sign in** with your name and the duty PIN. `/` is **the Convoy
-Command cockpit**, `/ops` the situation wall, `/gods-eye` the 3D city;
-`/citizen` and `/driver` are public and need no sign-in. Every approval
+then **sign in** with your name and the duty PIN. `/` is **Home**,
+`/analyst` the Convoy Command workspace with `/ops` the situation wall and
+`/gods-eye` the 3D city beneath it (once the V3 build is deployed — the live
+stack still serves the earlier deck until then); `/citizen` and `/driver` are
+public and need no sign-in. Every approval
 you make — a stolen-vehicle sighting, a dispatch, an escort route switch
 — is recorded under your name. For deck development outside Docker:
 `cd services/command-deck && bun install && bun run dev`.
 
-**5. Before judging (the operator tools)**
+**5. Before a demo (the operator tools)**
 
 ```bash
 bash scripts/demo_reset.sh                          # dry-run, GET-only: the plan
@@ -1038,7 +1134,7 @@ go-ahead: the live smokes → `showcase_run.sh` → `repetition_gate.sh` →
 --cancel-debris` — the reset **at least 30 minutes after the showcase and
 the journeys** (their finished dispatch tiles fold into `/ops`'s history
 after 30 minutes; until then the reset's verification FAILs and prints
-the fold time) and within about 20 minutes of judging (the staged sweep
+the fold time) and within about 20 minutes of the demo (the staged sweep
 runs 45 minutes). That order ran on the live stack on 2026-10-23/24; the
 final reset (01:23 IST) made 9 writes and passed every check — one
 PENDING stolen-vehicle sighting, AUTHORISE PURSUIT offered, no debris on
@@ -1057,10 +1153,10 @@ exercise plates and dismisses the stolen plate's stale EMULATED
 sightings; without it the debris stays and the verification lists what
 is still visible. Decisions are final: an approved sighting of the stolen
 plate that is not yet spent (no closed pursuit behind it) would pre-empt
-the judged AUTHORISE, so the verification FAILs and names it — an approval
+the operator's AUTHORISE, so the verification FAILs and names it — an approval
 already spent on a closed pursuit (the showcase's scripted one) no longer
 counts.
-`journeys.mjs` walks the judge's journeys — city at rest, the stolen
+`journeys.mjs` walks the operator journeys — city at rest, the stolen
 vehicle, the escort, the 108 corridor, chat, the citizen pages — as
 `Journey check (automated)`, labels every row it creates and closes them
 all again: **J1–J6 92/92 checks** (17/23/13/11/10/18) and the J7 reboot
@@ -1101,7 +1197,7 @@ configurations, and code-level documentation, see:
 
 <br/>
 
-## 🏛️ Context & Relevance — Viksit Bharat
+## 🏛️ Context & Relevance
 
 This platform is designed in the context of India's expanding road infrastructure under:
 
@@ -1110,7 +1206,7 @@ This platform is designed in the context of India's expanding road infrastructur
 - **Ministry of Road Transport & Highways (MoRTH)** Intelligent Transport Systems initiatives
 - **Smart Cities Mission** — Urban mobility modernization
 
-The corridor-OS generalization is the Viksit Bharat argument: the same
+The corridor-OS generalization is the core argument: the same
 governance failure — a corridor frozen because nobody could schedule, predict
 and release its occupancy — recurs across **eight documented event classes**
 on the national calendar ([`docs/USE_CASES.md`](docs/USE_CASES.md)): the
@@ -1122,9 +1218,10 @@ cricket stadium emptying ~130,000 people onto city roads; the recurring
 monsoon flood evacuation; and the metro/bullet-train work zones that
 haircut arterial capacity for a season. The enforcement family
 (stolen-vehicle watchlist → ANPR sweep → pursuit) extends the same argument
-to everyday policing — one auditable backbone, five dispatchable agencies
-(police, traffic, 108, fire, Jan Rakshak), one shared God's-eye picture,
-humans in every penalty loop. A platform that can only manage VVIP runs
+to everyday policing — one auditable backbone, a human-approved dispatch
+request recorded per agency (police, traffic, 108, fire, Jan Rakshak; no
+agency CAD or radio integration — the units on the map are emulated), one
+shared God's-eye picture, humans in every penalty loop. A platform that can only manage VVIP runs
 would be a protocol tool; one that expresses all of this is **municipal
 infrastructure** — pilot-deployable on one corridor
 (Ahmedabad–Gandhinagar) and forkable by any state (MIT). It is built to

@@ -32,7 +32,24 @@
  *                       'updated Ns ago' label advances
  *   exit                /gods-eye shows an EXIT chip; Esc navigates to /ops
  *   ion-fallback        a preview started with VEER_CESIUM_ION_TOKEN=invalid
- *                       still reaches phase 'ready' on keyless imagery
+ *                       still reaches phase 'ready' on keyless imagery; with
+ *                       no build/ to spawn it from (a vite dev deck), the deck
+ *                       under test is loaded with its /gods-eye/mode answer
+ *                       rewritten in the page to the one an invalid-token
+ *                       deck serves (keyed, token 'invalid') — the same
+ *                       client fallback, no second server
+ *
+ *   layers              the OSINT layer ids (`osint`, `places`) exist in the
+ *                       layer tree under "Reported events" (presence only,
+ *                       plan X14)
+ *
+ * Final pins (UI-S7B, SPEC §12.4–12.5): the rows are the Explorer's Active
+ * events (`[data-testid=active-events] [data-event-id]`); the ticking age is
+ * the navbar band tag's (`[data-testid=band-tag][data-age-sec]`); the pick
+ * opens the inspector (`[data-testid=entity-dossier][data-urn^="event:"]`);
+ * LOCKED is `.chip.lock[aria-pressed=true]`; the orbit runs on '/ops' and
+ * '/gods-eye' only, and '/' never orbits over a selection or an open dock;
+ * Esc never navigates and `.chip.exit` restores the docks.
  *
  * The pick/focus checks target PURSUIT_EVENT_ID (default: the first
  * vehicle_pursuit row of GET /api/v1/events/active) and compute the spine
@@ -46,14 +63,18 @@
  *                               background tab gets no animation frames, so
  *                               concurrent idle pages would prove nothing)
  *   CANVAS_SMOKE_ONLY=idle,pick check subset (idle, cockpit, ops, pick,
- *                               focus, focus-nav, ama, exit, ion)
+ *                               focus, focus-nav, ama, layers, exit, ion)
  *   CANVAS_SMOKE_ION_ORIGIN=…   an already-running VEER_CESIUM_ION_TOKEN=invalid
  *                               preview; unset → spawned from build/ on
  *                               ION_PORT (default 5198) and stopped after
  *                               (a PRIVATE preview: gate off — the PIN and
  *                               the session secret never reach it — and
  *                               ORACLE_PORT/BRAIN_PORT/EMULATOR_PORT, which
- *                               default to the LIVE 8091/8092/8090)
+ *                               default to the LIVE 8091/8092/8090 only when
+ *                               the deck under test is the live :5273, and to
+ *                               closed ports for any other deck, so a sandbox
+ *                               run never reaches the live stack); no build/
+ *                               (a vite dev deck) → the in-page fallback
  *   VEER_OPERATOR_PIN, else VEER_OPERATOR_PIN_FILE, else veer.env
  *                               read only when the deck under test has its
  *                               operator gate on: ONE sign-in through
@@ -78,6 +99,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deckFetch, puppeteerCookies, signIn, signOut } from './lib/operator-session.mjs';
+import { textMatches } from './lib/queue.mjs';
+import { WORKSPACE } from './lib/routes.mjs';
+import { COPY, EVENT_PICK, SEL, ensureLayers, exitVerdict, firstPresentText, isWorkspacePage, maskMarks, openDocks, orbitVerdict } from './lib/tolerant.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DECK = path.resolve(HERE, '..');
@@ -228,6 +252,7 @@ const snapshot = (page) =>
 					subjectLockId: g.subjectLockId,
 					picked: g.picked,
 					amaAgeSec: g.amaAgeSec,
+					selectionUrn: g.selection?.urn ?? null,
 				}
 			: null;
 	});
@@ -267,27 +292,38 @@ async function idleCheck(browser, route) {
 		if (phase !== 'ready') return;
 		const first = await snapshot(page);
 		ok(`${name} default sensor`, first.sensorMode === 'raw', `sensorMode=${first.sensorMode} (COMMAND)`);
+		// A workspace page ('/'): the final orbit rule — never over a selection
+		// or an open dock; an idle orbit is tolerated, never required.
+		const rebuilt = await page.evaluate(isWorkspacePage);
+		const read = async () => {
+			const s = await snapshot(page);
+			return s ? { ...s, selected: !!s.selectionUrn, docksOpen: (await page.evaluate(openDocks)).some((d) => d !== 'bottom') } : s;
+		};
 		const t0 = Date.now();
 		const wall = route !== '/gods-eye';
+		const samples = [];
 		let mid = null;
 		while (Date.now() - t0 < IDLE_SEC * 1000) {
 			await sleep(5000);
-			const s = await snapshot(page);
+			const s = await read();
 			if (!inCity(s?.camera)) {
 				ok(`${name} camera over the city`, false, `left the city at +${Math.round((Date.now() - t0) / 1000)} s: lon=${fmt(s?.camera?.lon)} lat=${fmt(s?.camera?.lat)}`);
 				return;
 			}
+			samples.push({ orbiting: s.orbiting === true, selected: s.selected, docksOpen: s.docksOpen });
 			if (!mid && Date.now() - t0 >= Math.min(IDLE_SEC, 75) * 1000 - 5000) mid = s;
 		}
-		const last = await snapshot(page);
+		const last = await read();
 		ok(
 			`${name} camera over the city`,
 			inCity(last.camera),
 			`after ${IDLE_SEC} s idle lon=${fmt(last.camera?.lon)} lat=${fmt(last.camera?.lat)} alt=${Math.round(last.camera?.alt ?? 0)} m`,
 		);
-		if (wall && IDLE_SEC >= 45) {
+		if (IDLE_SEC >= 45 && (wall || rebuilt || samples.some((x) => x.selected))) {
 			const turned = mid && last.camera ? Math.abs(((last.camera.heading - mid.camera.heading + 540) % 360) - 180) : 0;
-			ok(`${name} wall orbit runs`, last.orbiting === true && turned > 5, `orbiting=${last.orbiting} heading turned ${turned.toFixed(1)}° over the last window`);
+			const v = orbitVerdict({ route, last: { orbiting: last.orbiting === true, selected: last.selected }, turned, samples });
+			const label = route === '/gods-eye' || (route === WORKSPACE && rebuilt) || (route === '/ops' && last.selected) ? 'orbit rule' : 'wall orbit runs';
+			ok(`${name} ${label}`, v.ok, `${v.detail}${rebuilt ? ' (workspace page)' : route === WORKSPACE ? ' (NOT a workspace page — the frame is missing)' : ''}`);
 		}
 		const rb = await readback(page);
 		ok(`${name} colour readback`, !!rb && rb.meanChroma > 0, rb ? `mean chroma ${rb.meanChroma.toFixed(2)}, mean luma ${rb.meanLuma.toFixed(1)}` : 'no canvas');
@@ -303,7 +339,7 @@ async function cockpitChips(browser, w, h) {
 	const name = `cockpit-chips@${w}x${h}`;
 	const page = await newPage(browser, w, h);
 	try {
-		const phase = await openCanvas(page, '/');
+		const phase = await openCanvas(page, WORKSPACE);
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
 		await sleep(3000);
 		const res = await page.evaluate(() =>
@@ -356,7 +392,53 @@ async function opsLayout(browser, w, h) {
 					moved,
 				};
 			});
-			return { wrap: box(document.querySelector('.ge-wrap')), audit: box(audit), cols };
+			return {
+				wrap: box(document.querySelector('.ge-wrap')),
+				audit: box(audit),
+				cols,
+				bodyScrollH: document.body.scrollHeight,
+				innerH: window.innerHeight,
+				// the PAGE-level scroll (gate C: "no page-level scroll"): how far the
+				// root scrolls, proven by scrolling it, and the element(s) whose box
+				// escapes every clipping ancestor below the fold — the culprit named
+				rootScroll: Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
+				...(() => {
+					const se = document.scrollingElement ?? document.documentElement;
+					const before = se.scrollTop;
+					se.scrollTop = 1e6;
+					const scrolled = se.scrollTop;
+					se.scrollTop = before;
+					// A box is clipped by an overflow ancestor only when that ancestor is
+					// (or contains) the box's CONTAINING BLOCK: an absolutely positioned
+					// box whose containing block lies outside the scroller (no positioned
+					// ancestor inside it) escapes the clip and stretches the page.
+					const clipper = (a) => a && a !== document.body && a !== document.documentElement && /(hidden|auto|scroll|clip)/.test(getComputedStyle(a).overflowY);
+					const clipped = (el) => {
+						const pos = getComputedStyle(el).position;
+						if (pos === 'fixed') return true;
+						const cb = pos === 'absolute' ? el.offsetParent : el.parentElement;
+						for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+							if (clipper(a) && (a === cb || (cb && a.contains(cb)))) return true;
+						}
+						return false;
+					};
+					const name = (el) =>
+						`${el.localName}${el.id ? `#${el.id}` : ''}${el.getAttribute('data-testid') ? `[data-testid=${el.getAttribute('data-testid')}]` : ''}${typeof el.className === 'string' && el.className.trim() ? `.${el.className.trim().split(/\s+/).filter((c) => !c.startsWith('s-')).slice(0, 3).join('.')}` : ''}`;
+					const groups = new Map();
+					for (const el of document.body.querySelectorAll('*')) {
+						const b = el.getBoundingClientRect();
+						if (b.bottom <= window.innerHeight + 1 || clipped(el)) continue;
+						const host = el.parentElement ? name(el.parentElement) : '';
+						const k = `${name(el)} (${getComputedStyle(el).position}, containing block ${el.offsetParent ? el.offsetParent.localName : 'none'}) in ${host}`;
+						const g = groups.get(k) ?? { n: 0, bottom: 0 };
+						g.n += 1;
+						g.bottom = Math.max(g.bottom, Math.round(b.bottom));
+						groups.set(k, g);
+					}
+					const escaping = [...groups].sort((x, y) => y[1].bottom - x[1].bottom).slice(0, 3).map(([k, g]) => `${g.n}× ${k}, lowest bottom ${g.bottom}px`);
+					return { rootScrolled: scrolled, scrollingEl: se.localName, escaping };
+				})(),
+			};
 		});
 		ok(`${name} canvas height`, (m.wrap?.h ?? 0) >= 400, `.ge-wrap ${Math.round(m.wrap?.w ?? 0)}×${Math.round(m.wrap?.h ?? 0)} px`);
 		const overlaps = m.cols.filter(
@@ -364,9 +446,24 @@ async function opsLayout(browser, w, h) {
 		);
 		ok(`${name} columns clear of the audit band`, !!m.audit && m.cols.length === 3 && overlaps.length === 0,
 			overlaps.length ? overlaps.map((c) => `${c.cls} bottom ${Math.round(c.box.b)} > audit top ${Math.round(m.audit.y)}`).join(' | ') : `audit band at y=${Math.round(m.audit?.y ?? -1)}, columns end ≤ ${Math.round(Math.max(...m.cols.map((c) => c.box.b)))}`);
-		const stuck = m.cols.filter((c) => !['auto', 'scroll'].includes(c.overflowY) || !(c.scrollH > c.clientH) || !c.moved);
-		ok(`${name} columns scroll internally`, m.cols.length === 3 && stuck.length === 0,
-			m.cols.map((c) => `${c.cls} ${c.clientH}/${c.scrollH}px ${c.overflowY}${c.moved ? '' : ' (did not scroll)'}`).join(' · '));
+		// Each column is its own scroll container (gate C): overflow auto, the
+		// wall's BODY lays out exactly to the fold (no page-level layout), and a
+		// column whose content EXCEEDS it actually scrolls. A short column (its
+		// content fits) need not scroll — the old "must scroll" reading failed
+		// exactly there (col-decisions 558/558 px).
+		const notContainer = m.cols.filter((c) => !['auto', 'scroll'].includes(c.overflowY));
+		const overflowing = m.cols.filter((c) => c.scrollH > c.clientH + 1);
+		const notScrolling = overflowing.filter((c) => !c.moved);
+		ok(`${name} columns scroll internally`,
+			m.cols.length === 3 && notContainer.length === 0 && notScrolling.length === 0 && m.bodyScrollH <= m.innerH + 1,
+			m.cols.map((c) => `${c.cls} ${c.clientH}/${c.scrollH}px ${c.overflowY}${c.scrollH > c.clientH + 1 ? (c.moved ? ' scrolls' : ' DID NOT scroll') : ' (fits)'}`).join(' · ') + ` · body ${m.bodyScrollH}/${m.innerH}px`);
+		// gate C carry-over: NO page-level scroll. The root must not scroll at
+		// all (≤ 1 px); when it does, the route, the viewport and the escaping
+		// element are named — a product defect (UI-S7B report, Blocked), never
+		// a pass.
+		ok(`${name} no page-level scroll (/ops root scrolls ≤ 1 px)`,
+			m.rootScroll <= 1 && m.rootScrolled <= 1,
+			`/ops @${w}x${h}: ${m.scrollingEl} scrollHeight − innerHeight = ${m.rootScroll}px, scrolled ${m.rootScrolled}px${m.escaping.length ? ` · escaping the fold: ${m.escaping.join(' | ')}` : ''}`);
 		await page.screenshot({ path: path.join(ARTIFACTS, `canvas-ux-ops-${w}.png`) });
 	} finally {
 		await page.close();
@@ -406,7 +503,7 @@ async function pickCheck(browser, target) {
 			}
 		}
 		const before = await snapshot(page);
-		const spot = spots[Math.floor(spots.length / 2)];
+		let spot = spots[Math.floor(spots.length / 2)];
 		// Settle on the spine before clicking: the hover cursor turns into a
 		// pointer only once the polyline primitive is pickable (a click in the
 		// first second after 'ready' can land before it is), so hover — a
@@ -414,12 +511,21 @@ async function pickCheck(browser, target) {
 		// Spines are DRAPED (WP-22): GroundPolylinePrimitives that Cesium
 		// builds in web workers, batch by batch, so under SwiftShader on a
 		// loaded host the spine turns pickable several seconds after 'ready'
-		// (and after the flow line beneath it may) — wait up to 20 s for the
-		// hover to land on THIS event, not merely on something.
+		// (and after the flow line beneath it may) — wait for the hover to land
+		// on THIS event, not merely on something: up to 45 s on the shared
+		// build host (20 s once proved short there at load 16), re-reading
+		// the spine's spot every 10 s in case it was redrawn.
 		let cursor = '';
 		let hover = null;
-		const settleBy = Date.now() + 20000;
+		const hoverFrom = Date.now();
+		const settleBy = hoverFrom + 45000;
+		let located = hoverFrom;
 		for (let i = 0; Date.now() < settleBy; i++) {
+			if (Date.now() - located > 10000) {
+				const again = await page.evaluate((p) => window.__GODS_EYE__?.locate?.(p) ?? [], prefix);
+				if (again.length) spot = again[Math.floor(again.length / 2)];
+				located = Date.now();
+			}
 			await page.mouse.move(spot.x + (i % 2), spot.y);
 			await sleep(300);
 			[cursor, hover] = await page.evaluate(() => [
@@ -428,18 +534,21 @@ async function pickCheck(browser, target) {
 			]);
 			if (cursor === 'pointer' && hover === `event:${target.eventId}`) break;
 		}
+		const hoverMs = Date.now() - hoverFrom;
 		await page.mouse.click(spot.x, spot.y);
 		await sleep(1500);
 		const after = await snapshot(page);
-		const card = await page.evaluate(() => document.querySelector('.ge-pick')?.textContent?.replace(/\s+/g, ' ').trim() ?? null);
-		const needles = [target.title, target.description].filter(Boolean).map((t) => t.slice(0, 40));
+		// today's pick card, or the redesign's inspector opened on the picked event (§12.4)
+		const card = await page.evaluate(firstPresentText, EVENT_PICK);
+		// the deck prints marks masked (C6) to an anonymous console: a title is matched in that form too
+		const needles = [target.title, target.description].filter(Boolean).flatMap((t) => [t.slice(0, 40), maskMarks(t).slice(0, 40)]);
 		const carries = !!card && needles.length > 0 && needles.some((n) => card.includes(n));
 		ok(`${name} selects the event`, after.selectedEventId === target.eventId && after.picked?.eventId === target.eventId,
 			`selected ${before.selectedEventId ?? '—'} → ${after.selectedEventId ?? '—'}, picked ${after.picked?.id ?? '—'} (clicked ${spot.id} at ${Math.round(spot.x)},${Math.round(spot.y)}${
 				elsewhere ? '' : '; no other event on screen to move the selection first'
 			})`);
 		ok(`${name} card carries the description`, carries, card ? `card: ${card.slice(0, 140)}` : 'no pick card');
-		ok(`${name} hover highlight`, cursor === 'pointer', `cursor over the spine: '${cursor}' (hover ${hover ?? '—'})`);
+		ok(`${name} hover highlight`, cursor === 'pointer', `cursor over the spine: '${cursor}' (hover ${hover ?? '—'}, settled in ${hoverMs} ms)`);
 		await page.screenshot({ path: path.join(ARTIFACTS, 'canvas-ux-pick.png') });
 	} finally {
 		await page.close();
@@ -451,16 +560,17 @@ async function pickCheck(browser, target) {
 /** Click the target event's row in the cockpit LiveRail (true, or the rows seen). */
 const clickRailEvent = (page, target) =>
 	page.evaluate(
-		(id) => {
+		(id, sel) => {
 			// Titles are plate-masked under C6 (a pursuit's title carries the
 			// plate), so the row is matched by its event id attribute only.
-			const rows = [...document.querySelectorAll('.rail-right .event')];
+			const rows = [...document.querySelectorAll(sel)];
 			const row = rows.find((b) => b.dataset.eventId === id);
 			if (!row) return rows.map((r) => `${r.dataset.eventId ?? '?'} ${r.textContent.trim().slice(0, 40)}`);
 			row.click();
 			return true;
 		},
 		target.eventId,
+		SEL.cockpitRows,
 	);
 
 async function focusCheck(browser, target) {
@@ -468,7 +578,7 @@ async function focusCheck(browser, target) {
 	if (!target.centroid) return ok(name, false, `event ${target.eventId} has no resolvable spine in the API (routes → segments)`);
 	const page = await newPage(browser, 1600, 900);
 	try {
-		const phase = await openCanvas(page, '/');
+		const phase = await openCanvas(page, WORKSPACE);
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
 		await sleep(3000);
 		const clicked = await clickRailEvent(page, target);
@@ -478,8 +588,20 @@ async function focusCheck(browser, target) {
 		let locked = false;
 		let near = false;
 		while (Date.now() - t0 < FOCUS_BUDGET_MS + 2000) {
-			s = await snapshot(page);
-			locked = await page.evaluate(() => !!document.querySelector('.ge-hud .chip.lock'));
+			// ONE page.evaluate: the snapshot and the lock chip are read together
+			// (carried advice, UI-S1B/S2/S3 rounds — a lock landing between two
+			// reads used to report 'FAIL focus LOCKED chip — lock=—').
+			const read = await page.evaluate(() => {
+				const g = window.__GODS_EYE__;
+				const chip = [...document.querySelectorAll('.ge-hud .chip.lock')].some((c) => c.getAttribute('aria-pressed') === 'true');
+				return {
+					camera: g?.camera ?? null,
+					subjectLockId: g?.subjectLockId ?? null,
+					locked: chip,
+				};
+			});
+			s = { camera: read.camera, subjectLockId: read.subjectLockId };
+			locked = read.locked;
 			near = !!s?.camera && Math.abs(s.camera.lon - target.centroid.lon) <= FOCUS_TOLERANCE_DEG && Math.abs(s.camera.lat - target.centroid.lat) <= FOCUS_TOLERANCE_DEG;
 			if (near && locked) break;
 			await sleep(150);
@@ -532,7 +654,7 @@ async function focusNavCheck(browser, target) {
 	const name = 'focus-nav';
 	const page = await newPage(browser, 1600, 900);
 	try {
-		const phase = await openCanvas(page, '/');
+		const phase = await openCanvas(page, WORKSPACE);
 		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
 		await sleep(3000);
 		const clicked = await clickRailEvent(page, target);
@@ -542,17 +664,19 @@ async function focusNavCheck(browser, target) {
 		let onRoot = { lock: null, rail: '' };
 		const t0 = Date.now();
 		while (Date.now() - t0 < 6000) {
-			onRoot = await page.evaluate(() => ({
+			onRoot = await page.evaluate((sel) => ({
 				lock: window.__GODS_EYE__?.subjectLockId ?? null,
-				rail: [...document.querySelectorAll('.rail-right .ev-focus')].map((e) => e.textContent.trim()).join(' | '),
-			}));
-			if (onRoot.lock || /no spine|unavailable/.test(onRoot.rail)) break;
+				rail: [...document.querySelectorAll(sel)].map((e) => `${e.textContent.trim()} ${e.getAttribute('title') ?? ''}`.trim()).join(' | '),
+			}), SEL.cockpitFocusNotes);
+			if (onRoot.lock || textMatches(onRoot.rail, COPY.noSpine)) break;
 			await sleep(200);
 		}
 		let answer = onRoot.lock ? 'locked on /' : `no lock on / (rail '${onRoot.rail || '—'}')`;
 		if (onRoot.lock) {
 			const released = await page.evaluate(() => {
-				const chip = document.querySelector('.ge-hud .chip.lock');
+				// the chip that holds the camera: today's LOCKED chip; v2's pressed Follow chip
+				const chips = [...document.querySelectorAll('.ge-hud .chip.lock')];
+				const chip = chips.find((c) => /locked/i.test(c.textContent ?? '') || c.getAttribute('aria-pressed') === 'true') ?? chips[0];
 				chip?.click();
 				return !!chip;
 			});
@@ -578,7 +702,7 @@ async function focusNavCheck(browser, target) {
 					flash: document.querySelector('.ge-hud .flash')?.textContent ?? '',
 				}));
 				lockSeen ??= w.lock;
-				if (/no route geometry/.test(w.flash)) flashSeen = w.flash.trim();
+				if (textMatches(w.flash, COPY.noRouteGeometry)) flashSeen = w.flash.trim();
 				await sleep(250);
 			}
 			const s = await snapshot(page);
@@ -601,11 +725,11 @@ async function clockCheck(browser) {
 		const phase = await openCanvas(page, '/ops');
 		if (phase !== 'ready') return ok('ama-clock', false, `phase=${phase}`);
 		await sleep(6000);
-		const age = () => page.evaluate(() => {
-			const chip = document.querySelector('.ge-hud .chip.ama');
+		const age = () => page.evaluate((sel) => {
+			const chip = document.querySelector(sel);
 			const v = chip?.getAttribute('data-age-sec');
 			return { chip: v === '' || v == null ? null : Number(v), snap: window.__GODS_EYE__?.amaAgeSec ?? null, text: chip?.textContent?.replace(/\s+/g, ' ').trim() ?? null };
-		});
+		}, SEL.bandAge);
 		// Sample the chip at 1 Hz. The age must TICK (+1 s steps); a drop is
 		// legitimate only as a FRESHER reading (≤ 10 s): the engine re-evaluates
 		// every 5 s, so the newest situation_log row, or the city band's newest
@@ -632,7 +756,7 @@ async function clockCheck(browser) {
 			ticks >= 2 && bad === 0,
 			`${samples.map((x) => x.chip ?? '—').join('→')} s · ${ticks} ticks · ${resets} fresher reading(s)${cityBand ? ' · city band' : ''} · '${samples.at(-1).text}'`,
 		);
-		const panels = () => page.evaluate(() => [...document.querySelectorAll('[data-prim=panel] .age')].map((el) => Number(el.getAttribute('data-age-sec'))).filter((n) => Number.isFinite(n)));
+		const panels = () => page.evaluate((sel) => [...document.querySelectorAll(sel)].map((el) => Number(el.getAttribute('data-age-sec'))).filter((n) => Number.isFinite(n)), SEL.panelAges);
 		const p1 = await panels();
 		await sleep(3200);
 		const p2 = await panels();
@@ -644,18 +768,54 @@ async function clockCheck(browser) {
 	// Deterministic Panel clock: the design sheet's demo panel has a fixed updatedAt.
 	const page2 = await newPage(browser, 1400, 900);
 	try {
-		await page2.goto(`${ORIGIN}/design`, { waitUntil: 'domcontentloaded' });
-		await sleep(2500);
-		const read = () => page2.evaluate(() => {
-			const el = document.querySelector('[data-prim=panel] .age');
-			return el ? { secs: Number(el.getAttribute('data-age-sec')), text: el.textContent.trim() } : null;
-		});
-		const x = await read();
-		await sleep(3200);
-		const y = await read();
-		ok('ama-clock panel label advances', !!x && !!y && y.secs - x.secs >= 2, x && y ? `'${x.text}' → '${y.text}'` : 'no panel age label on /design');
+		const res = await page2.goto(`${ORIGIN}/design`, { waitUntil: 'domcontentloaded' });
+		if (res?.status() === 404) {
+			// a production deck serves no design harness (VEER_DESIGN_HARNESS): not run here, not counted as passed
+			console.log('SKIP ama-clock panel label advances — /design is 404 on a production deck (the /ops panel ages above are the live check)');
+		} else {
+			await sleep(2500);
+			const read = () => page2.evaluate((sel) => {
+				const el = document.querySelector(sel);
+				return el ? { secs: Number(el.getAttribute('data-age-sec')), text: el.textContent.trim() } : null;
+			}, SEL.panelAges);
+			const x = await read();
+			await sleep(3200);
+			const y = await read();
+			ok('ama-clock panel label advances', !!x && !!y && y.secs - x.secs >= 2, x && y ? `'${x.text}' → '${y.text}'` : 'no panel age label on /design');
+		}
 	} finally {
 		await page2.close();
+	}
+}
+
+// ── layers: the OSINT layers exist in the tree under "Reported events" ─────
+
+/**
+ * Presence, not counts (plan X14): the layer ids `osint` and `places` exist
+ * in the layer tree, under the "Reported events" group. Never a count of
+ * layers, rows or events.
+ */
+async function layersCheck(browser) {
+	const name = 'layers';
+	const page = await newPage(browser, 1600, 900);
+	try {
+		const phase = await openCanvas(page, '/gods-eye');
+		if (phase !== 'ready') return ok(name, false, `phase=${phase}`);
+		await sleep(2500);
+		await ensureLayers(page, { timeout: 10000 });
+		const tree = await page.evaluate(() => {
+			const groups = [...document.querySelectorAll('[data-map="layer-tree"] .group')];
+			const intel = groups.find((g) => /Reported events/i.test(g.querySelector('.group-head')?.textContent ?? ''));
+			const rows = intel ? [...intel.querySelectorAll('[data-layer]')].map((r) => r.getAttribute('data-layer')) : null;
+			return { intel: !!intel, rows };
+		});
+		ok(
+			`${name} the osint and places layers exist under "Reported events"`,
+			tree.intel && !!tree.rows && tree.rows.includes('osint') && tree.rows.includes('places'),
+			`group present=${tree.intel} · rows=[${(tree.rows ?? []).join(',')}]`,
+		);
+	} finally {
+		await page.close();
 	}
 }
 
@@ -688,16 +848,29 @@ async function exitCheck(browser) {
 		await sleep(1000);
 		const stayed = await page.evaluate(() => location.pathname);
 		ok('exit Esc in a field stays', focused && stayed === '/gods-eye', `pathname=${stayed} after Esc in a focused input`);
+		// /gods-eye (map mode) never navigates on Esc; its "Exit map mode" chip
+		// restores the docks on the same route (§12.4). The frame must be there.
+		const rebuilt = await page.evaluate(isWorkspacePage);
+		if (!rebuilt) return ok('exit Esc never navigates; EXIT restores the docks', false, 'no [data-ws=frame] on /gods-eye — the v2 map mode is the only layout');
+		const docksBefore = await page.evaluate(openDocks);
 		await page.evaluate(() => document.getElementById('canvas-ux-esc-field')?.remove());
 		await page.keyboard.press('Escape');
 		const t0 = Date.now();
 		let pathname = '';
 		while (Date.now() - t0 < 6000) {
 			pathname = await page.evaluate(() => location.pathname).catch(() => '');
-			if (pathname === '/ops') break;
+			if (pathname !== '/gods-eye') break;
 			await sleep(200);
 		}
-		ok('exit Esc → /ops', pathname === '/ops', `pathname=${pathname} after ${Date.now() - t0} ms`);
+		const waited = Date.now() - t0;
+		let docksAfterExit = [];
+		let pathAfterExit = null;
+		await page.evaluate(() => document.querySelector('.ge-hud .chip.exit')?.click());
+		await sleep(1500);
+		docksAfterExit = await page.evaluate(openDocks);
+		pathAfterExit = await page.evaluate(() => location.pathname).catch(() => '');
+		const v = exitVerdict({ pathAfterEsc: pathname, docksBefore, docksAfterExit, pathAfterExit });
+		ok('exit Esc never navigates; EXIT restores the docks', v.ok, `${v.detail} (watched ${waited} ms)`);
 	} finally {
 		await page.close();
 	}
@@ -705,21 +878,103 @@ async function exitCheck(browser) {
 
 // ── ion fallback: a bad token must still reach 'ready' on keyless imagery ──
 
+/**
+ * The backend an invalid-token preview proxies to. ORACLE_PORT / BRAIN_PORT /
+ * EMULATOR_PORT from the environment win. Otherwise the LIVE ports
+ * (8091/8092/8090) only when the deck under test IS the live deck (:5273,
+ * live gate LG 18); for any other deck under test (a sandbox or dev deck) the
+ * preview gets closed ports — its API reads fail closed, which the imagery
+ * fallback does not need — so a sandbox run never reaches the live stack.
+ */
+function ionBackend() {
+	const env = (o, b, e) => ({ ORACLE_PORT: process.env.ORACLE_PORT ?? o, BRAIN_PORT: process.env.BRAIN_PORT ?? b, EMULATOR_PORT: process.env.EMULATOR_PORT ?? e });
+	if (process.env.ORACLE_PORT && process.env.BRAIN_PORT && process.env.EMULATOR_PORT) return { env: env(), note: 'ORACLE_PORT/BRAIN_PORT/EMULATOR_PORT from the environment' };
+	if (new URL(ORIGIN).port === '5273') return { env: env('8091', '8092', '8090'), note: 'the live stack (the deck under test is the live deck)' };
+	return { env: env('9', '9', '9'), note: 'closed ports (a sandbox or dev deck under test: the preview never reaches a live backend)' };
+}
+
+/**
+ * The fallback without a second server, when there is no build/ to spawn the
+ * invalid-token preview from (a vite dev deck): the deck under test, with its
+ * /gods-eye/mode answer rewritten in the page to exactly what a
+ * VEER_CESIUM_ION_TOKEN=invalid deck serves — keyed, token 'invalid' — so
+ * the browser asks Cesium ion with a token ion refuses and must fall back to
+ * keyless imagery. The deck's own token never reaches this page (the
+ * request is answered before it leaves the browser) and is never read here.
+ */
+async function ionInPage(browser) {
+	const context = await browser.createBrowserContext();
+	const page = await newPage(context, 1600, 900, { anonymous: true });
+	let served = 0;
+	let ionRequests = 0;
+	await page.setRequestInterception(true);
+	page.on('request', (req) => {
+		const u = new URL(req.url());
+		if (u.origin === new URL(ORIGIN).origin && u.pathname === '/gods-eye/mode') {
+			served++;
+			req
+				.respond({
+					status: 200,
+					contentType: 'application/json',
+					headers: { 'cache-control': 'no-store' },
+					body: JSON.stringify({ mode: 'ion-photoreal', token: 'invalid', tiles3d_asset_id: 2275207, note: 'env-keyed upgrade active — ion imagery + world terrain + Google Photorealistic 3D Tiles' }),
+				})
+				.catch(() => undefined);
+			return;
+		}
+		if (/(^|\.)cesium\.com$/.test(u.hostname)) ionRequests++;
+		req.continue().catch(() => undefined);
+	});
+	try {
+		await page.goto(`${ORIGIN}/gods-eye`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+		const s = await waitFallback(page);
+		ok('ion-fallback keyed mode answer (no build/: served in-page, no preview)', served > 0 && ionRequests > 0, `no build/ to spawn a preview from: the page was served the invalid-token deck's keyed mode answer (${served}×) and asked cesium.com with it (${ionRequests} request(s))`);
+		await assertFallback(page, s);
+	} finally {
+		await context.close();
+	}
+}
+
+/** Poll the page until the canvas settles on the fallback (or gives up). */
+async function waitFallback(page) {
+	let s = null;
+	const deadline = Date.now() + 75000;
+	while (Date.now() < deadline) {
+		s = await snapshot(page).catch(() => null);
+		if (s?.phase === 'unavailable') break;
+		if (s?.phase === 'ready' && s.imageryMode === 'keyless-osm' && s.imageryNote) break;
+		await sleep(1000);
+	}
+	return s;
+}
+
+async function assertFallback(page, s) {
+	ok('ion-fallback reaches ready', s?.phase === 'ready', `phase=${s?.phase ?? 'none'}`);
+	ok('ion-fallback keyless imagery', s?.imageryMode === 'keyless-osm' && !!s?.imageryNote, `imageryMode=${s?.imageryMode} note=${s?.imageryNote ?? '—'}`);
+	await sleep(4000);
+	const rb = await readback(page);
+	ok('ion-fallback canvas draws', !!rb && rb.meanChroma > 0, rb ? `mean chroma ${rb.meanChroma.toFixed(2)}` : 'no canvas');
+	await page.screenshot({ path: path.join(ARTIFACTS, 'canvas-ux-ion-fallback.png') });
+}
+
 async function ionCheck(browser) {
 	let origin = process.env.CANVAS_SMOKE_ION_ORIGIN?.replace(/\/$/, '');
 	let proc = null;
+	if (!origin && !existsSync(path.join(DECK, 'build', 'index.js'))) return ionInPage(browser);
 	if (!origin) {
-		if (!existsSync(path.join(DECK, 'build', 'index.js'))) return ok('ion-fallback', false, 'no build/ output to spawn the invalid-token preview from');
 		const port = Number(process.env.ION_PORT ?? 5198);
 		origin = `http://127.0.0.1:${port}`;
+		// never test somebody else's server: the preview's port must be free
+		const busy = await fetch(`${origin}/gods-eye/mode`, { signal: AbortSignal.timeout(2000) }).then(() => true, () => false);
+		if (busy) return ok('ion-fallback', false, `ION_PORT ${port} already answers — set ION_PORT to a free port`);
+		const backend = ionBackend();
+		console.log(`  ion-fallback preview :${port} — backend: ${backend.note}`);
 		const env = {
 			...process.env,
 			PORT: String(port),
 			HOST: '127.0.0.1',
 			VEER_CESIUM_ION_TOKEN: 'invalid',
-			ORACLE_PORT: process.env.ORACLE_PORT ?? '8091',
-			BRAIN_PORT: process.env.BRAIN_PORT ?? '8092',
-			EMULATOR_PORT: process.env.EMULATOR_PORT ?? '8090',
+			...backend.env,
 		};
 		// The invalid-token preview is private: gate off whatever this shell
 		// exported (the PIN and the session secret stay with the deck under test).
@@ -748,20 +1003,7 @@ async function ionCheck(browser) {
 		const mode = await getJson(`${origin}/gods-eye/mode`).catch(() => null);
 		ok('ion-fallback preview keyed', mode?.mode === 'ion-photoreal', `mode endpoint says ${mode?.mode ?? 'unreachable'}`);
 		await page.goto(`${origin}/gods-eye`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-		let s = null;
-		const deadline = Date.now() + 75000;
-		while (Date.now() < deadline) {
-			s = await snapshot(page).catch(() => null);
-			if (s?.phase === 'unavailable') break;
-			if (s?.phase === 'ready' && s.imageryMode === 'keyless-osm' && s.imageryNote) break;
-			await sleep(1000);
-		}
-		ok('ion-fallback reaches ready', s?.phase === 'ready', `phase=${s?.phase ?? 'none'}`);
-		ok('ion-fallback keyless imagery', s?.imageryMode === 'keyless-osm' && !!s?.imageryNote, `imageryMode=${s?.imageryMode} note=${s?.imageryNote ?? '—'}`);
-		await sleep(4000);
-		const rb = await readback(page);
-		ok('ion-fallback canvas draws', !!rb && rb.meanChroma > 0, rb ? `mean chroma ${rb.meanChroma.toFixed(2)}` : 'no canvas');
-		await page.screenshot({ path: path.join(ARTIFACTS, 'canvas-ux-ion-fallback.png') });
+		await assertFallback(page, await waitFallback(page));
 	} finally {
 		await context.close();
 		proc?.kill('SIGTERM');
@@ -786,7 +1028,7 @@ try {
 	if (target && !target.error) {
 		console.log(`  target event ${target.eventId} '${target.title ?? '—'}' spine [${target.segIds.join(',')}] centroid ${target.centroid ? `${fmt(target.centroid.lon)},${fmt(target.centroid.lat)}` : 'none'}`);
 	}
-	if (run('idle')) for (const route of ['/gods-eye', '/', '/ops']) await idleCheck(browser, route);
+	if (run('idle')) for (const route of ['/gods-eye', WORKSPACE, '/ops']) await idleCheck(browser, route);
 	if (run('cockpit')) for (const [w, h] of [[1600, 900], [1920, 1080]]) await cockpitChips(browser, w, h);
 	if (run('ops')) for (const [w, h] of [[1600, 900], [1920, 1080]]) await opsLayout(browser, w, h);
 	if (run('pick')) {
@@ -802,6 +1044,7 @@ try {
 		else await focusNavCheck(browser, target);
 	}
 	if (run('ama')) await clockCheck(browser);
+	if (run('layers')) await layersCheck(browser);
 	if (run('exit')) await exitCheck(browser);
 	if (run('ion')) await ionCheck(browser);
 } finally {

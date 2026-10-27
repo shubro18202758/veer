@@ -31,7 +31,26 @@
  *
  * Usage: node tests/screens-verify.mjs [origin] [outDir]
  *        defaults: origin http://127.0.0.1:5273 (the container),
- *                  outDir tests/artifacts/screens
+ *                  outDir tests/artifacts/screens — the TRACKED evidence of
+ *                  record, and only for the live deck's origin (:5273, LG 21);
+ *                  any other origin without an outDir writes to the
+ *                  untracked, gitignored tests/artifacts/screens-dev and says
+ *                  so (tests/lib/screens-out.mjs). Pass an outDir anyway.
+ *
+ * Old-or-new (UI-S7A): each key element accepts today's markup or the
+ * redesign's — a panel title case-insensitively, today's or the rebuilt
+ * section's, or the section's test id (SPEC §12.2–12.4; tests/lib/tolerant.mjs).
+ * The /comms columns are the three DRAFT columns ([data-lang]; the template
+ * preview's columns carry data-template-lang). /comms reads a PUBLIC event's
+ * drafts: when the desk's first event is operator-only, the first public event
+ * its select lists is picked (a local selection, no write). Two key elements
+ * follow the data, on a NON-live deck (any origin but :5273) only: /citizen
+ * with an empty public feed shows its honest empty state instead of cards, and
+ * a /comms desk that lists no public event must withhold the citizen draft in
+ * all three languages — no road, no registration mark, Copy disabled
+ * (tests/lib/tolerant.mjs citizenCardsVerdict, commsFactsVerdict). The live
+ * deck keeps both of HEAD's assertions. The check names and their count (40)
+ * are unchanged: the repo's release-consistency script reads them.
  * Env:   CHROME_PATH (defaults to the puppeteer cache path); VEER_OPERATOR_PIN,
  *        else VEER_OPERATOR_PIN_FILE (a sandbox deck's PIN), else veer.env
  * Exit 0 all checks pass; 1 any failure. Manifest:
@@ -42,12 +61,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { puppeteerCookies, signIn, signOut } from './lib/operator-session.mjs';
+import { defaultScreensDir, isLiveDeckOrigin, isTrackedScreensDir } from './lib/screens-out.mjs';
+import { COMMS_DRAFTS, OPS_KEY_ELEMENTS, SEL, citizenCardsVerdict, commsDrafts, commsFactsVerdict, opsKeyElementOk, pickPublicCommsEvent, withheldColumnsVerdict } from './lib/tolerant.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DECK = path.resolve(HERE, '..');
 
 const ORIGIN = (process.argv[2] ?? 'http://127.0.0.1:5273').replace(/\/+$/, '');
-const OUT = process.argv[3] ?? path.join(DECK, 'tests', 'artifacts', 'screens');
+const OUT_ARG = process.argv[3];
+/** Only the live deck (:5273) may default to the tracked evidence of record. */
+const OUT = OUT_ARG ?? path.join(DECK, defaultScreensDir(ORIGIN));
+if (!OUT_ARG) {
+	console.log(
+		`screens-verify: no output directory given — writing to ${path.relative(DECK, OUT)} (${isTrackedScreensDir(OUT) ? 'the tracked evidence of record: the live deck' : 'untracked, gitignored dev output'})`,
+	);
+}
 
 const CHROME =
 	process.env.CHROME_PATH ||
@@ -95,6 +123,14 @@ function record(screen, name, ok, detail = '') {
 	const entry = (results.screens[screen] ||= { checks: {} });
 	entry.checks[name] = { ok, detail };
 	if (!ok) failures++;
+}
+/** A check that could not run here: recorded as SKIPPED (ok null), never as passed, never as failed. */
+let skips = 0;
+function skip(screen, name, detail) {
+	const entry = (results.screens[screen] ||= { checks: {} });
+	entry.checks[name] = { ok: null, skipped: true, detail };
+	skips++;
+	console.log(`skip  ${screen}: ${name} — ${detail}`);
 }
 
 /** Pixel-level non-blank proof over a SAVED PNG (Chrome as decoder). */
@@ -158,20 +194,34 @@ async function shoot(browser, screen, route, probe, { viewport = { width: 1440, 
 	}
 }
 
-/** Count panels on the page whose h2.title exactly matches. */
+/**
+ * The wall's panel titles (today's `section.panel h2.title`, the rebuilt
+ * Section's `[data-prim=panel] h2`) and which key-element test ids render.
+ */
 function panelTitleProbe(page) {
-	return page.evaluate(() => {
-		const titles = [...document.querySelectorAll('section.panel h2.title')].map((h) => h.textContent.trim());
-		return {
-			titles,
-			masthead: document.querySelectorAll('[data-prim="band-masthead"]').length,
-			panels: document.querySelectorAll('section.panel').length,
-			eventCards: document.querySelectorAll('.event-card, .board .event, article[data-event]').length,
-			auditRows: document.querySelectorAll('[data-prim="audit-row"]').length,
-			canvasEl: document.querySelectorAll('.ge-canvas canvas').length,
-			band: document.querySelector('[data-prim="band-masthead"]')?.getAttribute('data-band') ?? null,
-		};
-	});
+	return page.evaluate(
+		(sel) => {
+			const titles = [...document.querySelectorAll(sel.panelTitles)].map((h) => h.textContent.trim());
+			return {
+				titles,
+				present: Object.fromEntries(sel.testids.map((id) => [id, !!document.querySelector(`[data-testid="${id}"]`)])),
+				masthead: document.querySelectorAll('[data-prim="band-masthead"]').length,
+				panels: document.querySelectorAll(sel.panels).length,
+				eventCards: document.querySelectorAll('.event-card, .board .event, article[data-event], [data-testid="event-card"]').length,
+				auditRows: document.querySelectorAll('[data-prim="audit-row"], [data-testid="audit-feed"] [data-prim="feed-item"]').length,
+				canvasEl: document.querySelectorAll('.ge-canvas canvas').length,
+				band: document.querySelector('[data-prim="band-masthead"]')?.getAttribute('data-band') ?? null,
+			};
+		},
+		{ panelTitles: SEL.panelTitles, panels: SEL.panels, testids: [...new Set(OPS_KEY_ELEMENTS.flatMap((k) => k.testids))] },
+	);
+}
+
+/** One /ops key element as a manifest check: a matching title (today's or the redesign's) or its test id. */
+function keyElement(p, key, extra = '') {
+	const spec = OPS_KEY_ELEMENTS.find((k) => k.key === key);
+	const v = opsKeyElementOk(spec, p.titles, p.present);
+	return { ok: v.ok, detail: `${v.via ?? `none of ${JSON.stringify(spec.titles)} / ${spec.testids.join(', ')}`}${extra}` };
 }
 
 async function main() {
@@ -189,40 +239,18 @@ async function main() {
 				await page.waitForSelector('.wall', { timeout: 30000 });
 				await sleep(6000); // board poll rung + canvas first draws under SwiftShader
 				const p = await panelTitleProbe(page);
-				const title = (t) => p.titles.includes(t);
 				return {
 					'band-masthead mounts': {
 						ok: p.masthead === 1,
 						detail: `data-prim=band-masthead band=${p.band} panels=${p.panels}`,
 					},
-					'event board (Corridor Operations Board)': {
-						ok: title('Corridor Operations Board'),
-						detail: `titles=${JSON.stringify(p.titles)}`,
-					},
-					'pursuit console (Pursuit & Watchlist)': {
-						ok: title('Pursuit & Watchlist'),
-						detail: '',
-					},
-					'enforcement queue (Decision Queue)': {
-						ok: title('Decision Queue'),
-						detail: '',
-					},
-					'Jan Rakshak dispatch (Jan Rakshak Dispatch)': {
-						ok: title('Jan Rakshak Dispatch'),
-						detail: '',
-					},
-					'signal panel (City Signal Plans)': {
-						ok: title('City Signal Plans'),
-						detail: '',
-					},
-					'AMA module card (Active Movement Adaptation)': {
-						ok: title('Active Movement Adaptation'),
-						detail: '',
-					},
-					'audit stream (Decision-Audit Stream)': {
-						ok: title('Decision-Audit Stream'),
-						detail: `audit rows rendered=${p.auditRows}`,
-					},
+					'event board (Corridor Operations Board)': keyElement(p, 'event board (Corridor Operations Board)', ` · titles=${JSON.stringify(p.titles)}`),
+					'pursuit console (Pursuit & Watchlist)': keyElement(p, 'pursuit console (Pursuit & Watchlist)'),
+					'enforcement queue (Decision Queue)': keyElement(p, 'enforcement queue (Decision Queue)'),
+					'Jan Rakshak dispatch (Jan Rakshak Dispatch)': keyElement(p, 'Jan Rakshak dispatch (Jan Rakshak Dispatch)'),
+					'signal panel (City Signal Plans)': keyElement(p, 'signal panel (City Signal Plans)'),
+					'AMA module card (Active Movement Adaptation)': keyElement(p, 'AMA module card (Active Movement Adaptation)'),
+					'audit stream (Decision-Audit Stream)': keyElement(p, 'audit stream (Decision-Audit Stream)', ` · audit rows rendered=${p.auditRows}`),
 					'event rows on the board': {
 						ok: p.eventCards > 0,
 						detail: `event cards=${p.eventCards}`,
@@ -282,11 +310,21 @@ async function main() {
 					holds: document.querySelectorAll('.event-card .hold').length,
 					badges: [...document.querySelectorAll('.event-card .badge, [data-variant]')].length,
 					kicker: document.querySelector('.kicker')?.textContent?.trim() ?? '',
+					empty: !!document.querySelector('[data-screen="citizen"] [data-prim="empty-state"]'),
+					feed: document.querySelector('[data-screen="citizen"]')?.getAttribute('data-feed') ?? null,
 				}));
+				// What the public feed lists (the page's own source; anonymous, read-only): on a
+				// NON-live deck with no public event the honest answer is the empty state, never a
+				// card (a sandbox's data). The live deck (:5273, LG 21's evidence of record) always
+				// needs a card (citizenCardsVerdict).
+				const listed = await fetch(`${ORIGIN}/api/public/events`, { signal: AbortSignal.timeout(10000) })
+					.then((r) => r.json())
+					.then((b) => (Array.isArray(b?.events) ? b.events.length : null))
+					.catch(() => null);
 				return {
 					'daylight theme on public surface': { ok: p.theme === 'daylight', detail: `data-theme=${p.theme}` },
 					'plain-language band strip': { ok: !!p.strip, detail: `strip=${p.strip}` },
-					'event cards render': { ok: p.cards > 0, detail: `cards=${p.cards} hold rows=${p.holds}` },
+					'event cards render': citizenCardsVerdict({ live: isLiveDeckOrigin(ORIGIN), listed, ...p }),
 					'advisory kicker': { ok: p.kicker.length > 0, detail: p.kicker },
 				};
 			},
@@ -317,11 +355,11 @@ async function main() {
 				const mode = await attrOf('data-mode');
 				record('driver', 'flow mounts at idle', (await phaseOf()) === 'idle', `phase=${await phaseOf()} mode=${mode}`);
 				results.screens.driver.mode = mode; // the checks below depend on it (the consistency oracle reads it)
-				// the golden-hour counter must tick (two reads 1.2 s apart)
-				const g1 = await page.$eval('[data-golden-seconds]', (el) => Number(el.getAttribute('data-golden-seconds')));
+				// F-08: the request clock counts from a request, never from page load — idle (two reads 1.3 s apart)
+				const g1 = await page.$eval('[data-testid="golden-hour"]', (el) => `${el.getAttribute('data-started')}|${el.querySelector('[data-golden-seconds]')?.getAttribute('data-golden-seconds') ?? '-'}`);
 				await sleep(1300);
-				const g2 = await page.$eval('[data-golden-seconds]', (el) => Number(el.getAttribute('data-golden-seconds')));
-				record('driver', 'golden-hour counter ticks', g2 > g1, `${g1} → ${g2}`);
+				const g2 = await page.$eval('[data-testid="golden-hour"]', (el) => `${el.getAttribute('data-started')}|${el.querySelector('[data-golden-seconds]')?.getAttribute('data-golden-seconds') ?? '-'}`);
+				record('driver', 'request clock idle until a request is sent', g1 === '0|-' && g2 === '0|-', `${g1} → ${g2}`);
 				if (mode === 'scripted') {
 					// pick the first stretch, request, ride evaluating → proposal
 					await page.select('[data-testid="stretch-select"]', await page.$eval('[data-testid="stretch-select"] option:not([value=""])', (o) => o.value));
@@ -384,30 +422,32 @@ async function main() {
 			async (page) => {
 				await page.waitForSelector('[data-screen="comms"]', { timeout: 30000 });
 				await sleep(2500);
-				const p = await page.evaluate(() => {
-					const cols = [...document.querySelectorAll('.lang-col')];
-					const texts = cols.map((c) => c.querySelector('.adv-text')?.textContent?.trim() ?? '');
-					// Signed in, the desk drafts from the live event (not the
-					// offline fixture): its road names ride verbatim in Latin
-					// script inside the Hindi and Gujarati advisories, so they
-					// are read from those columns, never hard-coded.
-					const latin = (t) => (t.match(/[A-Za-z][A-Za-z0-9.'’()–-]*(?:[ /]+[A-Za-z0-9(][A-Za-z0-9.'’()–-]*)*/g) ?? []).map((x) => x.trim());
-					const byLang = (l) => texts[cols.findIndex((c) => c.getAttribute('data-lang') === l)] ?? '';
-					const facts = [...new Set([...latin(byLang('hi')), ...latin(byLang('gu'))])];
-					return {
-						langs: cols.map((c) => c.getAttribute('data-lang')),
-						filled: texts.filter((t) => t.length > 10).length,
-						facts,
-						sameRoad: facts.length > 0 && ['en', 'hi', 'gu'].every((l) => facts.every((f) => byLang(l).includes(f))),
-					};
-				});
+				// HEAD's road-verbatim assertion reads a PUBLIC event's drafts: when the desk's
+				// first event is operator-only, the first public one its select lists (a local
+				// selection, no write). Withheld drafts stand in only on a non-live deck that
+				// lists no public event, and must then hold up (commsFactsVerdict).
+				const pick = await pickPublicCommsEvent(page);
+				const p = await page.evaluate(commsDrafts, COMMS_DRAFTS);
+				// 'all three advisories non-empty' is the PUBLIC-draft assertion. On a
+				// non-live desk whose every listed event is withheld (pick.public
+				// false) the merged desk composes no draft, so the check becomes the
+				// withheld contract itself, asserted POSITIVELY (withheldColumnsVerdict:
+				// the badge states it once; operator-kind columns empty, no Copy, empty
+				// data-facts; no road, no mark, no enabled Copy) — a draft leaked into
+				// a withheld column fails here and in the facts check below (audit
+				// E-S7B W1). Never accepted on the live deck.
+				const allWithheld = !isLiveDeckOrigin(ORIGIN) && p.cols.length === 3 && p.cols.every((c) => c.withheld === 'yes') && pick.public === false;
+				const wv = allWithheld ? withheldColumnsVerdict(p) : null;
 				return {
 					'trilingual columns mount (EN/HI/GU)': {
 						ok: p.langs.join(',') === 'en,hi,gu',
 						detail: `langs=[${p.langs.join(',')}]`,
 					},
-					'all three advisories non-empty': { ok: p.filled === 3, detail: `filled=${p.filled}/3` },
-					'same facts in all three (road name verbatim)': { ok: p.sameRoad, detail: `facts=[${p.facts.join(' | ')}]` },
+					'all three advisories non-empty': {
+						ok: allWithheld ? wv.ok : p.filled === 3,
+						detail: allWithheld ? `no public event listed — ${wv.detail}` : `filled=${p.filled}/3`,
+					},
+					'same facts in all three (road name verbatim)': commsFactsVerdict({ live: isLiveDeckOrigin(ORIGIN), pick, ...p }),
 				};
 			},
 			{ settle: 1500 },
@@ -434,13 +474,91 @@ async function main() {
 			},
 			{ settle: 1200 },
 		);
+		// ── the OSINT fixture harness (/design/osint, dev decks) ─────────
+		// UI-S7B: the key element `osint-report` on the OSINT fixture page when
+		// one is present (its fixtures are static and synthetic, so the page
+		// answering means there IS data: a section that never mounts FAILS). A
+		// deck serving no such page skips with a note, never counted as a pass.
+		// `dss-section` is asserted on the DSS fixture page (next block): this
+		// harness registers only the osint provider.
+		{
+			const harness = await fetch(`${ORIGIN}/design/osint`, { signal: AbortSignal.timeout(10000) }).then((r) => r.ok).catch(() => false);
+			if (!harness) {
+				skip('osint', 'osint fixture page (dev harness)', 'no /design/osint harness on this deck — no OSINT fixture to show (the sections are guarded by osint-dom.unit.mjs)');
+			} else {
+				const page = await browser.newPage();
+				await page.setViewport({ width: 1440, height: 900 });
+				if (session) await page.setCookie(...puppeteerCookies(session));
+				try {
+					await page.goto(`${ORIGIN}/design/osint`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+					await sleep(4000);
+					const p = await page.evaluate(() => ({
+						report: !!document.querySelector('[data-testid="osint-report"]'),
+						verification: document.querySelector('[data-testid="osint-report"]')?.getAttribute('data-verification') ?? null,
+						inspector: !!document.querySelector('[data-testid="entity-dossier"]'),
+					}));
+					record(
+						'osint',
+						'osint report section mounts (the fixture is synthetic)',
+						p.report,
+						p.report ? `verification=${p.verification ?? '—'} · inspector=${p.inspector}` : 'the osint-report section never mounted on the fixture page',
+					);
+					await sleep(800);
+					const file = 'screen_osint.png';
+					await page.screenshot({ path: path.join(OUT, file), captureBeyondViewport: false });
+					results.screens.osint = { ...(results.screens.osint || {}), file, harness: true };
+				} finally {
+					await page.close();
+				}
+			}
+		}
+
+		// ── the DSS fixture page (/design/dss?section=1, dev harness) ────
+		// `dss-section` (SPEC §12.4) is asserted where a DSS fixture page is
+		// present: the harness seeds a synthetic C-U and mounts the inspector's
+		// Decision support section, so a page that answers and lacks the hook
+		// FAILS (audit E-S7B F9/D1). Skipped with a note ONLY when the deck
+		// serves no such page (no DSS fixture data to show) — recorded as a
+		// skip, never counted as the section mounting.
+		{
+			const harness = await fetch(`${ORIGIN}/design/dss`, { signal: AbortSignal.timeout(10000) }).then((r) => r.ok).catch(() => false);
+			if (!harness) {
+				skip('dss', 'dss section mounts on the DSS fixture page', 'no /design/dss fixture page on this deck — no DSS data to show (dss-card-smoke drives the surface on a dev deck)');
+			} else {
+				const page = await browser.newPage();
+				await page.setViewport({ width: 1440, height: 900 });
+				if (session) await page.setCookie(...puppeteerCookies(session));
+				try {
+					await page.goto(`${ORIGIN}/design/dss?section=1`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+					const t0 = Date.now();
+					let d = null;
+					while (Date.now() - t0 < 20000) {
+						d = await page.evaluate(() => ({
+							section: document.querySelectorAll('[data-testid="dss-section"]').length,
+							link: !!document.querySelector('[data-testid="dss-section"] [data-testid="dss-link"]'),
+							generate: !!document.querySelector('[data-testid="dss-section"] [data-testid="dss-generate"]'),
+						}));
+						if (d.section > 0) break;
+						await sleep(500);
+					}
+					record('dss', 'dss section mounts on the DSS fixture page', !!d && d.section > 0 && (d.link || d.generate), d ? `dss-section ×${d.section} · link card ${d.link} · generate ${d.generate}` : 'page never evaluated');
+					await sleep(500);
+					const file = 'screen_dss.png';
+					await page.screenshot({ path: path.join(OUT, file), captureBeyondViewport: false });
+					results.screens.dss = { ...(results.screens.dss || {}), file, harness: true };
+				} finally {
+					await page.close();
+				}
+			}
+		}
 	} finally {
 		await browser.close();
 		await signOut(session);
 		fs.writeFileSync(path.join(OUT, 'screens_manifest.json'), JSON.stringify(results, null, 2));
 	}
 	console.log(JSON.stringify(results, null, 2));
-	console.log(failures === 0 ? 'SCREENS VERIFY: OK' : `SCREENS VERIFY: ${failures} check(s) failed`);
+	const skipNote = skips ? ` (${skips} check(s) SKIPPED — not run here, not counted as passed)` : '';
+	console.log(failures === 0 ? `SCREENS VERIFY: OK${skipNote}` : `SCREENS VERIFY: ${failures} check(s) failed${skipNote}`);
 	process.exit(failures === 0 ? 0 : 1);
 }
 

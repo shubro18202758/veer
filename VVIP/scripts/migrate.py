@@ -136,6 +136,31 @@ def apply_with_container_psql(path: Path) -> subprocess.CompletedProcess[str]:
         )
 
 
+IDENTITY_SQL = "SELECT system_identifier::text || '/' || current_database() FROM pg_control_system()"
+
+
+def assert_same_database(conn) -> None:
+    """Without a host psql the SQL goes through `docker exec $POSTGIS_CONTAINER` while the ledger is written through the DSN.
+    Refuse unless both paths reach the SAME cluster and database (a shell that sourced veer_env.sh exports the live
+    container name: a sandbox DSN must never migrate live behind its back)."""
+    if shutil.which("psql"):
+        return  # one path: host psql and the ledger both use the DSN
+    with conn.cursor() as cur:
+        cur.execute(IDENTITY_SQL)
+        via_dsn = cur.fetchone()[0]
+    via_container = subprocess.run(
+        ["docker", "exec", "-i", POSTGIS_CONTAINER, "psql", "-U", POSTGIS_USER, "-d", POSTGIS_DB, "-XAt", "-c", IDENTITY_SQL],
+        check=False, capture_output=True, text=True,
+    ).stdout.strip()
+    if via_dsn != via_container:
+        print(
+            f"ERROR: the DSN and POSTGIS_CONTAINER={POSTGIS_CONTAINER} reach different databases "
+            f"({via_dsn!r} vs {via_container!r}) — set POSTGIS_CONTAINER to the DSN's container (or install psql).",
+            file=sys.stderr,
+        )
+        raise SystemExit(5)
+
+
 def apply_migration(dsn: str, path: Path) -> None:
     """Apply one migration file via psql (never via Python string execution)."""
     if shutil.which("psql"):
@@ -191,6 +216,7 @@ def main() -> int:
     files = discover(migrations_dir)
 
     with psycopg.connect(dsn) as conn:  # type: psycopg.Connection
+        assert_same_database(conn)
         with conn.cursor() as cur:
             ensure_ledger(cur)
             conn.commit()

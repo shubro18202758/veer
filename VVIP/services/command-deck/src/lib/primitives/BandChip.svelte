@@ -1,13 +1,20 @@
 <script lang="ts">
 	/**
-	 * BandChip — the ONLY legal renderer of a band color as a chip.
+	 * BandChip — the one legal renderer of a band as a chip (SPEC §5.2, §2.4),
+	 * rebuilt on the tag metrics of src/lib/ui: a 20 px chip, the band's
+	 * swatch and its word in sentence case ("Amber"), ink-1 on the neutral
+	 * veil. Band colours appear only as the band ladder's own tokens.
 	 *
-	 * GREEN/AMBER/RED: token edge + token ink at the band veil fill.
-	 * BLACK: an INVERTED chip — translucent near-black fill (never an
-	 * opaque void) with a 1px band-red hairline. The hex sweep and review
-	 * enforce that no other component renders band colors as chips.
+	 * BLACK is a dark fill with a 1 px red hairline — everywhere a band is
+	 * drawn — never an opaque void (the fill is translucent). A hollow chip is
+	 * the candidate band during hysteresis: an outline, no fill. `label`
+	 * overrides the word (daylight: citizens never see "Black").
+	 * `data-prim="band-chip"` and `data-band` stay on the root.
 	 */
 	import type { Band } from '$lib/design/tokens';
+	import { t } from '$lib/i18n/strings';
+	import '$lib/i18n/packs';
+	import { uiLang } from '$lib/ui/lang';
 
 	interface Props {
 		band: Band;
@@ -16,84 +23,105 @@
 		/** Plain-language override (daylight: citizens never see 'BLACK'). */
 		label?: string;
 		size?: 'sm' | 'md';
+		lang?: string;
 	}
 
-	let { band, hollow = false, label, size = 'md' }: Props = $props();
+	let { band, hollow = false, label, size = 'md', lang }: Props = $props();
 
-	const word = $derived(label ?? band);
+	const ctxLang = uiLang();
+	const word = $derived(label ?? t(lang ?? ctxLang(), `shell_band_word_${band}`));
 </script>
 
-<span
-	class="chip b-{band}"
-	class:hollow
-	class:sm={size === 'sm'}
-	data-band={band}
-	data-prim="band-chip"
->{word}</span>
+<span class="chip b-{band}" class:hollow class:sm={size === 'sm'} data-band={band} data-prim="band-chip"
+	><i class="sw" aria-hidden="true"></i><span class="w">{word}</span></span
+>
 
 <style>
 	.chip {
 		display: inline-flex;
+		flex: 0 0 auto;
 		align-items: center;
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-2xs);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		line-height: 1;
-		padding: var(--v-space-1) var(--v-space-2);
+		gap: 6px;
+		box-sizing: border-box;
+		min-height: var(--v-ws-tag);
+		padding: 1px 6px;
+		border: 1px solid transparent;
 		border-radius: var(--v-radius-chip);
-		border: 1px solid var(--v-band-green);
-		color: var(--v-band-green);
-		background: transparent;
+		background: var(--v-neutral-veil);
+		color: var(--v-ink-1);
+		font-family: var(--v-font-ui);
+		font-size: var(--v-text-xs);
+		font-weight: 400;
+		line-height: calc(var(--v-text-xs) + 4px);
 		white-space: nowrap;
+		vertical-align: middle;
 	}
 
 	.sm {
-		padding: 1px var(--v-space-2);
-		font-size: var(--v-text-2xs);
+		gap: 4px;
+		padding: 1px 5px;
 	}
 
-	.b-GREEN {
-		border-color: var(--v-band-green);
-		color: var(--v-band-green);
+	.sw {
+		display: inline-block;
+		flex: 0 0 auto;
+		width: 10px;
+		height: 10px;
+		border-radius: 2px;
 	}
 
-	.b-AMBER {
-		border-color: var(--v-band-amber);
-		color: var(--v-band-amber);
+	.b-GREEN .sw {
+		background: var(--v-band-green);
 	}
 
-	.b-RED {
-		border-color: var(--v-band-red);
-		color: var(--v-band-red);
+	.b-AMBER .sw {
+		background: var(--v-band-amber);
 	}
 
-	/* BLACK — inverted: translucent fill + red hairline, never a filled void. */
+	.b-RED .sw {
+		background: var(--v-band-red);
+	}
+
+	/* BLACK: a translucent dark fill with a 1 px red hairline, never an opaque void */
 	.b-BLACK {
 		border-color: var(--v-band-black-hairline);
-		color: var(--v-ink-1);
 		background: var(--v-band-black-fill);
 	}
 
-	/* Veil fill for committed bands (skip for BLACK: it has its own fill). */
-	.b-GREEN:not(.hollow) {
-		background: var(--v-band-veil);
-		background: color-mix(in srgb, var(--v-band-green) 14%, transparent);
+	.b-BLACK .sw {
+		background: var(--v-band-black-fill);
+		box-shadow: inset 0 0 0 1px var(--v-band-black-hairline);
 	}
 
-	.b-AMBER:not(.hollow) {
-		background: var(--v-band-veil);
-		background: color-mix(in srgb, var(--v-band-amber) 14%, transparent);
-	}
-
-	.b-RED:not(.hollow) {
-		background: var(--v-band-veil);
-		background: color-mix(in srgb, var(--v-band-red) 14%, transparent);
-	}
-
-	/* Candidate during hysteresis: outline only, no fill at all. */
+	/* the candidate during hysteresis: an outline only, no fill at all */
 	.hollow {
+		border-color: var(--v-line-strong);
 		background: transparent;
-		border-style: dashed;
+		color: var(--v-ink-2);
+	}
+
+	.hollow .sw {
+		background: transparent;
+	}
+
+	.hollow.b-GREEN .sw {
+		box-shadow: inset 0 0 0 1.5px var(--v-band-green);
+	}
+
+	.hollow.b-AMBER .sw {
+		box-shadow: inset 0 0 0 1.5px var(--v-band-amber);
+	}
+
+	.hollow.b-RED .sw {
+		box-shadow: inset 0 0 0 1.5px var(--v-band-red);
+	}
+
+	.hollow.b-BLACK {
+		border-color: var(--v-band-black-hairline);
+		background: transparent;
+	}
+
+	.hollow.b-BLACK .sw {
+		box-shadow: inset 0 0 0 1.5px var(--v-band-black-hairline);
 	}
 </style>

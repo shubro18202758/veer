@@ -32,10 +32,14 @@ def app(monkeypatch):
 
 class TestPortUnification:
     def test_default_port_is_8080(self, monkeypatch):
-        monkeypatch.delenv("PORT", raising=False)
-        # The default lives in main() as a literal; assert the source keeps it.
+        from convoy_brain.config import bind_address
+
+        # main() binds config.bind_address(): PORT, else 8080, on loopback
+        # unless HOST says otherwise (F-CONN-09: never 0.0.0.0 by default).
+        assert bind_address({}) == ("127.0.0.1", 8080)
+        assert bind_address({"HOST": "0.0.0.0", "PORT": "9090"}) == ("0.0.0.0", 9090)
         source = Path(brain_main.__file__).read_text(encoding="utf-8")
-        assert '"PORT", "8080"' in source
+        assert "bind_address()" in source and '"0.0.0.0"' not in source
 
     def test_env_port_wins(self, monkeypatch):
         monkeypatch.setenv("PORT", "9090")
@@ -89,7 +93,8 @@ class TestHealthShape:
             assert data["strategic_tier"]["model_host"] == "unreachable"
             # Tier-0 gate wiring: on by default; the env kill switch flips it.
             assert data["strategic_tier"]["tier0_cache"] == "enabled"
-            assert data["tactical_tier"]["model"] == "aditi-ps18-v7h-gemma4-12b"
+            # the operator-facing name; the served alias stays internal (COPY-10)
+            assert data["tactical_tier"]["model"] == "gemma4-12b-veer"
             assert data["tactical_tier"]["llama_server"] == "unreachable"
 
     def test_health_tier0_kill_switch_env_flips_the_field(self, app, monkeypatch):

@@ -1,13 +1,13 @@
 <script lang="ts">
 	/**
-	 * (public) — citizen/driver surfaces. Daylight theme (warm paper) + the
-	 * CitizenShell chrome. The server already renders these routes with
+	 * (public) — citizen/driver surfaces. Daylight theme (the V3 day tokens) + the
+	 * V3 PublicShell chrome (V3-SPEC §6.8). The server already renders these routes with
 	 * data-theme="daylight" (hooks.server.ts transformPageChunk — no dark
 	 * flash on a phone); this effect covers client-side navigation in from
 	 * the deck, and on unmount the theme resets to command so the operator
 	 * deck never inherits paper tokens.
 	 */
-	import CitizenShell from '$lib/shell/CitizenShell.svelte';
+	import PublicShell from '$lib/v3/public/PublicShell.svelte';
 
 	let { children } = $props();
 
@@ -19,6 +19,6 @@
 	});
 </script>
 
-<CitizenShell>
+<PublicShell>
 	{@render children?.()}
-</CitizenShell>
+</PublicShell>

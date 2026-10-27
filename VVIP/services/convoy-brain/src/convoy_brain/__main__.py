@@ -28,6 +28,11 @@ the frozen nginx.conf, the adversarial suite, and TECHNICAL_DOCS §1 agree on):
     - POST /movements/{movement_id}/clear        → post-clearance workflow; the
                                                    corridor event is completed (C-F),
                                                    or cancelled if it never went live
+    - GET  /movements/{movement_id}/protocol     → recorded Blue Book protocol state
+    - POST /movements/{movement_id}/protocol     → a NAMED officer records it (422 without)
+    - (410) /movements/{id}/protocol/assess, /dossier, /threat-assessment,
+      /analytics/reasoning, /recommendations/reasoning — retired: no model-made
+      security judgement is generated or persisted
     - POST /chat                                 → free-form orchestrator chat
     - POST /chat/stream                          → NDJSON streaming chat (contract C-D:
                                                    the same two-tier turn as /chat,
@@ -78,7 +83,6 @@ import contextlib
 import ipaddress
 import json
 import math
-import os
 import re
 import subprocess
 import time
@@ -101,11 +105,15 @@ from convoy_brain.config import (
     ADAPTIVE_HEALTH_TIMEOUT_SEC,
     CITY_BBOX,
     DECIDER_HEALTH_POLL_SEC,
+    GEMMA_DISPLAY_NAME,
+    bind_address,
     escort_gps_timeout_sec,
     escort_sim_gps_enabled,
     escort_sim_speed_kmh,
+    ignored_env,
     load_service_urls,
     officer_required,
+    oracle_url_configured,
     tier0_enabled,
 )
 from convoy_brain.decider import DeciderBrain
@@ -431,35 +439,41 @@ class DirectiveAck(BaseModel):
 
 
 class ProtocolStateUpdate(BaseModel):
+    """An officer's protocol-state record. ``officer`` may be omitted only
+    when the deck-verified x-veer-officer names the officer."""
+
     asl_checklist: dict | None = None
     protocol_compliance: dict | None = None
     anti_sabotage: dict | None = None
     transit_status: dict | None = None
     plan_b: dict | None = None
-    threat_level: str | None = None
+    threat_level: Literal[
+        "nominal", "guarded", "moderate", "elevated", "critical", "not_assessed",
+    ] | None = None
+    officer: str | None = Field(None, min_length=2, max_length=64)
 
 
-class DossierRequest(BaseModel):
-    vvip_class: str = Field("Z", description="VVIP class for dossier generation")
-    origin_name: str | None = Field(None, description="Human-readable origin name")
-    destination_name: str | None = Field(None, description="Human-readable destination name")
-    include_sections: list[str] | None = Field(
-        None, description="Specific dossier sections to generate, or all if None"
-    )
+#: Brain routes that asked the model for security judgements (HON-12) — gone.
+RETIRED_AI_JUDGEMENT_ROUTES = (
+    "/movements/{movement_id}/protocol/assess",
+    "/movements/{movement_id}/dossier",
+    "/movements/{movement_id}/threat-assessment",
+    "/analytics/reasoning",
+    "/recommendations/reasoning",
+)
 
 
-class AnalyticsReasoningRequest(BaseModel):
-    metric_name: str = Field(..., description="Name of the analytics metric to reason about")
-    metric_value: float | str = Field(..., description="Current value of the metric")
-    metric_context: dict = Field(default_factory=dict, description="Additional context — related metrics, thresholds, history")
-    vvip_class: str = Field("Z", description="Active VVIP class")
-
-
-class RecommendationReasoningRequest(BaseModel):
-    statement: str = Field(..., description="The recommendation statement to explain")
-    category: str = Field("general", description="Category: speed, congestion, security, routing, incident, environmental")
-    ground_data: dict = Field(default_factory=dict, description="Current ground sensor data snapshot")
-    vvip_class: str = Field("Z", description="Active VVIP class")
+async def _retired_ai_judgement(request: Request) -> JSONResponse:
+    """410 for a retired AI-judgement route (nothing is generated or written)."""
+    return JSONResponse(status_code=410, content={
+        "retired": True,
+        "path": request.url.path,
+        "detail": (
+            "retired: Veer does not ask a model for security dossiers, compliance "
+            "verdicts, threat levels or metric reasoning — ask through /chat/stream, "
+            "where answers are grounded in tool results and a named officer decides"
+        ),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +579,9 @@ def create_app() -> FastAPI:
         )
         NOVELTY_LATCH_DISABLED.set(0)
         TIER0_ENABLED.set(1 if decider_brain.tier0_enabled else 0)
-        executor = ToolExecutor(traffic_oracle_url=urls.traffic_oracle)
+        executor = ToolExecutor(
+            traffic_oracle_url=urls.traffic_oracle, decider_brain=decider_brain
+        )
         adaptive_client = AdaptiveParamsClient(base_url=urls.traffic_oracle)
         city_link = CityLink(base_url=urls.traffic_oracle)
         context_store = ConvoyContextStore(valkey_url=valkey_url)
@@ -601,12 +617,27 @@ def create_app() -> FastAPI:
             _background_health_loop(app), name="convoy-brain:health"
         )
 
+        # F-CONN-06/09: say what the brain does NOT read, and when it fell
+        # back to the oracle's hand-run default instead of being told.
+        app.state.ignored_env = ignored_env()
+        app.state.oracle_url_source = "configured" if oracle_url_configured() else "default"
+        if app.state.ignored_env:
+            logger.warning(
+                "convoy_brain.env_ignored", names=app.state.ignored_env,
+                reason="the brain has no database, NATS or Ollama client — these are not read",
+            )
+        if app.state.oracle_url_source == "default":
+            logger.warning(
+                "convoy_brain.oracle_url_default", traffic_oracle=urls.traffic_oracle,
+                reason="neither TRAFFIC_ORACLE_URL nor ORACLE_PORT is set",
+            )
         logger.info(
             "convoy_brain.startup",
             model_host=urls.model_host,
             llama=urls.llama,
             embedding=urls.embedding,
             traffic_oracle=urls.traffic_oracle,
+            traffic_oracle_source=app.state.oracle_url_source,
             config_source=urls.source,
         )
 
@@ -667,7 +698,7 @@ def create_app() -> FastAPI:
                 ),
             },
             "tactical_tier": {
-                "model": "aditi-ps18-v7h-gemma4-12b",
+                "model": GEMMA_DISPLAY_NAME,
                 "llama_server": "connected" if llama_ok else "unreachable",
             },
         }
@@ -1399,12 +1430,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=str(exc))
 
     # -------------------------------------------------------------------
-    # Protocol state management (Blue Book integration)
+    # Protocol state (Blue Book integration) — a human record
     # -------------------------------------------------------------------
+    # The protocol state is what OFFICERS recorded (ASL items, sweeps, Plan B,
+    # a threat level). The brain only stores it: every write names the
+    # officer, and nothing a model drafted is ever written into it.
 
     @app.get("/movements/{movement_id}/protocol")
     async def get_protocol_state(movement_id: str) -> dict:
-        """Retrieve the current Blue Book protocol state for a movement."""
+        """The movement's recorded Blue Book protocol state (read-only)."""
         context_store: ConvoyContextStore = app.state.context_store
         ctx = await context_store.get(movement_id)
         if ctx is None:
@@ -1415,370 +1449,53 @@ def create_app() -> FastAPI:
         }
 
     @app.post("/movements/{movement_id}/protocol")
-    async def update_protocol_state(movement_id: str, req: ProtocolStateUpdate) -> dict:
-        """Update Blue Book protocol state and persist to Valkey."""
+    async def update_protocol_state(
+        movement_id: str, req: ProtocolStateUpdate, request: Request,
+    ) -> dict:
+        """A named officer records protocol state (always required: 422 without one).
+
+        The deck-verified ``x-veer-officer`` is the recorder (a differing body
+        ``officer`` is kept as ``claimed_officer``); ``updated_by`` /
+        ``updated_at`` — and ``threat_level_set_by`` when a threat level is
+        recorded — say who wrote it.
+        """
+        actor, claimed = _attributed(request, req.officer, required=True)
         context_store: ConvoyContextStore = app.state.context_store
-        update_data = {k: v for k, v in req.model_dump().items() if v is not None}
+        update_data = {
+            k: v for k, v in req.model_dump(exclude={"officer"}).items() if v is not None
+        }
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields to update")
+        fields = list(update_data.keys())
+        update_data["updated_by"] = actor
+        update_data["updated_at"] = time.time()
+        if claimed:
+            update_data["claimed_officer"] = claimed
+        if "threat_level" in update_data:
+            update_data["threat_level_set_by"] = actor
 
         ctx = await context_store.update_protocol_state(movement_id, update_data)
         if ctx is None:
             raise HTTPException(status_code=404, detail="Movement not found")
 
-        logger.info("protocol.updated", movement_id=movement_id, fields=list(update_data.keys()))
+        logger.info("protocol.updated", movement_id=movement_id, fields=fields, officer=actor)
         return {
             "movement_id": movement_id,
             "protocol_state": ctx.protocol_state,
-            "updated_fields": list(update_data.keys()),
+            "updated_fields": fields,
+            "updated_by": actor,
         }
 
-    @app.post("/movements/{movement_id}/protocol/assess")
-    async def assess_protocol(movement_id: str) -> dict:
-        """Two-tier Blue Book protocol compliance assessment.
-
-        The decider takes a strategic checkpoint (compliance verdict posture)
-        and Gemma performs the item-by-item assessment with tool support.
-        """
-        context_store: ConvoyContextStore = app.state.context_store
-        ctx = await context_store.get(movement_id)
-        if ctx is None:
-            raise HTTPException(status_code=404, detail="Movement not found")
-
-        orchestrator: Orchestrator = app.state.orchestrator
-        session_id = str(uuid.uuid4())
-
-        assessment_prompt = (
-            "Perform a Blue Book protocol compliance assessment for movement "
-            + movement_id
-            + ".\n\nVVIP Class: " + ctx.vvip_class
-            + "\nMovement Status: " + ctx.status
-            + "\nProtocol State:\n" + json.dumps(ctx.protocol_state, indent=2)
-            + "\n\nAnalyze the following:\n"
-            "1. ASL checklist completion — identify missing critical items\n"
-            "2. 10-Rule protocol compliance — flag any violations\n"
-            "3. Anti-sabotage sweep status — assess readiness\n"
-            "4. Plan B contingency readiness — evaluate preparedness\n"
-            "5. Overall deployment readiness verdict\n\n"
-            "Use available tools to check live traffic conditions and corridor "
-            "status to enrich your assessment. Return your protocol_assessment "
-            "in the standard output format."
-        )
-
-        try:
-            await orchestrator.create_session(
-                session_id=session_id,
-                movement_id=movement_id,
-                vvip_class=ctx.vvip_class,
-            )
-            result = await orchestrator.process_turn(session_id, assessment_prompt)
-
-            await context_store.update_protocol_state(movement_id, {
-                "last_assessment": {
-                    "timestamp": time.time(),
-                    "confidence": result.get("confidence", "unknown"),
-                    "action": result.get("action", "assessment"),
-                },
-            })
-
-            return {
-                "movement_id": movement_id,
-                "assessment": result,
-                "protocol_state": ctx.protocol_state,
-            }
-        except Exception as exc:
-            logger.error("protocol.assess.failed", movement_id=movement_id, error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc))
-        finally:
-            orchestrator.end_session(session_id)
-
-    @app.post("/movements/{movement_id}/dossier")
-    async def generate_dossier(movement_id: str, req: DossierRequest) -> dict:
-        """Generate a comprehensive security dossier (Gemma tactical tier)."""
-        context_store: ConvoyContextStore = app.state.context_store
-        ctx = await context_store.get(movement_id)
-        if ctx is None:
-            raise HTTPException(status_code=404, detail="Movement not found")
-
-        orchestrator: Orchestrator = app.state.orchestrator
-        session_id = str(uuid.uuid4())
-
-        sections_instruction = ""
-        if req.include_sections:
-            sections_instruction = "\nFocus on these sections: " + ", ".join(req.include_sections)
-
-        dossier_prompt = (
-            "Generate a comprehensive VVIP Security Dossier for movement "
-            + movement_id + ".\n\nVVIP Class: " + req.vvip_class
-            + "\nOrigin: " + (req.origin_name or "Not specified")
-            + "\nDestination: " + (req.destination_name or "Not specified")
-            + "\nMovement Status: " + ctx.status
-            + "\nProtocol State:\n" + json.dumps(ctx.protocol_state, indent=2)
-            + sections_instruction
-            + "\n\nUse available tools to gather:\n"
-            "- Live traffic conditions along the corridor\n"
-            "- Recent anomalies in the area\n"
-            "- Traffic flow predictions for key segments\n"
-            "- Corridor summary for overall situational awareness\n\n"
-            "Produce a structured security dossier with these sections:\n"
-            "1. Movement Overview & Classification\n"
-            "2. Route Security Assessment\n"
-            "3. Threat Environment Analysis (based on anomalies + traffic)\n"
-            "4. ASL Compliance Status\n"
-            "5. Anti-Sabotage Readiness\n"
-            "6. Diversion & Traffic Management Plan\n"
-            "7. Communication Protocols (command hierarchy)\n"
-            "8. Plan B Contingency Assessment\n"
-            "9. Risk Matrix (segment-level risk scoring)\n"
-            "10. Recommendations & Action Items\n\n"
-            "Return the dossier as a JSON object with section keys and content values."
-        )
-
-        try:
-            await orchestrator.create_session(
-                session_id=session_id,
-                movement_id=movement_id,
-                vvip_class=req.vvip_class,
-            )
-            result = await orchestrator.process_turn(session_id, dossier_prompt)
-
-            await context_store.update_protocol_state(movement_id, {
-                "dossier_generated_at": time.time(),
-            })
-
-            return {
-                "movement_id": movement_id,
-                "vvip_class": req.vvip_class,
-                "dossier": result,
-                "generated_at": time.time(),
-            }
-        except Exception as exc:
-            logger.error("dossier.generate.failed", movement_id=movement_id, error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc))
-        finally:
-            orchestrator.end_session(session_id)
-
-    @app.post("/movements/{movement_id}/threat-assessment")
-    async def threat_assessment(movement_id: str) -> dict:
-        """Real-time threat assessment: live tools + Gemma analysis."""
-        context_store: ConvoyContextStore = app.state.context_store
-        ctx = await context_store.get(movement_id)
-        if ctx is None:
-            raise HTTPException(status_code=404, detail="Movement not found")
-
-        orchestrator: Orchestrator = app.state.orchestrator
-        session_id = str(uuid.uuid4())
-
-        threat_prompt = (
-            "Perform a real-time threat assessment for active movement "
-            + movement_id + ".\n\nVVIP Class: " + ctx.vvip_class
-            + "\nStatus: " + ctx.status
-            + "\nConvoy Position: " + str(ctx.convoy_position or "Not deployed")
-            + "\nSpeed: " + str(ctx.convoy_speed_kmh) + " km/h"
-            + "\nActive Diversions: " + str(len(ctx.active_diversions))
-            + "\nCurrent Threat Level: " + str(ctx.protocol_state.get("threat_level", "nominal"))
-            + "\n\nUse these tools to gather real-time intelligence:\n"
-            "1. get_live_traffic — check current conditions on route segments\n"
-            "2. get_historical_pattern — check for deviations from the norm\n"
-            "3. predict_traffic_flow — forecast near-term conditions\n\n"
-            "Assess and return:\n"
-            "- threat_level: nominal | elevated | high | critical\n"
-            "- threat_factors: list of identified risks with severity\n"
-            "- anomaly_summary: count and types of active anomalies\n"
-            "- corridor_status: green | amber | red\n"
-            "- protocol_violations: any Blue Book rule violations detected\n"
-            "- recommended_actions: immediate actions if threat is elevated\n"
-            "- plan_b_trigger: whether Plan B activation is recommended (true/false)"
-        )
-
-        try:
-            await orchestrator.create_session(
-                session_id=session_id,
-                movement_id=movement_id,
-                vvip_class=ctx.vvip_class,
-            )
-            result = await orchestrator.process_turn(session_id, threat_prompt)
-
-            assessed_threat = result.get("data", {}).get("threat_level") or result.get("threat_level")
-            if assessed_threat in ("nominal", "elevated", "high", "critical"):
-                await context_store.update_protocol_state(movement_id, {
-                    "threat_level": assessed_threat,
-                })
-
-            return {
-                "movement_id": movement_id,
-                "threat": result,
-                "current_protocol_state": ctx.protocol_state,
-                "assessed_at": time.time(),
-            }
-        except Exception as exc:
-            logger.error("threat.assess.failed", movement_id=movement_id, error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc))
-        finally:
-            orchestrator.end_session(session_id)
-
-    # -------------------------------------------------------------------
-    # Deep-dive reasoning (Gemma tactical tier)
-    # -------------------------------------------------------------------
-
-    @app.post("/analytics/reasoning")
-    async def analytics_reasoning(req: AnalyticsReasoningRequest) -> dict:
-        """Generate mathematical reasoning behind an analytics metric (Gemma)."""
-        bridge: LlamaBridge = app.state.bridge
-
-        system_prompt = (
-            "You are an elite traffic analytics mathematician for a VVIP convoy "
-            "protection unit. Your task is to produce a rigorous, multi-layered "
-            "mathematical reasoning breakdown for a given metric. Use transport "
-            "engineering formulas (BPR delay function, Greenshields speed-density, "
-            "Webster signal delay, Little's law, queueing theory) where applicable. "
-            "Then produce the final structured JSON analysis."
-        )
-
-        user_prompt = (
-            "METRIC: " + str(req.metric_name)
-            + "\nCURRENT VALUE: " + str(req.metric_value)
-            + "\nVVIP CLASS: " + req.vvip_class
-            + "\nCONTEXT: " + json.dumps(req.metric_context, default=str)
-            + "\n\nReturn a JSON object with exactly these fields:\n"
-            "{\n"
-            '  "metric_name": "...",\n'
-            '  "formula": "The primary mathematical formula",\n'
-            '  "secondary_formulas": ["Additional relevant formulas used"],\n'
-            '  "inputs": [{"name": "...", "value": 0, "unit": "...", "source": "..."}],\n'
-            '  "computation_steps": [\n'
-            '    {"step": 1, "operation": "...", "result": 0, "explanation": "detailed explanation", "formula_ref": "..."}\n'
-            "  ],\n"
-            '  "result": {"value": 0, "unit": "...", "precision": "...", "z_score": 0, "percentile": 0},\n'
-            '  "sensitivity": [{"factor": "...", "elasticity": 0, "direction": "positive|negative"}],\n'
-            '  "interpretation": "What this value means operationally for convoy safety",\n'
-            '  "thresholds": {"green": "...", "amber": "...", "red": "...", "critical": "..."},\n'
-            '  "trend_analysis": "Rising/falling/stable with quantified rate of change",\n'
-            '  "regime": "free_flow | synchronized | forced_flow | gridlock",\n'
-            '  "actionable_insight": "Specific tactical action for the convoy commander",\n'
-            '  "confidence": "high | medium | low",\n'
-            '  "data_quality_note": "Assessment of input data reliability"\n'
-            "}"
-        )
-
-        try:
-            raw = await bridge.generate(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                json_mode=True,
-            )
-            parsed = json.loads(raw) if raw.strip() else {}
-            return {
-                "metric_name": req.metric_name,
-                "metric_value": req.metric_value,
-                "reasoning": {
-                    "action": "analytics_reasoning",
-                    "reasoning": parsed.get("interpretation", raw[:500]),
-                    "confidence": parsed.get("confidence", "medium"),
-                    "tool_calls_made": [],
-                    "data": parsed,
-                },
-                "generated_at": time.time(),
-            }
-        except json.JSONDecodeError:
-            return {
-                "metric_name": req.metric_name,
-                "metric_value": req.metric_value,
-                "reasoning": {
-                    "action": "analytics_reasoning",
-                    "reasoning": raw[:1000] if raw else "Analysis could not be parsed.",
-                    "confidence": "low",
-                    "tool_calls_made": [],
-                    "data": {},
-                },
-                "generated_at": time.time(),
-            }
-        except Exception as exc:
-            logger.error("analytics.reasoning.failed", metric=req.metric_name, error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc))
-
-    @app.post("/recommendations/reasoning")
-    async def recommendation_reasoning(req: RecommendationReasoningRequest) -> dict:
-        """Generate chain-of-thought reasoning behind a recommendation (Gemma)."""
-        bridge: LlamaBridge = app.state.bridge
-
-        system_prompt = (
-            "You are the chief VVIP convoy security advisor with expertise in convoy "
-            "protection, traffic engineering, and real-time threat assessment. Your task "
-            "is to produce a comprehensive, multi-phase chain-of-thought reasoning "
-            "breakdown for a given recommendation. Use domain-specific reasoning: threat "
-            "classification (Z+/Z/Y/X protocols), BPR congestion modeling, corridor "
-            "resilience metrics, and risk quantification. Reason thoroughly "
-            "before producing your final structured JSON analysis."
-        )
-
-        user_prompt = (
-            "RECOMMENDATION: " + req.statement
-            + "\nCATEGORY: " + req.category
-            + "\nVVIP CLASS: " + req.vvip_class
-            + "\nGROUND DATA: " + json.dumps(req.ground_data, default=str)
-            + "\n\nProduce a detailed chain-of-thought analysis. Each reasoning step must "
-            "contain at least 2-3 sentences with specific values, calculations, or "
-            "domain references. Return a JSON object with exactly these fields:\n"
-            "{\n"
-            '  "statement": "The recommendation being explained",\n'
-            '  "chain_of_thought": [\n'
-            '    {"step": 1, "phase": "Observation", "reasoning": "Detailed raw data observed with specific values and measurements"},\n'
-            '    {"step": 2, "phase": "Hypothesis", "reasoning": "Pattern identified, causal model with engineering basis"},\n'
-            '    {"step": 3, "phase": "Evidence", "reasoning": "Supporting data points, statistical backing, and formula references"},\n'
-            '    {"step": 4, "phase": "Risk Assessment", "reasoning": "Quantified threat level with probability and impact numbers"},\n'
-            '    {"step": 5, "phase": "Decision", "reasoning": "Why this specific action was chosen over alternatives with trade-off analysis"}\n'
-            "  ],\n"
-            '  "data_sources": ["list of data sources consulted"],\n'
-            '  "risk_factors": [{"factor": "...", "severity": "low|medium|high", "mitigation": "...", "probability": 0.0}],\n'
-            '  "alternative_actions": [{"action": "...", "pros": "...", "cons": "...", "risk_delta": "..."}],\n'
-            '  "impact_assessment": {"speed_delta_pct": 0, "eta_delta_sec": 0, "risk_score": 0, "disruption_radius_m": 0},\n'
-            '  "historical_precedent": "Similar situation reference if applicable",\n'
-            '  "confidence": "high | medium | low",\n'
-            '  "urgency": "immediate | short-term | advisory",\n'
-            '  "vvip_protocol_reference": "Relevant Z+/Z/Y/X protocol constraint"\n'
-            "}"
-        )
-
-        try:
-            raw = await bridge.generate(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                json_mode=True,
-            )
-            parsed = json.loads(raw) if raw.strip() else {}
-            return {
-                "statement": req.statement,
-                "category": req.category,
-                "reasoning": {
-                    "action": "recommendation_reasoning",
-                    "reasoning": parsed.get("statement", raw[:500]),
-                    "confidence": parsed.get("confidence", "medium"),
-                    "tool_calls_made": [],
-                    "data": parsed,
-                },
-                "generated_at": time.time(),
-            }
-        except json.JSONDecodeError:
-            return {
-                "statement": req.statement,
-                "category": req.category,
-                "reasoning": {
-                    "action": "recommendation_reasoning",
-                    "reasoning": raw[:1000] if raw else "Reasoning could not be parsed.",
-                    "confidence": "low",
-                    "tool_calls_made": [],
-                    "data": {},
-                },
-                "generated_at": time.time(),
-            }
-        except Exception as exc:
-            logger.error(
-                "recommendation.reasoning.failed",
-                statement=req.statement[:50],
-                error=str(exc),
-            )
-            raise HTTPException(status_code=500, detail=str(exc))
+    # Retired (HON-12 / F-CONN-10): these asked the tactical model for a
+    # security dossier, a compliance verdict, a threat level (persisted into
+    # the protocol state) or after-the-fact "reasoning" for a metric — a model
+    # inventing security judgements no tool reported, with no officer named.
+    # No console calls them; they answer 410 and write nothing. The operator's
+    # questions go through /chat/stream, where every answer is grounded in
+    # tool results and a named officer decides.
+    for _retired in RETIRED_AI_JUDGEMENT_ROUTES:
+        app.add_api_route(_retired, _retired_ai_judgement, methods=["POST"],
+                          include_in_schema=False)
 
     # -------------------------------------------------------------------
     # Chat (free-form orchestrator, two-tier)
@@ -2141,8 +1858,9 @@ def _ndjson(obj: dict) -> str:
 
 
 def main() -> None:
-    host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "8080"))
+    # Loopback unless HOST says otherwise: the officer header is trusted only
+    # on a loopback connection (F-CONN-09).
+    host, port = bind_address()
 
     structlog.configure(
         processors=[

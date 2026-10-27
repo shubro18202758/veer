@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# demo_reset.sh — pre-judging data hygiene for the live Veer demo (WP-15 T12).
+# demo_reset.sh — pre-demo data hygiene for the live Veer demo (WP-15 T12).
 #
-# Puts the stack into the judged starting state WITHOUT deciding anything a
+# Puts the stack into the demo's starting state WITHOUT deciding anything a
 # human must decide. It stops at PENDING: a signed-in duty officer approves
 # live on /ops (the user's decision), so this script never approves a
 # sighting, a dispatch or an e-challan.
@@ -58,11 +58,11 @@
 #      its own): the patrol units exist only while a run publishes them (C-A,
 #      Valkey EX 30). A pending sighting awaits the HUMAN approval that opens
 #      the new pursuit;
-#   5. verifies the judged state (GET-only) — including what /ops offers the
+#   5. verifies the staged state (GET-only) — including what /ops offers the
 #      duty officer for the stolen plate, derived with the deck's own rules:
 #      ONE stolen-vehicle card with AUTHORISE PURSUIT (no sighting approved
 #      yet) and a pursuit card with no basis until that human approval, never
-#      an e-challan — and prints the judge checklist.
+#      an e-challan — and prints the operator checklist.
 #
 # Debris (acceptance / rehearsal rows; --apply never deletes a row):
 #   * TEST-labelled events — metadata.label set or such a title: the live
@@ -85,7 +85,7 @@
 # An approved R_STOLEN_SIGHTING on the stolen plate from BEFORE this staging
 # (the showcase's scripted approval, an earlier rehearsal) is final: /ops then
 # reads 'pursuit authorised by <who>' with DISMISS only, and its pursuit card
-# opens from that approval — the judged human AUTHORISE is pre-empted. No
+# opens from that approval — the demo's human AUTHORISE is pre-empted. No
 # reset can withdraw it: the verification FAILS and names it.
 #
 # Env (defaults are the LIVE argus stack, as in scripts/veer_env.sh — which is
@@ -186,7 +186,7 @@ echo "[demo-reset] log $LOG_FILE"
 
 # The live stack (all defaults): READY 11/11 comes from veer_up.sh --status
 # (read-only). A private stack has no model units or compose project of its
-# own, so its services are judged by the checks below only.
+# own, so its services are assessed by the checks below only.
 VEER_STATUS=skipped
 if [ "$DECK_URL" = "http://127.0.0.1:5273" ] && [ "$ORACLE_URL" = "http://127.0.0.1:8091" ] \
         && [ "$PG_CONTAINER" = vvip-argus-postgis ] && [ "$PURGE" = 0 ]; then
@@ -201,7 +201,7 @@ if [ "$APPLY" = 1 ]; then
     gate="$(curl -s -m 8 "$DECK_URL/api/session" 2>/dev/null \
         | python3 -c 'import json,sys; print("on" if json.load(sys.stdin).get("gate") else "off")' 2>/dev/null)"
     if [ "$gate" != on ]; then
-        echo "[demo-reset] REFUSED: the deck's operator gate is ${gate:-unreachable} — the judged deck runs with VEER_OPERATOR_PIN set" >&2
+        echo "[demo-reset] REFUSED: the deck's operator gate is ${gate:-unreachable} — the demo deck runs with VEER_OPERATOR_PIN set" >&2
         exit 2
     fi
     if [ "$VEER_STATUS" = not-ready ]; then
@@ -504,7 +504,7 @@ if st != 200:
 elif gate_on:
     ok("operator gate ON (VEER_OPERATOR_PIN): every proxied write needs a signed-in officer")
 else:
-    (bad if APPLY else warn)("operator gate OFF — the judged deck must run with VEER_OPERATOR_PIN")
+    (bad if APPLY else warn)("operator gate OFF — the demo deck must run with VEER_OPERATOR_PIN")
 # read anonymously first: with the gate on, a keyed deck says the upgrade is
 # withheld — the token itself is not fetched by this read
 st, mode = get(DECK + "/gods-eye/mode", timeout=8)
@@ -530,7 +530,7 @@ if keyed and COOKIE:
     summary["stack"]["ion_signed_in"] = signed_mode
     check(st == 200 and signed_mode == "ion-photoreal",
           f"the signed-in officer gets the ion upgrade (mode ion-photoreal, photoreal 3D asset {asset})",
-          f"signed-in /gods-eye/mode answered {st} mode {signed_mode} — the judged canvas would stay keyless")
+          f"signed-in /gods-eye/mode answered {st} mode {signed_mode} — the demo canvas would stay keyless")
 
 vs = E["DR_VEER_STATUS"]
 if vs == "ready":
@@ -538,7 +538,7 @@ if vs == "ready":
 elif vs == "not-ready":
     bad("scripts/veer_up.sh --status: not READY (table above)")
 else:
-    info("private stack: READY judged by the service checks below (veer_up.sh --status covers the live stack)")
+    info("private stack: READY decided by the service checks below (veer_up.sh --status covers the live stack)")
 
 st, oh = get(ORACLE + "/health", timeout=10)
 ing = (oh or {}).get("ingest", {}) if isinstance(oh, dict) else {}
@@ -668,7 +668,7 @@ def unit_kind(u):
 def event_debris(e, keep_runs=()):
     """Why a corridor event is acceptance debris (None when it is not). The
     legacy pursuit is the C-N remediation's, and the staging sweep's own
-    event is the judged state — neither is debris."""
+    event is the staged state — neither is debris."""
     if str(e.get("event_id")) == LEGACY:
         return None
     meta = meta_of(e)
@@ -785,7 +785,7 @@ def preempting_text(a, offer):
 
 PREEMPT_REMEDY = ("decisions are final, so no reset can withdraw it: the deck must skip an approval whose pursuit "
                   "has closed (then flip DECK_SKIPS_CLOSED_PURSUIT_APPROVALS here), or the scripted showcase runs on "
-                  "this plate only after judging")
+                  "this plate only after the demo")
 
 inv = load()
 veh = stolen_vehicle(inv)
@@ -914,13 +914,13 @@ if stale_sightings:
                  "count — --cancel-debris dismisses them"))
 if keep is None:
     plan.append(f"start {SWEEP} (clock {CLOCK:g}) and wait ≤{WAIT_SEC:.0f} s for a PENDING {STOLEN_RULE} + JR-EM units")
-plan.append("verify the judged state (GET-only) and print the judge checklist — nothing is approved")
+plan.append("verify the staged state (GET-only) and print the operator checklist — nothing is approved")
 for p in plan:
     info(f"• {p}")
 summary["plan"] = plan
 pre = offer0["card_approved"] or offer0["basis"]
 if pre:
-    warn(f"the judged AUTHORISE PURSUIT is pre-empted: {preempting_text(pre, offer0)} — /ops reads 'pursuit "
+    warn(f"the demo's AUTHORISE PURSUIT is pre-empted: {preempting_text(pre, offer0)} — /ops reads 'pursuit "
          f"authorised by {pre.get('decided_by')}' with DISMISS only and its pursuit card opens from that approval; "
          + PREEMPT_REMEDY)
 
@@ -977,7 +977,7 @@ m = re.search(r"\bFIR\b[^;()]*", fir or (veh or {}).get("earmark_reason") or "")
 fir_text = re.split(r"\s+names\s+", m.group(0).strip())[0].strip(" ,—-") if m else "FIR on record"
 for r in pending_penal:
     note = (f"e-challan withheld — vehicle reported stolen ({fir_text}): the registered owner is the theft "
-            "victim (C-N); dismissed before judging")[:500]
+            "victim (C-N); dismissed before the demo")[:500]
     st, doc = write(f"/api/v1/enforcement/recommendations/{r['recommendation_id']}/decision",
                     {"decision": "reject", "officer": OFFICER, "note": note})
     check(st == 200 and (doc or {}).get("status") == "rejected",
@@ -1002,7 +1002,7 @@ if CANCEL_DEBRIS:
         run_id = str(meta_of(e).get("run_id"))
         if meta_of(e).get("source") == "event-emulator" and run_id in running_ids and run_id not in stopped:
             continue    # its run is still running (a failed stop is FAILed above): the run owns its event
-        note = (f"acceptance debris ({why}) — cancelled before judging by demo_reset as the named officer "
+        note = (f"acceptance debris ({why}) — cancelled before the demo by demo_reset as the named officer "
                 "(C-F); the row and its audit history stay")[:500]
         st, doc = write(f"/api/v1/events/{e['event_id']}/status", {"to_status": "cancelled", "officer": OFFICER, "note": note})
         if st == 409 and isinstance(doc, dict) and doc.get("from_status") in CLOSED_EVENT:
@@ -1017,7 +1017,7 @@ if CANCEL_DEBRIS:
         for r in [r for r in inv["pending"] if r.get("vehicle_id") == v.get("vehicle_id")]:
             st, doc = write(f"/api/v1/enforcement/recommendations/{r['recommendation_id']}/decision",
                             {"decision": "reject", "officer": OFFICER,
-                             "note": "exercise plate (journey check leftover) — dismissed before judging"})
+                             "note": "exercise plate (journey check leftover) — dismissed before the demo"})
             check(st == 200 or (st == 409 and "already" in detail(doc)),
                   f"dismissed {r.get('rule_id')} {r['recommendation_id'][:8]} on exercise plate {v.get('plate')}",
                   f"dismiss {r['recommendation_id'][:8]}: {st} {detail(doc)}")
@@ -1028,7 +1028,7 @@ if CANCEL_DEBRIS:
     for r in stale_sightings:
         st, doc = write(f"/api/v1/enforcement/recommendations/{r['recommendation_id']}/decision",
                         {"decision": "reject", "officer": OFFICER,
-                         "note": "stale EMULATED sighting from an earlier exercise run — dismissed before judging; "
+                         "note": "stale EMULATED sighting from an earlier exercise run — dismissed before the demo; "
                                  "the staging sweep's fresh sightings await the duty officer"})
         if st == 200 or (st == 409 and "already" in detail(doc)):
             n_ok += 1
@@ -1083,9 +1083,9 @@ if staged is not None and keep is None:
         bad(f"no PENDING {STOLEN_RULE} + JR-EM units within {WAIT_SEC:.0f} s (pending {seen_pending}, units {seen_units})")
 
 # ════════════════════════════════════════════════════════════════════════════
-# 4. the judged state (GET-only)
+# 4. the staged state (GET-only)
 # ════════════════════════════════════════════════════════════════════════════
-step("verify the judged state")
+step("verify the staged state")
 inv = load()
 veh = stolen_vehicle(inv)
 vid = veh.get("vehicle_id") if veh else vid
@@ -1170,14 +1170,14 @@ live = [e for e in inv["events"] if e.get("status") in LIVE_EVENT]
 info(f"live on the board: {[(e['event_id'][:8], e.get('event_kind'), e.get('status')) for e in live] or 'none'}")
 
 # ════════════════════════════════════════════════════════════════════════════
-# 5. the judge checklist
+# 5. the operator checklist
 # ════════════════════════════════════════════════════════════════════════════
 run_end_at = None
 if staged_id is not None:
     _, rd = get(f"{EMU}/api/v1/emulator/runs/{staged_id}?include_tape=false")
     run_end_at = run_end(rd) if isinstance(rd, dict) else None
 old = ", ".join(f"{r['recommendation_id'][:8]}" for r in recs_of(inv["approved"], vid, PENAL)) if vid else ""
-step("judge checklist (a signed-in HUMAN decides every step)")
+step("operator checklist (a signed-in HUMAN decides every step)")
 for line in [
     f"1. On the GB10 browser open {DECK}/ops and sign in as the duty officer (name + PIN).",
     "2. Decision queue: ONE card 'Stolen vehicle sighted — e-challan withheld (vehicle reported stolen, FIR …)' for",
@@ -1196,8 +1196,8 @@ for line in [
     "8. /citizen in EN / HI / GU: emulated events read SIMULATED FEED · EMULATED; plates stay masked unless an",
     "   officer is signed in; vehicles only, via ANPR — never faces or persons.",
     "   The sweep's cameras read the stolen plate over its first ~15 min: its newest sighting stays under",
-    "   10 min old for ~25 min after staging — stage shortly before judging (a later --apply re-stages).",
-    f"9. After judging: stop the staging sweep (run {staged_id}) from the emulator panel"
+    "   10 min old for ~25 min after staging — stage shortly before the demo (a later --apply re-stages).",
+    f"9. After the demo: stop the staging sweep (run {staged_id}) from the emulator panel"
     + (f", or it completes on its own at {ist(run_end_at)} IST." if run_end_at else "."),
 ]:
     say(f"  {line}")

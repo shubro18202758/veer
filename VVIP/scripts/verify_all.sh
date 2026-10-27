@@ -30,7 +30,7 @@
 #                          non-blank, keyless, proxy; the oracle + emulator
 #                          must answer)
 #   TIER design-smoke      the cockpit-topology tripwire + design-shell
-#                          smoke (tests/design-smoke.mjs — / IS the
+#                          smoke (tests/design-smoke.mjs — /analyst IS the
 #                          convoy-command cockpit, the live URLs 200, token
 #                          parity both themes)
 #   TIER deck-ui           the deck's own gates on the same build/ and
@@ -52,6 +52,21 @@
 #                          whole: a test that needs torch/onnx or a database
 #                          skips itself (importorskip / skipif — pytest prints
 #                          the count); a suite is never skipped wholesale
+#   TIER osint-offline     the OSINT pipeline end to end, offline (gate venv,
+#                          the four services/osint-*/src on PYTHONPATH; no
+#                          egress, no oracle, no database):
+#                          scripts/osint_smoke.sh --offline parses the
+#                          committed SYNTHETIC capture
+#                          (services/osint-ingress/tests/fixtures/capture/)
+#                          through the connectors and runs run_pipeline with
+#                          the gazetteer resolver — exactly 3 surfaced
+#                          situations (the correlated affray+collision at
+#                          segment 1045, the Odhav robbery at junction 11, the
+#                          SACHET Ahmedabad district alert), single social
+#                          posts and state-wide nowcasts held, PII redacted
+#                          and find_pii clean, synthetic publishers only, no
+#                          crime_incident — then scripts/gen_osint_gazetteer.py
+#                          --check (the committed gazetteer equals a rebuild)
 #   TIER cargo             signal-ingress `cargo test --locked` (host cargo,
 #                          else the rust:alpine image with cached registry and
 #                          target volumes)
@@ -177,7 +192,7 @@ esac
 # the keyless basemap assertions into ion ones.
 PREVIEW_ENV=(env -u VEER_OPERATOR_PIN -u VEER_OPERATOR_PIN_FILE -u VEER_SESSION_SECRET
     -u VEER_SESSION_SECURE -u VEER_CESIUM_ION_TOKEN -u CC_PIN
-    "ORACLE_PORT=$ORACLE_PORT" "BRAIN_PORT=$BRAIN_PORT" "EMULATOR_PORT=$EMULATOR_PORT")
+    "ORACLE_PORT=$ORACLE_PORT" "BRAIN_PORT=$BRAIN_PORT" "EMULATOR_PORT=$EMULATOR_PORT" "VEER_DESIGN_HARNESS=1")
 # The gate does not write into the checkout: no tier (nor a helper script a
 # tier calls) leaves a .pytest_cache behind.
 export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:+$PYTEST_ADDOPTS }-p no:cacheprovider"
@@ -224,7 +239,7 @@ deck_build() {
     deck_bootstrap || return 1
     local blog
     blog="$(mktemp)"
-    if ! NODE_OPTIONS=--max-old-space-size=1024 ./node_modules/.bin/vite build >"$blog" 2>&1; then
+    if ! NODE_OPTIONS=--max-old-space-size=${VEER_BUILD_HEAP_MB:-4096} ./node_modules/.bin/vite build >"$blog" 2>&1; then
         tail -30 "$blog" >&2
         rm -f "$blog"
         return 1
@@ -337,6 +352,34 @@ deck_step() { # deck_step <what> <cmd…> — run in the deck dir, gate-off/keyl
     (cd "$DECK" && "${PREVIEW_ENV[@]}" "$@") || fail_tier deck-ui "$what failed (re-run it in services/command-deck)"
 }
 
+# spawn_preview — serve build/ gate-off and keyless on $PREVIEW_PORT, exactly
+# the way ops-wall-smoke's ensureOrigin spawns it (`PORT=… HOST=127.0.0.1 node
+# build` under PREVIEW_ENV), for the smokes that only DRIVE a running deck
+# (dss-card, assistant, frame-geometry, osint-dom --inspector spawn nothing).
+# It waits for /ops to answer 200 and fails the tier when it never does; the
+# EXIT trap frees the port even when a later step fails the tier. The caller
+# runs free_preview after its steps.
+spawn_preview() { # spawn_preview <tier>
+    local tier="$1" i plog
+    free_preview
+    plog="$(mktemp)"
+    (cd "$DECK" && exec "${PREVIEW_ENV[@]}" PORT="$PREVIEW_PORT" HOST=127.0.0.1 node build) >"$plog" 2>&1 &
+    PREVIEW_PID=$!
+    trap 'free_preview' EXIT
+    for i in $(seq 1 80); do
+        if curl -fsS -o /dev/null --max-time 3 "$PREVIEW/ops" 2>/dev/null; then
+            rm -f "$plog"
+            log "-- $tier: gate-off preview up on $PREVIEW (pid $PREVIEW_PID)"
+            return 0
+        fi
+        kill -0 "$PREVIEW_PID" 2>/dev/null || break
+        sleep 0.5
+    done
+    tail -20 "$plog" >&2
+    rm -f "$plog"
+    fail_tier "$tier" "the gate-off preview of build/ did not answer 200 on $PREVIEW/ops"
+}
+
 # How many events/dispatches of the fused picture carry the watch plate in
 # their title (the C6 'plates' group's precondition) — GET only.
 plate_titled_count() {
@@ -365,6 +408,8 @@ tier_deck_ui() {
     free_preview
     deck_step "contract replay (recorded oracle payloads)" node tests/contract/run.mjs
     deck_step "design tokens (parity, contrast, hex sweep, the R4 import boundaries incl. .svelte)" node tests/design-tokens.mjs
+    deck_step "copy lint (SPEC §2.5, every EN pack; acronym allowlist + per-key shields, listed in its output)" node tests/copy-lint.mjs
+    deck_step "tolerant-pin self-check (the smokes' final pins and verdicts over real markup samples)" node tests/lib/queue.mjs --self-check
     local unit units=0
     for unit in "$DECK"/tests/*.unit.mjs; do
         [ -f "$unit" ] || continue
@@ -375,6 +420,18 @@ tier_deck_ui() {
     deck_step "edge-basemap entry (CSP, <html lang>, /gods-eye/mode)" sh -c \
         './node_modules/.bin/esbuild tests/edge-basemap.entry.ts --bundle --platform=node --format=esm --alias:\$lib=./src/lib --outfile=tests/artifacts/edge-basemap-bundle.mjs --log-level=warning && node tests/artifacts/edge-basemap-bundle.mjs'
     deck_step "ops-write smoke (writer surface gated; GET-only probes of $ORACLE_URL)" node tests/ops-write-smoke.mjs "$ORACLE_URL"
+    # UI-S7B: the wave-E smokes. They DRIVE a running deck and spawn none, so
+    # one gate-off preview of build/ is spawned for them here (the /design/*
+    # harness routes they drive are part of the build) and freed after.
+    # frame-geometry runs WITHOUT its opt-in escort section (GEOMETRY_ESCORT is
+    # unset explicitly); its shots go to the gitignored artifacts dir, never
+    # the tracked evidence of record.
+    spawn_preview deck-ui
+    deck_step "dss-card smoke (the decision card wiring end to end)" node tests/dss-card-smoke.mjs "$PREVIEW"
+    deck_step "assistant smoke (/chat + /comms + the dock; the chat stream answered locally)" node tests/assistant-smoke.mjs "$PREVIEW"
+    deck_step "frame geometry (docks, credit plate; no escort section)" env -u GEOMETRY_ESCORT GEOMETRY_OUT="$DECK/tests/artifacts/geometry" node tests/frame-geometry.mjs "$PREVIEW" "$DECK/tests/artifacts/geometry"
+    deck_step "osint-dom inspector (the compact inspector measured on the /design/osint harness)" node tests/osint-dom.unit.mjs --inspector "$PREVIEW"
+    free_preview
     local plate="${CC_PLATE:-GJ27EM9001}" titled plates_line
     titled="$(plate_titled_count "$plate")"
     if [ "${titled:-0}" -gt 0 ]; then
@@ -387,7 +444,7 @@ tier_deck_ui() {
         note "city-command C6 'plates' group NOT RUN: no event or dispatch at $ORACLE_URL carries $plate in its title (it needs live data; the masked path ran hermetically in ops-wall-smoke above)"
         plates_line="city-command C6 'plates' not run (no plate-titled event)"
     fi
-    pass "deck-ui (ops-wall hermetic incl. C6 masking, contract replay, design tokens, $units unit tests, edge-basemap, ops-write GET-only; $plates_line)"
+    pass "deck-ui (ops-wall hermetic incl. C6 masking, contract replay, design tokens, copy lint, pin self-check, $units unit tests, edge-basemap, ops-write GET-only, dss-card + assistant + frame-geometry + osint-dom --inspector; $plates_line)"
 }
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -396,10 +453,15 @@ tier_deck_ui() {
 # Bash array so extras brackets reach pip verbatim (no word-split/glob).
 # pyyaml + gymnasium (CPU, pure python) are imported by the oracle/brain
 # suites; torch/onnx stay out — the tests needing them skip themselves.
+# defusedxml (osint-ingress parses every RSS / Atom / CAP / XML document of
+# an untrusted feed through it) and pyproj (osint-geo; before it arrived
+# only through geopandas) are the OSINT packages' direct dependencies. CI's
+# gates.yml installs exactly this literal (sed -n '/^GATE_DEPS=(/,/)$/p'):
+# add a dependency INSIDE it, never with a separate GATE_DEPS+=(…) line.
 GATE_DEPS=(pytest pytest-asyncio httpx fastapi uvicorn pydantic structlog
 prometheus-client valkey numpy polars pyarrow scikit-learn asyncpg
-geopandas shapely osmnx pandas click ortools psutil
-nats-py 'psycopg[binary,pool]' pydantic-settings pyyaml gymnasium)
+geopandas shapely pyproj osmnx pandas click ortools psutil
+nats-py 'psycopg[binary,pool]' pydantic-settings pyyaml gymnasium defusedxml)
 
 tier_python_bootstrap() {
     need python3
@@ -440,6 +502,32 @@ tier_pytest_suites() {
         fi
         pass "pytest-$name ($(printf '%s\n' "$out" | tail -1))"
     done
+}
+
+# ────────────────────────────────────────────────────────────────────────────
+# TIER 5b — the OSINT pipeline offline: the synthetic capture end to end
+# ────────────────────────────────────────────────────────────────────────────
+# Runs right after the pytest tier, which bootstrapped the gate venv. Nothing
+# leaves the box: the capture is parsed from a temp cache, the pipeline runs
+# in-process and no oracle is contacted (osint_smoke.sh pins the discard
+# port). The gazetteer check runs on the standard library alone.
+tier_osint_offline() {
+    need python3
+    local smoke="$VVIP_DIR/scripts/osint_smoke.sh" out mr gz
+    log "== TIER osint-offline: scripts/osint_smoke.sh --offline + scripts/gen_osint_gazetteer.py --check (gate venv) =="
+    [ -f "$smoke" ] || fail_tier osint-offline "scripts/osint_smoke.sh is missing"
+    [ -x "$GATE_VENV/bin/python" ] || tier_python_bootstrap
+    out="$(cd "$VVIP_DIR" && OSINT_SMOKE_PY="$GATE_VENV/bin/python" bash scripts/osint_smoke.sh --offline 2>&1)" || {
+        printf '%s\n' "$out" | tail -40 >&2
+        fail_tier osint-offline "scripts/osint_smoke.sh --offline failed (the synthetic capture no longer gives the designed situations — see above)"
+    }
+    mr="$(printf '%s\n' "$out" | grep -E '^osint_smoke: PASS' | tail -1)"
+    [ -n "$mr" ] || fail_tier osint-offline "scripts/osint_smoke.sh --offline printed no PASS line"
+    gz="$(cd "$VVIP_DIR" && "$GATE_VENV/bin/python" scripts/gen_osint_gazetteer.py --check 2>&1)" || {
+        printf '%s\n' "$gz" | tail -20 >&2
+        fail_tier osint-offline "scripts/gen_osint_gazetteer.py --check failed (scripts/data/osint_gazetteer.json differs from a rebuild — see above)"
+    }
+    pass "osint-offline (${mr#osint_smoke: PASS · } · $(printf '%s\n' "$gz" | grep -E '^gazetteer OK' | tail -1 | cut -c1-90))"
 }
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -659,16 +747,17 @@ sys.exit(0 if json.load(sys.stdin).get("officer") == sys.argv[1] else 1)' "$DECK
         code="$(deck_curl -s -m 30 -o /dev/null -w '%{http_code}' "$deck$p")"
         [ "$code" = 200 ] || fail_tier live "GET $p through the deck answered $code with the session, expected 200"
     done
-    for p in / /ops /gods-eye /comms /chat /citizen /driver; do
+    # V3 root flip: / is Home, /analyst the Convoy Command cockpit (the workspace that used to be /)
+    for p in / /analyst /ops /gods-eye /comms /chat /citizen /driver; do
         code="$(deck_curl -s -m 30 -o /dev/null -w '%{http_code}' "$deck$p")"
         [ "$code" = 200 ] || fail_tier live "page $p answered $code with the session, expected 200"
     done
     # captured first: `curl | grep -q` under pipefail fails when grep exits
     # on the first match while curl is still writing a larger page (SIGPIPE)
     local root_html
-    root_html="$(deck_curl -s -m 30 "$deck/")"
+    root_html="$(deck_curl -s -m 30 "$deck/analyst")"
     [[ "$root_html" == *'data-template="convoy-command"'* ]] \
-        || fail_tier live "/ is not the Convoy Command cockpit (no data-template=\"convoy-command\" in the server render)"
+        || fail_tier live "/analyst is not the Convoy Command cockpit (no data-template=\"convoy-command\" in the server render)"
     for p in /citizen /driver; do
         code="$(curl -s -m 30 -o /dev/null -w '%{http_code}' "$deck$p")"
         [ "$code" = 200 ] || fail_tier live "public page $p answered $code anonymously, expected 200 (citizen pages never need a sign-in)"
@@ -772,6 +861,7 @@ main() {
     tier_design_smoke
     tier_deck_ui
     tier_pytest_suites
+    tier_osint_offline
     tier_cargo
     tier_display_geometry
     tier_ingress_segments

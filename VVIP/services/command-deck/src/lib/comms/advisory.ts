@@ -16,6 +16,11 @@
  * the all-clear: tactical police operations are not broadcast, not even
  * as "has cleared".
  *
+ * OSINT guard (plan X17, comms/osint.ts): an OSINT-sourced event — even a
+ * promoted report of a PUBLIC kind — is WITHHELD from citizens and 108
+ * control (draft and all-clear alike), the notice naming its verification
+ * label; the zone and municipal drafts open with that label.
+ *
  * Unreadable facts are not absent facts: when the hold length or the
  * alternate could not be READ (AdvisoryFacts.unavailable), the text says
  * "unavailable right now" / makes no alternate claim, instead of "not
@@ -26,9 +31,11 @@
  */
 
 import { SUPPORTED, kindLabel, localizeNumber } from '$lib/i18n/strings';
+import { ensureLang } from '$lib/i18n/load';
 import { citizenT } from '$lib/i18n/strings.citizen';
 import { clockAtMs, holdAnchorMs, isPublicKind, type HoldSource } from '$lib/citizen/holds';
 import type { PublicCorridorEvent } from '$lib/citizen/public-model';
+import { osintDraftMarker, osintWithheldFrom, osintWithheldText, type OsintMark } from './osint';
 
 export type Audience = 'citizens' | 'zones' | 'ambulance108' | 'municipal';
 
@@ -78,6 +85,12 @@ export interface AdvisoryFacts {
 	 * never pass for a real road hold.
 	 */
 	emulated?: boolean;
+	/**
+	 * The event is OSINT-sourced (source_kind 'osint' or metadata.source
+	 * 'osint'): withheld from citizens and 108, whatever its kind; null or
+	 * absent for every other event.
+	 */
+	osint?: OsintMark | null;
 }
 
 export interface AdvisoryDraft {
@@ -86,8 +99,10 @@ export interface AdvisoryDraft {
 	lang: string;
 	audience: Audience;
 	text: string;
-	/** True when the audience must not receive this kind (no text composed). */
+	/** True when the audience must not receive this event (no text composed). */
 	withheld: boolean;
+	/** Why: an operator-only kind, or an OSINT-sourced event (null when not withheld). */
+	withheldReason: 'operator-kind' | 'osint' | null;
 	/** Facts shared by every language rendering — for parity checks. */
 	facts: {
 		kind: string;
@@ -130,10 +145,14 @@ export function composeAdvisory(facts: AdvisoryFacts, audience: Audience, lang: 
 	const kind = kindLabel(lang, facts.eventKind);
 	const clock = clockAtMs(facts.anchorMs, lang);
 	const alt = facts.alternate?.length ? facts.alternate.join(' / ') : null;
-	const withheld = audience === 'citizens' && !isPublicKind(facts.eventKind);
+	const osintWithheld = osintWithheldFrom(facts.osint, audience);
+	const kindWithheld = audience === 'citizens' && !isPublicKind(facts.eventKind);
+	const withheld = osintWithheld || kindWithheld;
 
 	let text: string;
-	if (withheld) {
+	if (osintWithheld && facts.osint) {
+		text = osintWithheldText(facts.osint, lang);
+	} else if (withheld) {
 		text = citizenT(lang, 'comms_withheld');
 	} else if (facts.holdMinutes == null) {
 		text = `${kind}: ${citizenT(lang, facts.unavailable?.hold ? 'card_hold_unavailable' : 'card_hold_unknown')}`;
@@ -160,6 +179,8 @@ export function composeAdvisory(facts: AdvisoryFacts, audience: Audience, lang: 
 		}
 	}
 
+	// An internal draft of an OSINT event says so first: never a verified hold.
+	if (facts.osint && !withheld) text = `${osintDraftMarker(facts.osint, lang)} ${text}`;
 	if (facts.emulated && !withheld) text = `${citizenT(lang, 'adv_emulated_prefix')} ${text}`;
 
 	return {
@@ -168,6 +189,7 @@ export function composeAdvisory(facts: AdvisoryFacts, audience: Audience, lang: 
 		audience,
 		text,
 		withheld,
+		withheldReason: osintWithheld ? 'osint' : kindWithheld ? 'operator-kind' : null,
 		facts: {
 			kind: facts.eventKind,
 			segment: facts.stretch.segmentId,
@@ -181,22 +203,34 @@ export function composeAdvisory(facts: AdvisoryFacts, audience: Audience, lang: 
 
 /** All three languages for one audience (the desk's side-by-side columns). */
 export function composeAdvisoryTrilingual(facts: AdvisoryFacts, audience: Audience): AdvisoryDraft[] {
+	// the desk shows all three at once: make sure the HI/GU chunks are in flight
+	// (FIX-E-PERF2); t()'s EN fallback covers the columns until they land
+	if (typeof document !== 'undefined') {
+		void ensureLang('hi');
+		void ensureLang('gu');
+	}
 	return SUPPORTED.map((s) => composeAdvisory(facts, audience, s.code));
 }
 
 /**
  * The closing all-clear (storyboard's final beat) in one language — a
- * CITIZEN draft, so an operator-only kind gets the withheld notice.
+ * CITIZEN draft, so an operator-only kind and an OSINT-sourced event (its
+ * `osint` mark) get the withheld notice.
  */
-export function composeAllClear(eventKind: string, lang: string, emulated = false): string {
+export function composeAllClear(eventKind: string, lang: string, emulated = false, osint: OsintMark | null = null): string {
+	if (osint) return osintWithheldText(osint, lang);
 	if (!isPublicKind(eventKind)) return citizenT(lang, 'comms_withheld');
 	const text = citizenT(lang, 'adv_citizen_clear', kindLabel(lang, eventKind));
 	return emulated ? `${citizenT(lang, 'adv_emulated_prefix')} ${text}` : text;
 }
 
 /** The all-clear in every supported language (en · hi · gu). */
-export function composeAllClearTrilingual(eventKind: string, emulated = false): Array<{ lang: string; text: string }> {
-	return SUPPORTED.map((s) => ({ lang: s.code, text: composeAllClear(eventKind, s.code, emulated) }));
+export function composeAllClearTrilingual(
+	eventKind: string,
+	emulated = false,
+	osint: OsintMark | null = null,
+): Array<{ lang: string; text: string }> {
+	return SUPPORTED.map((s) => ({ lang: s.code, text: composeAllClear(eventKind, s.code, emulated, osint) }));
 }
 
 /**

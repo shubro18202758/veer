@@ -36,7 +36,10 @@ import { ops } from '$lib/ops/store.svelte';
 import { cityRegistry } from '../entities/registry.svelte';
 import { displayText } from '../plates';
 import type { GodsEyeLayer, GodsEyeLayerContext, GodsEyeLayerInstance } from '../registry';
-import { cssColor } from '../theme';
+import { canvasFont, cssColor } from '../theme';
+import { kindIcon } from '$lib/design/icons';
+import { chromeOf, kindShown, kindsSignature, viewOf } from '../hud/map/view';
+import { mapInk, markerBillboard, tagMarker, type MarkerMeta } from '../hud/map/symbols';
 import { agencyColor, agencyLabel } from './agency';
 import { DRAPE_Z, clampedDot, clampedLabel, drapeAudit, drapedPolyline, drapedRing, ground, groundPath } from './draping';
 
@@ -64,9 +67,13 @@ function createDispatchLayer(): GodsEyeLayerInstance {
 			return u && u.lon != null && u.lat != null ? ([u.lon, u.lat] as [number, number]) : null;
 		};
 		const officer = ops.officerOn;
+		const v2 = chromeOf(ctx) === 'v2';
+		// v2: a kind filter that leaves dispatches out hides the unit's way there (the pass hides the waypoint)
+		const lines = !v2 || kindShown(viewOf(ctx), 'dispatch');
 		const sig = JSON.stringify([
 			dispatches.map((d) => [d.id, d.state, d.lon, d.lat, unitPos(str(d.props.unit_id)), d.props.event_title ?? null]),
 			officer,
+			v2 ? kindsSignature(viewOf(ctx)) : null,
 		]);
 		if (sig === lastSignature) return;
 		lastSignature = sig;
@@ -75,6 +82,64 @@ function createDispatchLayer(): GodsEyeLayerInstance {
 		entityIds.length = 0;
 		urns.clear();
 		counts = { requested: 0, moving: 0, onScene: 0, lines: 0 };
+
+		if (v2) {
+			// SPEC §2.4: the waypoint is a neutral marker with the dispatch glyph
+			// (a requested dispatch wears the decision dot — the canvas reads it
+			// from the decision units); the unit's way there is a neutral dashed
+			// line. No agency hue.
+			const neutral = cesium.Color.fromCssColorString(mapInk('marker'));
+			for (const d of dispatches) {
+				const agency = str(d.props.agency);
+				const unitId = str(d.props.unit_id);
+				const state = d.state ?? 'requested';
+				const wp = d.props.waypoint_junction;
+				const target = typeof wp === 'number' ? `junction ${wp}` : 'the event marker';
+				const urn = `dispatch:${d.id}`;
+				if (state === 'requested') counts.requested++;
+				else if (state === 'on_scene') counts.onScene++;
+				else counts.moving++;
+				const description = `Dispatch: ${agencyLabel(agency)} ${unitId ?? 'unit'} to ${target}, ${state.replace(/_/g, ' ')}${
+					d.props.decided_by ? `, approved by ${d.props.decided_by}` : ', waiting for a named officer'
+				}. For ${displayText(str(d.props.event_title), officer) || 'an event'}.`;
+				const meta: MarkerMeta = {
+					urn,
+					kind: 'dispatch',
+					glyph: kindIcon('dispatch'),
+					shape: 'disc',
+					cluster: true,
+					t: d.t,
+					label: [{ id: unitId ?? agencyLabel(agency) }],
+					labelWhen: 'hover',
+				};
+				const wpEntity = viewer.entities.add({
+					id: `${DISPATCH_PICK_PREFIX}wp-${d.id}`,
+					position: ground(cesium, d.lon as number, d.lat as number),
+					billboard: markerBillboard(cesium, meta),
+					description,
+				});
+				tagMarker(wpEntity, meta);
+				entityIds.push(wpEntity.id);
+				urns.set(wpEntity.id, urn);
+				const from = unitPos(unitId);
+				if (from && lines && state !== 'requested' && state !== 'on_scene') {
+					const line = viewer.entities.add({
+						id: `${DISPATCH_PICK_PREFIX}line-${d.id}`,
+						polyline: drapedPolyline(cesium, {
+							positions: groundPath(cesium, [from, [d.lon as number, d.lat as number]]),
+							width: 2,
+							material: new cesium.PolylineDashMaterialProperty({ color: neutral, dashLength: 10 }),
+							z: DRAPE_Z.dispatch,
+						}),
+						description,
+					});
+					entityIds.push(line.id);
+					urns.set(line.id, urn);
+					counts.lines++;
+				}
+			}
+			return;
+		}
 		const canvasInk = cssColor(cesium, '--v-canvas', cesium.Color.BLACK);
 
 		for (const d of dispatches) {
@@ -127,7 +192,7 @@ function createDispatchLayer(): GodsEyeLayerInstance {
 				}),
 				label: clampedLabel(cesium, {
 					text: `${agencyLabel(agency)} ${unitId ?? ''} → ${target} · ${state.replace(/_/g, ' ').toUpperCase()}`,
-					font: '12px monospace',
+					font: canvasFont('12px var(--v-font-ui)'),
 					fillColor: color,
 					outlineColor: canvasInk,
 					outlineWidth: 2,
@@ -187,6 +252,9 @@ function createDispatchLayer(): GodsEyeLayerInstance {
 			void cityRegistry.refresh();
 			draw();
 		},
+		restyle() {
+			draw();
+		},
 		handlePick(pickId) {
 			return pickId.startsWith(DISPATCH_PICK_PREFIX);
 		},
@@ -204,7 +272,13 @@ function createDispatchLayer(): GodsEyeLayerInstance {
 					? 'city fusion API unavailable — no dispatch lines'
 					: `${n} open dispatches · ${counts.requested} awaiting approval · ${counts.moving} en route · ${counts.onScene} on scene (units EMULATED)`,
 				error: down ? (cityRegistry.note ?? 'dispatch source not ok') : null,
-				detail: ctx && entityIds.length ? { ...counts, ...drapeAudit(ctx.viewer, entityIds) } : { ...counts },
+				detail: {
+					...counts,
+					// v2: the LayerTree row's provenance glyph (SPEC §5.3, §9.2) — every unit a dispatch
+					// moves is emulated (the dispatch projection, C-A patrols), as the hint says
+					...(chromeOf(ctx) === 'v2' ? { emulated: n } : {}),
+					...(ctx && entityIds.length ? drapeAudit(ctx.viewer, entityIds) : {}),
+				},
 				via: 'city-api',
 			};
 		},
@@ -221,5 +295,6 @@ export const dispatchLayer: GodsEyeLayer = {
 	requiresKeyId: null,
 	pickPrefix: DISPATCH_PICK_PREFIX,
 	defaultOn: true,
+	group: 'response',
 	create: createDispatchLayer,
 };

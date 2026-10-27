@@ -390,12 +390,12 @@ class TestRealNetworkPoiSnaps:
         assert 540 < cands[0].distance_m < 570
 
     def test_the_planner_rail_offers_the_matrix_pois(self):
-        # The deck's planner rail (PlannerRail.svelte POIS) and the matrix
-        # are one list: same names, same points, same order — so every pair
-        # an operator can pick is a pair the matrix measured.
-        rail = (REPO / "services" / "command-deck" / "src" / "lib" / "ops" / "components"
-                / "template" / "PlannerRail.svelte").read_text(encoding="utf-8")
-        block = rail[rail.index("const POIS"):]
+        # The deck's planner (corridor/escort-state.svelte.ts PLAN_POIS, the v2 Plan tab's list) and
+        # the matrix are one list: same names, same points, same order — so every pair an operator
+        # can pick is a pair the matrix measured.
+        rail = (REPO / "services" / "command-deck" / "src" / "lib" / "corridor"
+                / "escort-state.svelte.ts").read_text(encoding="utf-8")
+        block = rail[rail.index("const PLAN_POIS"):]
         block = block[:block.index("];")]
         offered = [
             (name, (float(lon), float(lat)))

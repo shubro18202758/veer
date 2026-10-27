@@ -17,10 +17,14 @@
  *   stretch   the spine's first segment, named from /spatial/segments
  *   alternate GET /api/v1/graph/k-shortest-paths between the spine ends,
  *             named by the detour's signage roads (holds.chooseAlternate)
+ *   osint     the event is OSINT-sourced (source_kind 'osint' or
+ *             metadata.source 'osint') on the board row OR the raw row —
+ *             either one withholds it from citizens and 108 (osint.ts),
+ *             labelled with the raw row's verification state when read
  *
  * Read-only GETs through the deck proxy's fixed /api/v1 prefix; segment
  * names cache for the page's life, paths for 10 min, params for 30 s, raw
- * kinds for 10 s. A read that fails degrades its fact to null AND is
+ * rows (kind + provenance) for 10 s. A read that fails degrades its fact to null AND is
  * flagged `unavailable`, so the draft says "unavailable right now" rather
  * than "not published" / "no alternate".
  */
@@ -36,6 +40,7 @@ import {
 	type HoldSource,
 } from '$lib/citizen/holds';
 import type { AdvisoryFacts } from './advisory';
+import { isOsintSourced, osintFieldsOfRow, osintState, type OsintFields, type OsintMark } from './osint';
 
 const PATHS_TTL_MS = 10 * 60_000;
 const PARAMS_TTL_MS = 30_000;
@@ -50,7 +55,13 @@ async function getJson(url: string): Promise<unknown> {
 let namesPromise: Promise<Map<number, string>> | null = null;
 const pathsCache = new Map<string, { at: number; value: Promise<number[][]> }>();
 const paramsCache = new Map<string, { at: number; value: Promise<AdaptiveClosure | null> }>();
-const kindsCache = new Map<string, { at: number; value: Promise<Map<string, string>> }>();
+const kindsCache = new Map<string, { at: number; value: Promise<Map<string, RawFacts>> }>();
+
+/** What the desk takes from the oracle's RAW row: its kind and its provenance. */
+interface RawFacts {
+	kind: string;
+	provenance: OsintFields;
+}
 
 /** An /adaptive/params answer: the advance closure and its provenance. */
 interface AdaptiveClosure {
@@ -127,20 +138,30 @@ function advanceClosure(subject: string, protectionClass: string): Promise<Adapt
 	});
 }
 
-/** event_id → the oracle's raw event_kind, off GET /events/active. */
-function rawKinds(): Promise<Map<string, string>> {
+/** event_id → the oracle's raw event_kind and provenance, off GET /events/active. */
+function rawRows(): Promise<Map<string, RawFacts>> {
 	return memo(kindsCache, 'active', KINDS_TTL_MS, async () => {
 		const body = (await getJson(`${ORACLE_V1}/events/active`)) as { events?: unknown[] } | unknown[];
 		const rows = Array.isArray(body) ? body : Array.isArray(body?.events) ? body.events : [];
-		const out = new Map<string, string>();
+		const out = new Map<string, RawFacts>();
 		for (const r of rows as Array<Record<string, unknown>>) {
 			const id = r?.event_id;
 			if ((typeof id === 'string' || typeof id === 'number') && typeof r.event_kind === 'string') {
-				out.set(String(id), r.event_kind);
+				out.set(String(id), { kind: r.event_kind, provenance: osintFieldsOfRow(r) });
 			}
 		}
 		return out;
 	});
+}
+
+/**
+ * The event's OSINT mark: OSINT-sourced on the board row OR the raw row
+ * (either withholds — a read that failed or lags never lets one through),
+ * labelled by the raw row's verification state when it says one.
+ */
+export function osintMarkFor(ev: OsintFields, raw: OsintFields | null | undefined): OsintMark | null {
+	if (!isOsintSourced(ev) && !isOsintSourced(raw)) return null;
+	return { verification: osintState(raw?.verificationState) ?? osintState(ev.verificationState) };
 }
 
 /** A settled read: the value, or a failure the caller must label. */
@@ -170,7 +191,7 @@ export function factsKey(ev: CorridorEvent): string {
 export async function resolveFacts(ev: CorridorEvent, nowMs = Date.now()): Promise<AdvisoryFacts> {
 	const spine = ev.routeSegmentIds;
 	const fromPolicy = phaseAdvanceClosureSec(ev.phases);
-	const [names, params, paths, kinds] = await Promise.all([
+	const [names, params, paths, raws] = await Promise.all([
 		attempt(roadNames()),
 		fromPolicy == null
 			? attempt(advanceClosure(movementIdOf(ev) ?? ev.eventId, ev.protectionClass))
@@ -178,8 +199,9 @@ export async function resolveFacts(ev: CorridorEvent, nowMs = Date.now()): Promi
 		spine.length >= 2
 			? attempt(kShortest(spine[0], spine[spine.length - 1]))
 			: Promise.resolve<Attempt<number[][]>>({ ok: true, value: [] }),
-		attempt(rawKinds()),
+		attempt(rawRows()),
 	]);
+	const raw = raws.ok ? raws.value.get(ev.eventId) : undefined;
 	const nameOf = (sid: number) => (names.ok ? names.value.get(sid) : undefined);
 	const adaptive = params.ok ? params.value : null;
 	const advance = fromPolicy ?? adaptive?.sec ?? null;
@@ -189,7 +211,7 @@ export async function resolveFacts(ev: CorridorEvent, nowMs = Date.now()): Promi
 		eventId: ev.eventId,
 		// The raw kind when the oracle answered (an unknown kind is then
 		// withheld from citizens); the board's kind only as a fallback.
-		eventKind: (kinds.ok ? kinds.value.get(ev.eventId) : undefined) ?? ev.eventKind,
+		eventKind: raw?.kind ?? ev.eventKind,
 		stretch: { segmentId: first, roadName: first == null ? null : (nameOf(first) ?? null) },
 		holdMinutes: holdMinutesFromSec(advance),
 		holdSource: source,
@@ -200,5 +222,7 @@ export async function resolveFacts(ev: CorridorEvent, nowMs = Date.now()): Promi
 			alternate: spine.length >= 2 && (!paths.ok || !names.ok),
 		},
 		emulated: ev.emulated === true,
+		// Withheld from citizens and 108 whatever its kind (comms/osint.ts).
+		osint: osintMarkFor(ev, raw?.provenance),
 	};
 }

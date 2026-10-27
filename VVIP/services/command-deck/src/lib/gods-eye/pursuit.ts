@@ -47,7 +47,20 @@
 import type { InterceptionPlan } from '$lib/ops/types';
 import type { InterceptionDetail, SegmentGeometry } from './data';
 import { displayPlate } from './plates';
-import { cssColor, cssVar, withAlpha } from './theme';
+import { canvasFont, cssColor, cssVar, withAlpha } from './theme';
+import { kindIcon } from '$lib/design/icons';
+import type { MapChrome } from './hud/map/view';
+import {
+	arrowImage,
+	bearingDeg,
+	imageBillboard,
+	mapInk,
+	markerBillboard,
+	northAxis,
+	offsetPoint,
+	tagMarker,
+	type MarkerMeta,
+} from './hud/map/symbols';
 import { istStamp } from './hud/format';
 import {
 	DRAPE_Z,
@@ -89,6 +102,12 @@ export interface PursuitOverlayInput {
 	segments?: Map<number, SegmentGeometry>;
 	/** A named duty officer is on console (plates unmasked). */
 	officer?: boolean;
+	/**
+	 * Chrome v2: the kinds the map shows (null: every kind). Without
+	 * 'vehicle' the heading arrow is not drawn; the canvas's pass hides the
+	 * choke squares by their own kind ('junction'). Legacy ignores it.
+	 */
+	kinds?: ReadonlySet<string> | null;
 }
 
 export interface PursuitOverlay {
@@ -117,22 +136,40 @@ function reducedMotion(): boolean {
 	return matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-export function createPursuitOverlay(cesium: CesiumGlobal, viewer: CesiumViewer): PursuitOverlay {
+/** Chrome v2: the heading arrow's length on the ground (m) and its line widths (px). */
+export const PURSUIT_V2 = { headingM: 180, line: 2.5, casing: 6, chokes: 5 } as const;
+
+export function createPursuitOverlay(cesium: CesiumGlobal, viewer: CesiumViewer, opts: { chrome?: MapChrome } = {}): PursuitOverlay {
 	const entityIds: string[] = [];
 	const timers: ReturnType<typeof setTimeout>[] = [];
 
-	// Token-resolved colours (Cesium named constants as fallbacks only).
-	const actColor = cssColor(cesium, '--v-act', cesium.Color.ORANGE);
-	const dataColor = cssColor(cesium, '--v-data', cesium.Color.CYAN);
-	/** Dim ink for points (a passed choke, a stale sighting) — never for text. */
-	const inkColor = cssColor(cesium, '--v-ink-3', cesium.Color.LIGHTGRAY);
-	/** Label inks: secondary text stays legible on a projector (ink-2, never ink-3). */
-	const labelInk = cssColor(cesium, '--v-ink-1', cesium.Color.WHITE);
-	const labelInk2 = cssColor(cesium, '--v-ink-2', cesium.Color.LIGHTGRAY);
-	const outline = cssColor(cesium, '--v-canvas', cesium.Color.BLACK);
-	/** A translucent canvas plate behind every overlay label (legible over any basemap). */
-	const labelPlate = cesium.Color.fromCssColorString(withAlpha(cssVar('--v-canvas') ?? 'black', 0.72));
-	const platePad = new cesium.Cartesian2(5, 3);
+	// Token-resolved colours of the LEGACY chrome (Cesium named constants as
+	// fallbacks only), read when a legacy overlay is first drawn — the v2
+	// overlay reads only the --v-map-* tokens (hud/map/symbols.ts).
+	// inkColor dims points (a passed choke, a stale sighting), never text;
+	// label inks keep secondary text legible on a projector (ink-2, never
+	// ink-3); a translucent canvas plate stands behind every overlay label.
+	let legacyInks: {
+		actColor: unknown;
+		dataColor: unknown;
+		inkColor: unknown;
+		labelInk: unknown;
+		labelInk2: unknown;
+		outline: unknown;
+		labelPlate: unknown;
+		platePad: unknown;
+	} | null = null;
+	const inks = () =>
+		(legacyInks ??= {
+			actColor: cssColor(cesium, '--v-act', cesium.Color.ORANGE),
+			dataColor: cssColor(cesium, '--v-data', cesium.Color.CYAN),
+			inkColor: cssColor(cesium, '--v-ink-3', cesium.Color.LIGHTGRAY),
+			labelInk: cssColor(cesium, '--v-ink-1', cesium.Color.WHITE),
+			labelInk2: cssColor(cesium, '--v-ink-2', cesium.Color.LIGHTGRAY),
+			outline: cssColor(cesium, '--v-canvas', cesium.Color.BLACK),
+			labelPlate: cesium.Color.fromCssColorString(withAlpha(cssVar('--v-canvas') ?? 'black', 0.72)),
+			platePad: new cesium.Cartesian2(5, 3),
+		});
 
 	function add(entity: Record<string, unknown>): string {
 		const created = viewer.entities.add(entity);
@@ -147,9 +184,102 @@ export function createPursuitOverlay(cesium: CesiumGlobal, viewer: CesiumViewer)
 		entityIds.length = 0;
 	}
 
-	function show({ plan, trace, detail = null, segments, officer = false }: PursuitOverlayInput) {
-		clear();
+	/**
+	 * Chrome v2 (SPEC §5.3 "Pursuit overlay"): the observed heading as a red
+	 * arrow from the last read, and the ranked choke junctions as rounded
+	 * squares with the junction glyph and a "Choke 1" label; a choke the
+	 * vehicle has likely passed is dimmed. The track is the vehicle layer's
+	 * (the selected vehicle's reads); no comet, ring or marching arc.
+	 */
+	function showV2({ plan, detail = null, segments, kinds = null }: PursuitOverlayInput) {
 		if (!plan?.latestSighting) return;
+		const [lon, lat] = plan.latestSighting.position;
+		const facts =
+			detail && detail.eventId === plan.eventId && (!detail.sightingId || detail.sightingId === plan.latestSighting.sightingId)
+				? detail
+				: null;
+		const passed = new Set((facts?.chokes ?? []).filter((c) => c.likelyPassed).map((c) => c.junctionId));
+		const names = new Map((facts?.chokes ?? []).map((c) => [c.junctionId, c.name]));
+		// the observed heading, else the direction of the first legal onward segment
+		let heading = typeof plan.latestSighting.heading === 'number' && Number.isFinite(plan.latestSighting.heading) ? plan.latestSighting.heading : null;
+		if (heading == null) {
+			const onward = facts?.direction?.onwardSegmentIds?.[0];
+			const seg = onward != null ? segments?.get(onward) : undefined;
+			const end = seg?.coordinates[seg.coordinates.length - 1];
+			if (end) heading = bearingDeg([lon, lat], end);
+		}
+		if (heading != null && !facts?.stale && (!kinds || kinds.has('vehicle'))) {
+			const tip = offsetPoint(lon, lat, heading, PURSUIT_V2.headingM);
+			for (const [part, width, ink] of [
+				['heading-casing', PURSUIT_V2.casing, mapInk('casing')],
+				['heading', PURSUIT_V2.line, mapInk('alert')],
+			] as const) {
+				add({
+					id: `${PURSUIT_PREFIX}${part}`,
+					polyline: drapedPolyline(cesium, {
+						positions: groundPath(cesium, [
+							[lon, lat],
+							tip,
+						]),
+						width,
+						material: cesium.Color.fromCssColorString(ink),
+						z: DRAPE_Z.pursuit,
+					}),
+					description: `Observed heading ${Math.round(heading)}° from the last read (${facts?.direction?.basis ?? 'heading'}).`,
+				});
+			}
+			const axis = northAxis(cesium, tip[0], tip[1]);
+			add({
+				id: `${PURSUIT_PREFIX}heading-head`,
+				position: ground(cesium, tip[0], tip[1]),
+				billboard: imageBillboard(cesium, arrowImage('heading'), { w: 18, h: 18 }, {
+					rotation: (-heading * Math.PI) / 180,
+					...(axis ? { alignedAxis: axis } : {}),
+				}),
+				description: `Observed heading ${Math.round(heading)}°.`,
+			});
+		}
+		plan.chokes.slice(0, PURSUIT_V2.chokes).forEach((choke) => {
+			const gone = passed.has(choke.junctionId);
+			const name = names.get(choke.junctionId);
+			const meta: MarkerMeta = {
+				urn: `junction:${choke.junctionId}`,
+				kind: 'junction',
+				glyph: kindIcon('junction'),
+				shape: 'square',
+				size: 20,
+				passed: gone,
+				label: [{ text: `Choke ${choke.rank}` }],
+				labelWhen: gone ? 'hover' : 'always',
+				labelPrefer: ['r', 'tr', 'br', 'l', 't', 'b'],
+				labelPriority: 70 - choke.rank,
+				radius: 12,
+			};
+			const entity = viewer.entities.add({
+				id: `${PURSUIT_PREFIX}choke-${choke.junctionId}`,
+				position: ground(cesium, choke.position[0], choke.position[1]),
+				billboard: markerBillboard(cesium, meta),
+				description: `Choke ${choke.rank}${name ? `: ${name}` : ''} (junction ${choke.junctionId}, ${choke.junctionType}). About ${
+					choke.graphCostSec != null ? `${Math.round(choke.graphCostSec)} s` : 'an unknown time'
+				} by road from the last read${choke.signalControl ? ', signalised' : ''}.${gone ? ' The vehicle has likely passed it.' : ''}`,
+			});
+			tagMarker(entity, meta);
+			entityIds.push(entity.id);
+		});
+	}
+
+	function show(input: PursuitOverlayInput) {
+		clear();
+		if (opts.chrome === 'v2') {
+			showV2(input);
+			return;
+		}
+		showLegacy(input);
+	}
+
+	function showLegacy({ plan, trace, detail = null, segments, officer = false }: PursuitOverlayInput) {
+		if (!plan?.latestSighting) return;
+		const { actColor, dataColor, inkColor, labelInk, labelInk2, outline, labelPlate, platePad } = inks();
 		const reduced = reducedMotion();
 		const [sightLon, sightLat] = plan.latestSighting.position;
 		// The detail must describe THIS plan's sighting to be trusted here.
@@ -178,7 +308,7 @@ export function createPursuitOverlay(cesium: CesiumGlobal, viewer: CesiumViewer)
 				text: `${plate}${plan.latestSighting.source === 'emulated_anpr' ? ' ·EMULATED' : ''}${
 					stale ? ` · STALE${ageText ? ` ${ageText}` : ''}` : ageText ? ` · ${ageText} ago` : ''
 				}${facts?.direction?.againstOneway ? ' · AGAINST ONE-WAY' : ''}`,
-				font: '13px monospace',
+				font: canvasFont('13px var(--v-font-ui)'),
 				fillColor: stale ? labelInk2 : labelInk,
 				outlineColor: outline,
 				outlineWidth: 2,
@@ -220,7 +350,7 @@ export function createPursuitOverlay(cesium: CesiumGlobal, viewer: CesiumViewer)
 		// A RING, never a disc: a draped rim carries it (ground ellipses have
 		// no outline) over a 15 % veil filled on the ground, so the vehicle
 		// mark and the selection halo inside stay visible (an opaque 45 m fill
-		// covered both in the judge view). A STALE sighting's ring goes dim
+		// covered both in the overview). A STALE sighting's ring goes dim
 		// with it. The rim is a dynamic ground line only while it grows; it
 		// lands as constant positions.
 		const ringT0 = performance.now();
@@ -364,7 +494,7 @@ export function createPursuitOverlay(cesium: CesiumGlobal, viewer: CesiumViewer)
 						text: `CHOKE ${choke.rank}${name ? ` · ${name}` : ` · ${choke.junctionType}`}${
 							choke.graphCostSec != null ? ` · ${Math.round(choke.graphCostSec)}s` : ''
 						}${gone ? ' · LIKELY PASSED' : ''}`,
-						font: isLead ? '13px monospace' : '12px monospace',
+						font: canvasFont(isLead ? '13px var(--v-font-ui)' : '12px var(--v-font-ui)'),
 						fillColor: isLead ? actColor : gone ? labelInk2 : labelInk,
 						outlineColor: outline,
 						outlineWidth: 2,

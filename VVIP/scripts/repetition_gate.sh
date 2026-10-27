@@ -5,7 +5,7 @@
 #
 # CLAIM PROVEN: run the showcase N times (default 2) from an identical
 # starting state, and the terminal database state the showcase's own
-# phase-8 assertions are judged over is IDENTICAL across rounds — after
+# phase-8 assertions are evaluated over is IDENTICAL across rounds — after
 # normalizing exactly the volatility classes that are provably not system
 # output (wall clock, run-scoped emulator ids, gen_random_uuid identifiers,
 # BIGSERIAL sequences, one in-process counter, and engine-loop row
@@ -1400,8 +1400,12 @@ def build_fixture_rows(run_id, sweep_seed, observation_count, iso,
              "title": f"PURSUIT — stolen {STOLEN_PLATE} (FIR 4401/2026, Kalupur PS)",
              "description": "operator-opened pursuit", "status": "planning",
              "movement_id": None,
+             # HON-4: as showcase_run.sh opens it — the scripted pursuit of an
+             # emulated vehicle is labelled EMULATED, never live
              "metadata": {"vehicle_id": vehicle, "recommendation_id": rec,
-                          "fir": "FIR 4401/2026, Kalupur PS", "opened_by": OFFICER}},
+                          "fir": "FIR 4401/2026, Kalupur PS", "opened_by": OFFICER,
+                          "source": "emulated", "scripted_by": "scripts/showcase_run.sh",
+                          "fir_is_demo": True}},
         ],
         "events.event_phases": [
             {"phase_id": str(_uuid.uuid5(_NS, f"phase|{run_id}")),
@@ -1997,7 +2001,7 @@ log "workdir: $WORKDIR"
     "$GATE_PY_BIN -m pip install 'psycopg[binary]'"
 
 for c in "$PG_CONTAINER" "$VALKEY_CONTAINER" "$NATS_CONTAINER" "$ORACLE_CONTAINER" "$BRAIN_CONTAINER" "$INGRESS_CONTAINER" "$DECK_CONTAINER" "$EMULATOR_CONTAINER"; do
-    [ -n "$c" ] || continue   # served outside docker here: judged over HTTP below
+    [ -n "$c" ] || continue   # served outside docker here: checked over HTTP below
     [ "$(docker inspect "$c" --format '{{.State.Running}}' 2>/dev/null)" = "true" ] \
         || die "container $c is not running" "bash $VVIP_DIR/scripts/veer_up.sh (the live stack) — or bring up the private stack this gate is pointed at"
 done

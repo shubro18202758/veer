@@ -6,7 +6,7 @@
 	 * server-side projection): public-kind events, signage road names, the
 	 * hold length with its provenance, a road-graph alternate and a
 	 * plain-language tier. No operator store, no band codes, no pursuit or
-	 * crime events, no titles. One card per event with mono localized
+	 * crime events, no titles. One card per event with tabular localized
 	 * windows; the hold's provenance as the oracle labels it (closure plan,
 	 * live adaptation, or the standard baseline — never a baseline passed
 	 * off as live); an honest "not published" when a hold length is unknown,
@@ -24,14 +24,20 @@
 	 */
 	import { SUPPORTED, kindLabel, localizeNumber, t } from '$lib/i18n/strings';
 	import { citizenT, consequenceLabel, phaseLabelText } from '$lib/i18n/strings.citizen';
+	import { ensureLang } from '$lib/i18n/load';
 	import { composeAdvisory, factsFromPublicEvent, holdSourceKey } from '$lib/comms/advisory';
 	import { clockAtMs, holdAnchorMs, stretchHolds, type StripTier } from './holds';
 	import { publicFeed } from './public-feed.svelte';
 	import type { PublicCorridorEvent, PublicLaterEvent } from './public-model';
-	import Badge from '$lib/primitives/Badge.svelte';
-	import Button from '$lib/primitives/Button.svelte';
-	import EmptyState from '$lib/primitives/EmptyState.svelte';
+	import '$lib/v3/public/packs.pub3';
+	import { artFor } from '$lib/v3/home/model';
+	import Glyph from '$lib/v3/Glyph.svelte';
+	import PublicTag from '$lib/v3/public/PublicTag.svelte';
+	import HoldMap from '$lib/v3/public/HoldMap.svelte';
 	import LightCorridorMap from './LightCorridorMap.svelte';
+	import VehicleShot from '$lib/v3/media/VehicleShot.svelte';
+	import AgencyMark from '$lib/v3/media/AgencyMark.svelte';
+	import '$lib/v3/media/packs.media';
 
 	let { lang }: { lang: string } = $props();
 
@@ -39,6 +45,13 @@
 	/** The citizen's own pick; until then alerts follow the page language. */
 	let alertLangPicked = $state<string | null>(null);
 	const alertLang = $derived(alertLangPicked ?? lang);
+	// The alert language can differ from the page's (an EN page previewing a
+	// Hindi alert): its strings load on choice (FIX-E-PERF2 round 2) — the
+	// preview re-renders in the language once they land (t()'s EN fallback
+	// holds for the moment in between; a raw key never shows).
+	$effect(() => {
+		void ensureLang(alertLang);
+	});
 	let subscribed = $state(false);
 	let timelineOpen = $state(false);
 	let explainerOpen = $state(false);
@@ -47,9 +60,15 @@
 	const later = $derived<PublicLaterEvent[]>(publicFeed.later);
 	const preview = $derived(publicFeed.preview);
 	const live = $derived(publicFeed.status === 'live' || publicFeed.status === 'stale');
+	/** Live (requestable) corridor events: the driver page offers only these. */
+	const liveCount = $derived(live ? events.filter((e) => e.source === 'live' && e.stretches.length > 0).length : 0);
 	const tier = $derived<StripTier | null>(live ? publicFeed.tier : null);
 	/** Emulated rows on the page (cards or Later): they get the explicit note. */
 	const anyEmulated = $derived(events.some((e) => e.source === 'emulated') || later.some((e) => e.source === 'emulated'));
+	/** The emulated HOLD rows listed below — the banner counts the same cards. */
+	const emulatedHoldCount = $derived(
+		events.filter((e) => e.source === 'emulated').reduce((n, e) => n + stretchHolds(e.stretches, e.hold.minutes, holdAnchorMs(e), lang, e.state === 'active').length, 0),
+	);
 	/** The hero never reads LIVE when every event it would vouch for is emulated. */
 	const heroEmulated = $derived(live && events.length > 0 && events.every((e) => e.source === 'emulated'));
 
@@ -63,8 +82,9 @@
 		return tr === 'calm' ? 'strip_calm' : tr === 'watch' ? 'strip_watch' : tr === 'hold' ? 'strip_hold' : 'strip_severe';
 	}
 
-	function stretchName(roadName: string | null, segmentId: number): string {
-		return roadName ?? `${t(lang, 'freezeZone')} ${localizeNumber(segmentId, lang)}`;
+	/** A stretch by its signage name, else its place on the route (F-24: never a raw segment id). */
+	function stretchName(roadName: string | null, index: number): string {
+		return roadName ?? citizenT(lang, 'driver_stretch_unnamed', localizeNumber(index + 1, lang));
 	}
 
 	function validPhone(p: string): boolean {
@@ -86,102 +106,124 @@
 <div class="citizen" data-screen="citizen" data-feed={publicFeed.status}>
 	<header class="hero">
 		<div class="hero-row">
-			<strong class="brand">{t(lang, 'brand')}</strong>
+			<span class="brand">{t(lang, 'brand')}</span>
 			{#if !live}
-				<Badge variant="fixture" label={t(lang, 'opsSourceOffline')} />
+				<span class="source-badge" data-source-badge="fixture"><PublicTag tone="dashed" glyph="flask" label={t(lang, 'opsSourceOffline')} /></span>
 			{:else if heroEmulated}
-				<span class="source-badge" data-source-badge="emulated"><Badge variant="emulated" label={citizenT(lang, 'citizen_emulated_badge')} /></span>
+				<span class="source-badge" data-source-badge="emulated"><PublicTag tone="dashed" glyph="flask" label={citizenT(lang, 'citizen_emulated_badge')} /></span>
 			{:else}
-				<span class="source-badge" data-source-badge="live"><Badge variant="live" label={t(lang, 'opsSourceLive')} /></span>
+				<span class="source-badge" data-source-badge="live"><PublicTag tone="live" glyph="check" label={t(lang, 'opsSourceLive')} /></span>
 			{/if}
 		</div>
 		<h1 class="kicker">{citizenT(lang, 'citizen_kicker')}</h1>
-		<p class="tagline">{t(lang, 'tagline')}</p>
 		{#if updatedLabel}
-			<p class="updated mono" data-testid="citizen-updated">{updatedLabel}</p>
+			<p class="updated fig" data-testid="citizen-updated">{updatedLabel}</p>
 		{/if}
 	</header>
 
-	<!-- Plain-language strip: never the internal band code. -->
+	<!-- Plain-language strip: never the internal band code. The one sentence a citizen needs, in big type. -->
 	<section class="strip tier-{tier ?? 'unknown'}" data-strip={tier ?? 'unknown'} aria-live="polite">
 		<span class="strip-dot" aria-hidden="true"></span>
 		<p>{citizenT(lang, stripKey(tier))}</p>
 	</section>
 
 	{#if publicFeed.status === 'stale'}
-		<p class="feed-note" data-feed-note="stale">{citizenT(lang, 'citizen_feed_stale')}</p>
+		<p class="feed-note" data-feed-note="stale"><Glyph name="info" size={18} /><span class="note-text">{citizenT(lang, 'citizen_feed_stale')}</span></p>
 	{:else if preview}
 		<p class="feed-note" data-feed-note="preview">
-			<Badge variant="fixture" label={t(lang, 'opsSourceOffline')} />
+			<PublicTag tone="dashed" glyph="flask" label={t(lang, 'opsSourceOffline')} />
 			<span class="note-text">{citizenT(lang, 'citizen_feed_offline')}</span>
 		</p>
 	{/if}
 	{#if anyEmulated && !preview}
 		<p class="feed-note" data-feed-note="emulated">
-			<Badge variant="emulated" label={citizenT(lang, 'citizen_emulated_badge')} />
-			<span class="note-text">{citizenT(lang, 'citizen_emulated_note')}</span>
+			<PublicTag tone="dashed" glyph="flask" label={citizenT(lang, 'citizen_emulated_badge')} />
+			<span class="note-text">
+				{citizenT(lang, 'citizen_emulated_note')}
+				<!-- the banner counts the very holds listed below (same derivation) -->
+				{#if emulatedHoldCount > 0}{emulatedHoldCount === 1 ? t(lang, 'asst_citizen_hold_one') : t(lang, 'asst_citizen_hold_many', emulatedHoldCount)}{/if}
+			</span>
 		</p>
 	{/if}
 
 	{#if events.length === 0}
-		<EmptyState
-			title={publicFeed.status === 'connecting' ? citizenT(lang, 'citizen_feed_connecting') : citizenT(lang, 'citizen_none_now')}
-			hint={t(lang, 'statusClearSub')}
-		/>
+		<div class="empty" data-testid="citizen-empty" data-prim="empty-state">
+			<img class="empty-scene" src="/artwork/scenes/day.svg" alt={t(lang, 'v3i_scene_day')} width="960" height="320" decoding="async" />
+			<p class="empty-t">{publicFeed.status === 'connecting' ? citizenT(lang, 'citizen_feed_connecting') : citizenT(lang, 'citizen_none_now')}</p>
+			<p class="empty-h">{t(lang, 'statusClearSub')}</p>
+		</div>
 	{:else}
 		<!-- One card per public corridor event. -->
 		{#each events as ev (ev.eventId)}
 			{@const holds = stretchHolds(ev.stretches, ev.hold.minutes, holdAnchorMs(ev), lang, ev.state === 'active')}
 			{@const demo = ev.source === 'offline-fixture'}
 			{@const emulated = ev.source === 'emulated'}
-			<article class="event-card" class:emulated data-event={ev.eventId} data-kind={ev.eventKind} data-source={ev.source}>
-				<header class="card-head">
-					<h2>{kindLabel(lang, ev.eventKind)}</h2>
-					{#if emulated}
-						<span class="source-badge" data-source-badge="emulated"><Badge variant="emulated" label={citizenT(lang, 'citizen_emulated_badge')} /></span>
-					{:else}
-						<span class="source-badge" data-source-badge={demo ? 'fixture' : 'live'}><Badge variant={demo ? 'fixture' : 'live'} label={demo ? t(lang, 'opsSourceOffline') : t(lang, 'opsSourceLive')} /></span>
-					{/if}
-				</header>
-				<p class="consequence">{consequenceLabel(lang, ev.eventKind, ev.state !== 'active')}</p>
+			{@const unverified = ev.source === 'unverified'}
+			<article class="event-card" class:emulated={emulated || unverified} data-event={ev.eventId} data-kind={ev.eventKind} data-source={ev.source}>
 				{#if holds.length}
-					<ul class="holds">
-						{#each holds as h (h.segmentId)}
-							<li class="hold" data-hold-state={h.state}>
-								<span class="seg">{stretchName(h.roadName, h.segmentId)}</span>
-								<span class="window mono">
-									{t(lang, 'freezeMinutes', localizeNumber(h.minutes, lang))}
-									· {citizenT(lang, 'card_window_at', h.clock)}
-								</span>
-								<!-- an emulated hold is a demonstration: never 'Holding now' on a real road -->
-								<span class="state">
-									{h.state === 'now'
-										? citizenT(lang, emulated ? 'card_sim_now' : 'card_now')
-										: h.state === 'next'
-											? citizenT(lang, emulated ? 'card_sim_soon' : 'card_soon')
-											: '→'}
-								</span>
-							</li>
-						{/each}
-					</ul>
-					<p class="provenance" data-hold-source={ev.hold.source}>
-						{citizenT(lang, holdSourceKey(ev.hold.source))}
-					</p>
-				{:else if ev.unavailable.hold}
-					<p class="hold-unknown" data-hold-state="unavailable">{citizenT(lang, 'card_hold_unavailable')}</p>
-				{:else}
-					<p class="hold-unknown" data-hold-state="unpublished">{citizenT(lang, 'card_hold_unknown')}</p>
+					<!-- the day-graded map of the stretch: solid for a live event, dashed for anything that is not -->
+					<HoldMap ids={ev.stretches.map((s) => s.segmentId)} live={ev.source === 'live'} alt={t(lang, 'v3p_hold_map_alt')} />
 				{/if}
-				{#if ev.alternate}
-					<p class="alternate" data-alternate="graph">
-						{t(lang, 'alternate')}: <span class="alt">{ev.alternate.roadNames.join(' / ')}</span>
-						<span class="provenance">· {citizenT(lang, 'card_alt_from_graph')}</span>
-					</p>
-				{:else if ev.unavailable.alternate}
-					<p class="alternate" data-alternate="unavailable">{citizenT(lang, 'card_alt_unavailable')}</p>
-				{:else}
-					<p class="alternate" data-alternate="none">{citizenT(lang, 'card_alt_none')}</p>
-				{/if}
+				<div class="card-body">
+					<header class="card-head">
+						<div class="ttl">
+							<img class="art" src={artFor(ev.eventKind)} alt="" width="44" height="44" />
+							<h2>{kindLabel(lang, ev.eventKind)}</h2>
+						</div>
+						{#if emulated}
+							<span class="source-badge" data-source-badge="emulated"><PublicTag tone="dashed" glyph="flask" label={citizenT(lang, 'citizen_emulated_badge')} /></span>
+						{:else if unverified}
+							<!-- F-CONN-03: the position source could not be read — never vouched for as live -->
+							<span class="source-badge" data-source-badge="unverified"><PublicTag tone="dashed" glyph="unverified" label={citizenT(lang, 'citizen_unverified_badge')} /></span>
+						{:else}
+							<span class="source-badge" data-source-badge={demo ? 'fixture' : 'live'}>
+								<PublicTag tone={demo ? 'dashed' : 'live'} glyph={demo ? 'flask' : 'check'} label={demo ? t(lang, 'opsSourceOffline') : t(lang, 'opsSourceLive')} />
+							</span>
+						{/if}
+					</header>
+					<p class="consequence">{consequenceLabel(lang, ev.eventKind, ev.state !== 'active')}</p>
+					{#if holds.length}
+						<ul class="holds">
+							{#each holds as h (h.segmentId)}
+								<li class="hold" data-hold-state={h.state}>
+									<span class="seg">{stretchName(h.roadName, ev.stretches.findIndex((s) => s.segmentId === h.segmentId))}</span>
+									<!-- an emulated hold is a demonstration: never 'Holding now' on a real road -->
+									<span class="state">
+										{h.state === 'now'
+											? citizenT(lang, emulated ? 'card_sim_now' : unverified ? 'card_unv_now' : 'card_now')
+											: h.state === 'next'
+												? citizenT(lang, emulated ? 'card_sim_soon' : unverified ? 'card_unv_soon' : 'card_soon')
+												: '→'}
+									</span>
+									<span class="window fig">
+										{t(lang, 'freezeMinutes', localizeNumber(h.minutes, lang))}
+										· {citizenT(lang, 'card_window_at', h.clock)}
+									</span>
+								</li>
+							{/each}
+						</ul>
+						<p class="provenance" data-hold-source={ev.hold.source}>
+							{citizenT(lang, holdSourceKey(ev.hold.source))}
+						</p>
+					{:else if ev.unavailable.hold}
+						<p class="hold-unknown" data-hold-state="unavailable">{citizenT(lang, 'card_hold_unavailable')}</p>
+					{:else}
+						<p class="hold-unknown" data-hold-state="unpublished">{citizenT(lang, 'card_hold_unknown')}</p>
+					{/if}
+					{#if ev.alternate}
+						<p class="alternate" data-alternate="graph">
+							<Glyph name="route" size={18} />
+							<span>
+								{t(lang, 'alternate')}: <span class="alt">{ev.alternate.roadNames.join(' / ')}</span>
+								<span class="provenance">· {citizenT(lang, 'card_alt_from_graph')}</span>
+							</span>
+						</p>
+					{:else if ev.unavailable.alternate}
+						<p class="alternate" data-alternate="unavailable">{citizenT(lang, 'card_alt_unavailable')}</p>
+					{:else}
+						<p class="alternate" data-alternate="none">{citizenT(lang, 'card_alt_none')}</p>
+					{/if}
+				</div>
 			</article>
 		{/each}
 
@@ -189,7 +231,7 @@
 		<section class="accordion">
 			<button class="acc-head" aria-expanded={timelineOpen} onclick={() => (timelineOpen = !timelineOpen)}>
 				<span>{citizenT(lang, 'timeline_title')}</span>
-				<span class="mono" aria-hidden="true">{timelineOpen ? '−' : '+'}</span>
+				<span class="chev" aria-hidden="true"><Glyph name={timelineOpen ? 'up' : 'down'} size={20} /></span>
 			</button>
 			{#if timelineOpen}
 				<ul class="timeline">
@@ -202,7 +244,7 @@
 								</span>
 								<span class="tl-label" data-phase-label={ph.label}>{kindLabel(lang, ev.eventKind)} · {phaseLabelText(lang, ph.label, i + 1)}</span>
 								{#if ph.startTime}
-									<span class="tl-clock mono" data-ts={ph.startTime}>{clockAtMs(Date.parse(ph.startTime), lang)}</span>
+									<span class="tl-clock fig" data-ts={ph.startTime}>{clockAtMs(Date.parse(ph.startTime), lang)}</span>
 								{/if}
 							</li>
 						{/each}
@@ -222,7 +264,7 @@
 			<ul>
 				{#each later as ev (ev.eventId)}
 					<li class="later-row" data-event={ev.eventId} data-kind={ev.eventKind} data-source={ev.source} data-starts={ev.startsAt ?? ''}>
-						<span class="later-when mono">
+						<span class="later-when fig">
 							{ev.startsAt != null ? clockAtMs(ev.startsAt, lang) : citizenT(lang, 'citizen_later_unscheduled')}
 						</span>
 						<span class="later-what">
@@ -234,7 +276,7 @@
 							{/if}
 						</span>
 						{#if ev.source === 'emulated'}
-							<span class="source-badge" data-source-badge="emulated"><Badge variant="emulated" label={citizenT(lang, 'citizen_emulated_badge')} /></span>
+							<span class="source-badge" data-source-badge="emulated"><PublicTag tone="dashed" glyph="flask" label={citizenT(lang, 'citizen_emulated_badge')} /></span>
 						{/if}
 					</li>
 				{/each}
@@ -244,7 +286,7 @@
 	{/if}
 
 	<!-- Light corridor map (always mounted: an empty city is information too). -->
-	<section class="map-card">
+	<section class="map-card" aria-label={t(lang, 'v3p_map_title')}>
 		<LightCorridorMap
 			{lang}
 			compact
@@ -256,7 +298,7 @@
 	<section class="accordion">
 		<button class="acc-head" aria-expanded={explainerOpen} onclick={() => (explainerOpen = !explainerOpen)}>
 			<span>{citizenT(lang, 'citizen_explainer_link')}</span>
-			<span class="mono" aria-hidden="true">{explainerOpen ? '−' : '+'}</span>
+			<span class="chev" aria-hidden="true"><Glyph name={explainerOpen ? 'up' : 'down'} size={20} /></span>
 		</button>
 		{#if explainerOpen}
 			<div class="explainer">
@@ -290,14 +332,14 @@
 					<option value={s.code}>{s.label}</option>
 				{/each}
 			</select>
-			<Button type="submit" variant="secondary" size="citizen" disabled={!validPhone(phone)}>
+			<button type="submit" class="pbtn" disabled={!validPhone(phone)}>
 				{t(lang, 'subscribeBtn')}
-			</Button>
+			</button>
 		</form>
 		{#if subscribed}
 			<p class="subscribed">{t(lang, 'subscribed')}</p>
 			<div class="preview" data-testid="subscribe-preview" lang={alertLang}>
-				<Badge variant="fixture" label={t(lang, 'demoBadge')} />
+				<PublicTag tone="dashed" glyph="flask" label={t(lang, 'demoBadge')} />
 				<strong>{t(lang, 'previewTitle')}</strong>
 				<p>{previewText}</p>
 			</div>
@@ -307,9 +349,16 @@
 
 	<!-- Emergency → /driver. -->
 	<section class="emergency">
-		<h3>{t(lang, 'emergencyTitle')}</h3>
-		<p>{t(lang, 'emergencyBody')}</p>
-		<a class="cta" href="/driver" data-testid="driver-link">{t(lang, 'emergencyCta')} →</a>
+		<span class="em-pic">
+			<VehicleShot cls="ambulance" {lang} width={150} />
+			<span class="em-mark"><AgencyMark role="108" {lang} size={22} /></span>
+		</span>
+		<div class="em-body">
+			<h3>{t(lang, 'emergencyTitle')}</h3>
+			<!-- F-09: a request needs a live corridor event; with none, say so (never "the active event") -->
+			<p data-testid="emergency-body" data-live-events={liveCount}>{t(lang, liveCount > 0 ? 'emergencyBody' : 'emergencyBodyNone')}</p>
+			<a class="cta" href="/driver" data-testid="driver-link">{t(lang, 'emergencyCta')} →</a>
+		</div>
 	</section>
 
 	<footer>
@@ -323,242 +372,125 @@
 
 <style>
 	.citizen {
-		max-width: 640px;
-		margin: 0 auto;
-		padding: var(--v-space-4) var(--v-space-4) var(--v-space-6);
+		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-gap-panel);
-		font-size: var(--v-text-md);
-		line-height: 1.55;
-		color: var(--v-ink-1);
+		gap: 16px;
+		width: 100%;
+		max-width: 592px;
+		margin: 0 auto;
+		padding: 20px 16px 40px;
+		color: var(--v3-t1);
+		font-size: 17px;
+		line-height: 26px;
 	}
 
-	/* the source badge drops under the brand on a phone — it never squeezes
-	 * the brand into three lines */
+	.fig {
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* ── the hero: the page's one question ─────────────────────────────── */
+	.hero {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 4px 4px 0;
+	}
+
+	/* the source badge drops under the brand on a phone — it never squeezes the brand into three lines */
 	.hero-row {
 		display: flex;
 		flex-wrap: wrap;
 		justify-content: space-between;
 		align-items: center;
-		gap: var(--v-space-1) var(--v-space-2);
+		gap: 6px 10px;
 	}
 
 	.brand {
 		flex: 1 1 12rem;
-		font-size: var(--v-text-sm);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		text-transform: uppercase;
-		color: var(--v-ink-2);
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		font-weight: 600;
+		line-height: var(--v3-lh-meta);
 	}
 
 	.kicker {
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-xl);
-		line-height: 1.15;
-		color: var(--v-ink-1);
-	}
-
-	.tagline {
-		margin: var(--v-space-1) 0 0;
-		color: var(--v-ink-2);
+		margin: 0;
+		font-size: 32px;
+		font-weight: 680;
+		line-height: 40px;
 	}
 
 	.updated {
-		margin: var(--v-space-1) 0 0;
-		font-family: var(--v-font-mono);
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
+		margin: 0;
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		line-height: var(--v3-lh-meta);
 	}
 
-	.mono {
-		font-family: var(--v-font-mono);
+	.source-badge {
+		display: inline-flex;
+		max-width: 100%;
 	}
 
-	/* ── Band strip: 12% tints, plain language ─────────────────────────── */
+	/* ── the posture sentence: calm is green; every other posture is the brand blue (red and orange keep their meanings) ── */
 	.strip {
 		display: flex;
 		align-items: center;
-		gap: var(--v-space-3);
-		padding: var(--v-space-3) var(--v-space-4);
-		border-radius: var(--v-radius-panel);
-		border: 1px solid var(--v-line-1);
+		gap: 14px;
+		padding: 18px 20px;
+		border: 1px solid var(--v3-line-1);
+		border-radius: var(--v3-radius-xl);
+		background: var(--v3-s1);
+		box-shadow: var(--v3-elev-1);
 	}
 
 	.strip p {
 		margin: 0;
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-1);
+		font-size: 22px;
+		font-weight: 640;
+		line-height: 30px;
 	}
 
 	.strip-dot {
-		width: 10px;
-		height: 10px;
+		flex: none;
+		width: 14px;
+		height: 14px;
 		border-radius: 50%;
-		flex-shrink: 0;
+		background: var(--v3-t3);
 	}
 
-	.strip.tier-calm {
-		background: color-mix(in srgb, var(--v-band-green) 12%, transparent);
-	}
 	.strip.tier-calm .strip-dot {
-		background: var(--v-band-green);
+		background: var(--v3-ok);
+		box-shadow: 0 0 0 5px var(--v3-ok-veil);
 	}
-	.strip.tier-watch {
-		background: color-mix(in srgb, var(--v-band-amber) 12%, transparent);
-	}
-	.strip.tier-watch .strip-dot {
-		background: var(--v-band-amber);
-	}
-	.strip.tier-hold {
-		background: color-mix(in srgb, var(--v-band-red) 12%, transparent);
-	}
-	.strip.tier-hold .strip-dot {
-		background: var(--v-band-red);
-	}
-	.strip.tier-severe {
-		background: color-mix(in srgb, var(--v-ink-1) 8%, transparent);
-		border-color: var(--v-act-text);
-	}
+
+	.strip.tier-watch .strip-dot,
+	.strip.tier-hold .strip-dot,
 	.strip.tier-severe .strip-dot {
-		background: var(--v-act-text);
+		background: var(--v3-brand-strong);
+		box-shadow: 0 0 0 5px var(--v3-brand-veil);
 	}
+
 	.strip.tier-unknown {
 		border-style: dashed;
-	}
-	.strip.tier-unknown .strip-dot {
-		background: var(--v-line-2);
+		box-shadow: none;
 	}
 
-	/* ── Event cards ────────────────────────────────────────────────────── */
-	.event-card,
-	.subscribe,
-	.emergency,
-	.accordion {
-		background: var(--v-surface-1);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-panel);
-		padding: var(--v-space-4);
-	}
-
-	/* the source badge wraps under the kind on a phone — never past the card edge */
-	.card-head {
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: space-between;
-		align-items: baseline;
-		gap: var(--v-space-1) var(--v-space-2);
-	}
-
-	.card-head h2 {
-		flex: 1 1 10rem;
-		margin: 0;
-		font-size: var(--v-text-lg);
-	}
-
-	.consequence {
-		margin: var(--v-space-1) 0 var(--v-space-3);
-		color: var(--v-ink-2);
-		font-size: var(--v-text-sm);
-	}
-
-	.holds {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--v-space-1);
-	}
-
-	/* A hold row WRAPS on a phone: the road name keeps its line and the
-	 * window / state drop below it — they never print over the name. */
-	.hold {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: var(--v-space-1) var(--v-space-3);
-		padding: var(--v-space-2) var(--v-space-3);
-		border: 1px solid var(--v-line-1);
-		border-radius: var(--v-radius-chip);
-		font-size: var(--v-text-sm);
-	}
-
-	.hold[data-hold-state='now'] {
-		border-color: color-mix(in srgb, var(--v-band-red) 45%, transparent);
-		background: color-mix(in srgb, var(--v-band-red) 8%, transparent);
-	}
-
-	/* A simulated hold never wears the live 'holding now' alarm. */
-	.event-card.emulated .hold[data-hold-state='now'] {
-		border-style: dashed;
-		border-color: var(--v-line-2);
-		background: transparent;
-	}
-
-	/* Signage road names read as text; only the numbers stay mono. */
-	.seg {
-		font-weight: 600;
-		flex: 1 1 9rem;
-		min-width: 8ch;
-		overflow-wrap: anywhere;
-	}
-
-	.window {
-		font-family: var(--v-font-mono);
-		color: var(--v-ink-2);
-		white-space: nowrap;
-	}
-
-	.state {
-		font-size: var(--v-text-2xs);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		color: var(--v-ink-2);
-		white-space: nowrap;
-	}
-
-	.alternate {
-		margin: var(--v-space-3) 0 0;
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-2);
-	}
-
-	.alt {
-		color: var(--v-data);
-		font-weight: 600;
-	}
-
-	.provenance {
-		margin: var(--v-space-1) 0 0;
-		font-size: var(--v-text-2xs);
-		color: var(--v-ink-3);
-	}
-
-	.alternate .provenance {
-		margin: 0;
-	}
-
-	.hold-unknown {
-		margin: 0;
-		font-size: var(--v-text-sm);
-		color: var(--v-ink-3);
-		border: 1px dashed var(--v-line-2);
-		border-radius: var(--v-radius-chip);
-		padding: var(--v-space-2) var(--v-space-3);
-	}
-
-	/* badge + note: side by side when there is room, the note under the
-	 * badge on a phone (never a sliver of a column beside it) */
+	/* ── notes ─────────────────────────────────────────────────────────── */
 	.feed-note {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: var(--v-space-1) var(--v-space-2);
+		gap: 8px 10px;
 		margin: 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
+		padding: 12px 14px;
+		border: 1px solid var(--v3-line-1);
+		border-radius: var(--v3-radius-l);
+		background: var(--v3-s2);
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		line-height: 20px;
 	}
 
 	.note-text {
@@ -566,226 +498,501 @@
 		min-width: 0;
 	}
 
-	/* ── Accordions ─────────────────────────────────────────────────────── */
+	/* ── event cards ───────────────────────────────────────────────────── */
+	.event-card,
+	.subscribe,
+	.emergency,
+	.later,
+	.accordion {
+		overflow: hidden;
+		border: 1px solid var(--v3-line-1);
+		border-radius: var(--v3-radius-xl);
+		background: var(--v3-s1);
+		box-shadow: var(--v3-elev-1);
+	}
+
+	/* an emulated or unverified card is outlined, never solid: it is not a live road hold */
+	.event-card.emulated {
+		border-style: dashed;
+		border-color: var(--v3-dashed);
+	}
+
+	.card-body {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		padding: 18px 20px 20px;
+	}
+
+	.card-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px 12px;
+	}
+
+	.ttl {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-width: 0;
+	}
+
+	.art {
+		flex: none;
+		width: 44px;
+		height: 44px;
+		border-radius: var(--v3-radius-m);
+		background: var(--v3-s3);
+	}
+
+	.card-head h2 {
+		margin: 0;
+		font-size: 22px;
+		font-weight: 660;
+		line-height: 28px;
+	}
+
+	.consequence {
+		margin: 0;
+		color: var(--v3-t2);
+	}
+
+	/* a hold: the road, how it stands, then its window — wrapping, never overlapping */
+	.holds {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.hold {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: start;
+		gap: 2px 12px;
+		padding: 12px 14px;
+		border-radius: var(--v3-radius-m);
+		background: var(--v3-s2);
+	}
+
+	.seg {
+		min-width: 0;
+		font-weight: 650;
+		overflow-wrap: anywhere;
+	}
+
+	.state {
+		justify-self: end;
+		max-width: 100%;
+		padding: 0 10px;
+		border-radius: 13px;
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		font-weight: 650;
+		line-height: 26px;
+		text-align: right;
+	}
+
+	/* holding now: the one filled state (white on the brand blue, 5.3:1) */
+	.hold[data-hold-state='now'] .state {
+		background: var(--v3-brand-strong);
+		color: var(--v3-on-brand);
+	}
+
+	.hold[data-hold-state='next'] .state {
+		box-shadow: inset 0 0 0 1.5px var(--v3-brand-strong);
+		color: var(--v3-brand-text);
+	}
+
+	.window {
+		grid-column: 1 / -1;
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		line-height: 20px;
+	}
+
+	.alternate {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		margin: 0;
+		font-size: 16px;
+		line-height: 24px;
+	}
+
+	.alternate :global(.v3-glyph) {
+		flex: none;
+		margin-top: 3px;
+		color: var(--v3-route-text);
+	}
+
+	.alt {
+		font-weight: 650;
+	}
+
+	.provenance {
+		margin: 0;
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		line-height: 20px;
+	}
+
+	.hold-unknown {
+		margin: 0;
+		padding: 12px 14px;
+		border: 1px dashed var(--v3-line-3);
+		border-radius: var(--v3-radius-m);
+		color: var(--v3-t2);
+	}
+
+	/* ── accordions ────────────────────────────────────────────────────── */
 	.acc-head {
 		display: flex;
-		width: 100%;
-		justify-content: space-between;
 		align-items: center;
-		background: none;
-		border: none;
-		padding: 0;
+		justify-content: space-between;
+		gap: 12px;
+		width: 100%;
+		min-height: 56px;
+		padding: 0 20px;
+		border: 0;
+		background: transparent;
+		color: var(--v3-t1);
 		font: inherit;
-		font-weight: 600;
-		color: var(--v-ink-1);
+		font-size: 17px;
+		font-weight: 640;
+		text-align: left;
 		cursor: pointer;
 	}
 
+	.chev {
+		display: grid;
+		flex: none;
+		place-items: center;
+		color: var(--v3-t2);
+	}
+
 	.timeline {
-		list-style: none;
-		margin: var(--v-space-3) 0 0;
-		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-1);
+		margin: 0;
+		padding: 0 20px 8px;
+		list-style: none;
 	}
 
 	.tl-row {
-		display: flex;
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
 		align-items: baseline;
-		gap: var(--v-space-3);
-		font-size: var(--v-text-sm);
-		padding: var(--v-space-1) 0;
-		border-bottom: 1px dashed var(--v-line-1);
+		gap: 4px 12px;
+		padding: 12px 0;
+		border-top: 1px solid var(--v3-line-1);
+		font-size: 16px;
+		line-height: 24px;
 	}
 
 	.tl-state {
-		font-size: var(--v-text-2xs);
-		font-weight: var(--v-weight-status);
-		letter-spacing: var(--v-tracking-status);
-		color: var(--v-ink-3);
-		min-width: 5.5em;
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		font-weight: 600;
 	}
 
 	.tl-label {
-		flex: 1;
-		color: var(--v-ink-2);
+		min-width: 0;
+		overflow-wrap: anywhere;
 	}
 
 	.tl-clock {
-		font-family: var(--v-font-mono);
-		color: var(--v-ink-3);
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+	}
+
+	.explainer {
+		padding: 0 20px 18px;
 	}
 
 	.explainer h3 {
-		margin: var(--v-space-3) 0 var(--v-space-1);
-		font-size: var(--v-text-md);
+		margin: 0 0 6px;
+		font-size: 17px;
 	}
 
 	.explainer p {
 		margin: 0;
-		color: var(--v-ink-2);
-		font-size: var(--v-text-sm);
+		color: var(--v3-t2);
+		font-size: 16px;
+		line-height: 24px;
 	}
 
-	.map-card {
-		border-radius: var(--v-radius-panel);
-		overflow: hidden;
-	}
-
-	.source-badge {
-		display: inline-flex;
-		flex-shrink: 0;
-	}
-
-	/* An emulated card is a demonstration: dashed, never the live hairline. */
-	.event-card.emulated {
-		border-style: dashed;
-		border-color: var(--v-line-2);
-	}
-
-	/* ── Later (beyond the 2 h horizon) ─────────────────────────────────── */
+	/* ── later ─────────────────────────────────────────────────────────── */
 	.later {
-		background: var(--v-surface-1);
-		border: 1px dashed var(--v-line-2);
-		border-radius: var(--v-radius-panel);
-		padding: var(--v-space-4);
+		padding: 18px 20px 16px;
 	}
 
-	.later h3 {
-		margin: 0 0 var(--v-space-2);
-		font-size: var(--v-text-md);
+	.later h3,
+	.subscribe h3,
+	.emergency h3 {
+		margin: 0 0 6px;
+		font-size: 19px;
+		font-weight: 650;
+		line-height: 26px;
 	}
 
 	.later ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-1);
+		margin: 0 0 8px;
+		padding: 0;
+		list-style: none;
 	}
 
 	.later-row {
 		display: flex;
-		align-items: baseline;
 		flex-wrap: wrap;
-		gap: var(--v-space-2) var(--v-space-3);
-		font-size: var(--v-text-sm);
-		padding: var(--v-space-1) 0;
-		border-bottom: 1px dashed var(--v-line-1);
+		align-items: baseline;
+		gap: 4px 12px;
+		padding: 10px 0;
+		border-top: 1px solid var(--v3-line-1);
 	}
 
 	.later-when {
-		font-family: var(--v-font-mono);
-		color: var(--v-ink-1);
-		min-width: 9em;
+		min-width: 7.5rem;
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		font-weight: 600;
 	}
 
 	.later-what {
-		flex: 1;
+		flex: 1 1 12rem;
 		min-width: 0;
-		color: var(--v-ink-2);
+		overflow-wrap: anywhere;
 	}
 
-	/* ── Subscribe ──────────────────────────────────────────────────────── */
-	.subscribe h3,
-	.emergency h3 {
-		margin: 0 0 var(--v-space-1);
-		font-size: var(--v-text-md);
+	.later-roads {
+		color: var(--v3-t2);
+	}
+
+	.map-card {
+		overflow: hidden;
+		border: 1px solid var(--v3-line-1);
+		border-radius: var(--v3-radius-xl);
+		box-shadow: var(--v3-elev-1);
+	}
+
+	/* the corridor map inside it draws its own frame: no second border */
+	.map-card :global(.light-map) {
+		border: 0;
+		border-radius: 0;
+	}
+
+	/* ── subscribe ─────────────────────────────────────────────────────── */
+	.subscribe,
+	.emergency {
+		padding: 20px;
 	}
 
 	.subscribe p,
 	.emergency p {
-		margin: 0 0 var(--v-space-3);
-		color: var(--v-ink-2);
-		font-size: var(--v-text-sm);
+		margin: 0 0 12px;
+		color: var(--v3-t2);
+		font-size: 16px;
+		line-height: 24px;
 	}
 
 	form {
 		display: flex;
-		gap: var(--v-space-2);
 		flex-wrap: wrap;
 		align-items: center;
+		gap: 10px;
 	}
 
 	form input,
 	form select {
-		border: 1px solid var(--v-line-2);
-		border-radius: var(--v-radius-btn);
-		padding: var(--v-space-2) var(--v-space-3);
-		font-size: var(--v-text-sm);
-		background: var(--v-surface-2);
-		color: var(--v-ink-1);
-		height: var(--v-ctl-touch);
+		box-sizing: border-box;
+		min-width: 0;
+		height: 52px;
+		padding: 0 14px;
+		border: 1px solid var(--v3-line-3);
+		border-radius: var(--v3-radius-m);
+		background: var(--v3-s1);
+		color: var(--v3-t1);
+		font: inherit;
+		font-size: 17px;
+	}
+
+	form input {
+		flex: 1 1 11rem;
+	}
+
+	form select {
+		flex: 0 1 9rem;
 	}
 
 	form input:focus-visible,
 	form select:focus-visible,
 	.acc-head:focus-visible,
-	.cta:focus-visible {
-		outline: 1px solid var(--v-act-focus);
+	.cta:focus-visible,
+	.pbtn:focus-visible {
+		outline: 2px solid var(--v3-brand-strong);
 		outline-offset: 2px;
 	}
 
+	.pbtn {
+		min-height: 52px;
+		padding: 0 22px;
+		border: 1px solid var(--v3-line-3);
+		border-radius: var(--v3-radius-m);
+		background: var(--v3-s1);
+		color: var(--v3-t1);
+		font: inherit;
+		font-size: 17px;
+		font-weight: 650;
+		cursor: pointer;
+	}
+
+	.pbtn:hover:not(:disabled) {
+		background: var(--v3-s2);
+	}
+
+	.pbtn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
 	.subscribed {
-		color: var(--v-band-green);
-		font-weight: 600;
-		margin: var(--v-space-2) 0 0;
+		margin: 12px 0 0 !important;
+		color: var(--v3-ok-text) !important;
+		font-weight: 650;
 	}
 
 	.preview {
-		margin-top: var(--v-space-2);
-		border: 1px dashed var(--v-line-2);
-		border-radius: var(--v-radius-chip);
-		padding: var(--v-space-3);
-		background: var(--v-surface-2);
 		display: flex;
 		flex-direction: column;
-		gap: var(--v-space-1);
 		align-items: flex-start;
+		gap: 6px;
+		margin-top: 10px;
+		padding: 14px;
+		border: 1px dashed var(--v3-line-3);
+		border-radius: var(--v3-radius-m);
+		background: var(--v3-s2);
 	}
 
 	.preview p {
 		margin: 0;
-		font-size: var(--v-text-sm);
+		color: var(--v3-t1);
 	}
 
 	.demo-note {
-		margin: var(--v-space-2) 0 0;
-		font-size: var(--v-text-xs);
-		color: var(--v-ink-3);
+		margin: 12px 0 0 !important;
+		color: var(--v3-t2) !important;
+		font-size: var(--v3-text-meta) !important;
+		line-height: 20px !important;
 	}
 
-	/* ── Emergency ──────────────────────────────────────────────────────── */
+	/* ── the emergency card → /driver ──────────────────────────────────── */
 	.emergency {
-		border-color: color-mix(in srgb, var(--v-act-text) 35%, transparent);
+		display: flex;
+		align-items: flex-start;
+		gap: 16px;
+	}
+
+	.em-pic {
+		position: relative;
+		flex: none;
+		width: 150px;
+	}
+
+	.em-pic :global(.shot) {
+		width: 150px;
+		height: auto;
+	}
+
+	.em-mark {
+		position: absolute;
+		left: 0;
+		bottom: 0;
+	}
+
+	.em-body {
+		min-width: 0;
 	}
 
 	.cta {
 		display: inline-flex;
 		align-items: center;
-		height: var(--v-ctl-touch);
-		padding: 0 var(--v-space-5);
-		border-radius: var(--v-radius-btn);
-		/* the CTA FILL is the deep act (act-2): paper text on it clears 4.5:1
-		 * (tests/design-tokens.mjs asserts it) — the bright act stays for
-		 * edges and dots */
-		background: var(--v-act-2);
-		color: var(--v-paper);
-		font-weight: 600;
-		font-size: var(--v-text-md);
+		min-height: 52px;
+		padding: 0 22px;
+		border-radius: var(--v3-radius-m);
+		background: var(--v3-brand-strong);
+		color: var(--v3-on-brand);
+		font-size: 17px;
+		font-weight: 650;
 		text-decoration: none;
 	}
 
-	footer {
+	.cta:hover {
+		background: var(--v3-brand-text);
+	}
+
+	/* ── empty and footer ──────────────────────────────────────────────── */
+	.empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		padding: 24px 16px 8px;
 		text-align: center;
-		color: var(--v-ink-3);
-		font-size: var(--v-text-xs);
+	}
+
+	.empty-scene {
+		display: block;
+		width: 100%;
+		height: 170px;
+		margin-bottom: 8px;
+		object-fit: cover;
+		border-radius: var(--v3-radius-l);
+	}
+
+	.empty-t {
+		margin: 0;
+		font-size: 19px;
+		font-weight: 650;
+		line-height: 26px;
+	}
+
+	.empty-h {
+		margin: 0;
+		color: var(--v3-t2);
+		font-size: 16px;
+		line-height: 24px;
+	}
+
+	footer {
+		color: var(--v3-t2);
+		font-size: var(--v3-text-meta);
+		line-height: 20px;
+		text-align: center;
 	}
 
 	footer p {
-		margin: var(--v-space-1) 0;
+		margin: 4px 0;
 	}
 
+	@media (max-width: 420px) {
+		.kicker {
+			font-size: 28px;
+			line-height: 36px;
+		}
+
+		.strip p {
+			font-size: 20px;
+			line-height: 28px;
+		}
+
+		.emergency {
+			flex-direction: column;
+		}
+	}
 </style>

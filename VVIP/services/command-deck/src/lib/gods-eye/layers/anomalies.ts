@@ -46,11 +46,14 @@ import { corridor } from '$lib/ops/components/template/corridor.svelte';
 import type { CityEntity } from '../city-api';
 import { cityRegistry } from '../entities/registry.svelte';
 import type { GodsEyeLayer, GodsEyeLayerContext, GodsEyeLayerInstance } from '../registry';
-import { cssColor, cssVar } from '../theme';
+import { canvasFont, cssColor, cssVar } from '../theme';
 import { istStamp } from '../hud/format';
 import { ops } from '$lib/ops/store.svelte';
 import { clampedBillboard, clampedDot, clampedLabel, drapeAudit, ground } from './draping';
-import { anomalyLabel, labelPlate } from './labels';
+import { anomalyLabel, anomalyWord, labelPlate } from './labels';
+import { kindIcon } from '$lib/design/icons';
+import { chromeOf } from '../hud/map/view';
+import { markerBillboard, tagMarker, type MarkerMeta } from '../hud/map/symbols';
 
 export const ANOMALIES_PICK_PREFIX = 'anm:';
 
@@ -146,12 +149,48 @@ function createAnomaliesLayer(): GodsEyeLayerInstance {
 			rows.map((a) => [a.id, a.state, a.lon, a.lat, a.props.count_15m, a.props.anomaly_type, provenanceOf(a)]),
 			lang,
 		]);
+		const v2 = chromeOf(ctx) === 'v2';
 		if (sig === lastSignature) return;
 		lastSignature = sig;
 
 		for (const id of entityIds) viewer.entities.removeById(id);
 		entityIds.length = 0;
 		byProvenance = { emulated: 0, simulated: 0, live: 0, unverified: 0 };
+
+		if (v2) {
+			// SPEC §2.4: a feed anomaly is neutral — a small diamond beside its
+			// point, no pulse and no severity hue (it asks for no decision);
+			// its words show on hover and in the pick text.
+			for (const a of rows) {
+				const type = typeof a.props.anomaly_type === 'string' ? a.props.anomaly_type : 'anomaly';
+				const count = typeof a.props.count_15m === 'number' ? a.props.count_15m : null;
+				const provenance = provenanceOf(a);
+				byProvenance[provenance]++;
+				const meta: MarkerMeta = {
+					urn: `anomaly:${a.id}`,
+					kind: 'anomaly',
+					glyph: kindIcon('anomaly'),
+					shape: 'diamond',
+					t: a.t,
+					label: [{ text: anomalyLabel(type, count, lang) }],
+					labelWhen: 'hover',
+					radius: 6,
+				};
+				const where = a.props.road_name ?? `segment ${a.props.segment_id ?? 'unknown'}`;
+				const entity = viewer.entities.add({
+					id: `${ANOMALIES_PICK_PREFIX}${a.id}`,
+					position: ground(cesium, a.lon as number, a.lat as number),
+					billboard: markerBillboard(cesium, meta),
+					description: `Feed anomaly: ${anomalyWord(type, lang).toLowerCase()} on ${where}, severity ${a.state ?? 'unknown'}, ${count ?? 'unknown'} in 15 min${
+						a.t != null ? `, ${istStamp(a.t)} IST` : ''
+					}. Flagged rows are left out of the congestion summary. Source: ${provenance === 'simulated' ? 'simulated feed' : provenance}.`,
+				});
+				tagMarker(entity, meta);
+				entityIds.push(entity.id);
+			}
+			return;
+		}
+
 		const still = reducedMotion();
 		const canvasInk = cssColor(cesium, '--v-canvas', cesium.Color.BLACK);
 
@@ -208,7 +247,7 @@ function createAnomaliesLayer(): GodsEyeLayerInstance {
 				label: clampedLabel(cesium, {
 					// the operator's word for the flag (the wire id stays in the pick card)
 					text: anomalyLabel(type, count, lang),
-					font: '12px monospace',
+					font: canvasFont('12px var(--v-font-ui)'),
 					// the severity's TEXT ink on the canvas plate: legible on the
 					// photoreal city and over the draped flow lines through it
 					fillColor: labelInk,
@@ -313,5 +352,6 @@ export const anomaliesLayer: GodsEyeLayer = {
 	requiresKeyId: null,
 	pickPrefix: ANOMALIES_PICK_PREFIX,
 	defaultOn: true,
+	group: 'traffic',
 	create: createAnomaliesLayer,
 };

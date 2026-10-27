@@ -14,13 +14,17 @@
 > 34 junctions, ≈192 km — migration 020, §16.1), **escort authority —
 > the officer approves every switch** (§16.2), the stolen-vehicle rule
 > (§16.3), the God's-eye in **3D** for signed-in operators (§16.9), the
-> operator PIN gate (§16.11), boot auto-start (§11) and migrations
-> **001–020** (§5). Figures quoted for this revision come from code and
+> operator PIN gate (§16.11), boot auto-start (§11) — and §17 the v2
+> additions and the 2026-10-26 fix rounds: OSINT event intelligence
+> about places (never persons), decision support, the officer lookup
+> audit, the brain's grounding validator, the oracle's officer rule,
+> non-root images and the bring-up order; migrations **001–025** (§5).
+> Figures quoted for this revision come from code and
 > from private stacks built from this tree — a fresh install, or a
 > converted copy of the live store where the figure says so — each with
 > the file or the read that produced it)
 > **Stack**: Python 3.12 · Rust 2024 · TypeScript 5.7 · PostgreSQL 16 + PostGIS 3.6 + pgRouting + pgvector (the deployed arm64 image) · Valkey · NATS
-> **Intelligence stack**: model-host **pplx-decider-v1-27b** (:8083) · llama-server **aditi-ps18-v7h Gemma 4 12B** (:8084) · embedding-service **pplx-embed-v2-late-0.6b + bge-m3** (:8085) · ONNX Runtime ≥1.20 · PyTorch ≥2.6 (oracle) / torch 2.14.0 (embedding venv pins)
+> **Intelligence stack**: model-host **pplx-decider-v1-27b** (:8083) · llama-server **Gemma 4 12B** (:8084; operator-facing name `gemma4-12b-veer`, the served alias internal) · embedding-service **pplx-embed-v2-late-0.6b + bge-m3** (:8085) · ONNX Runtime ≥1.20 · PyTorch ≥2.6 (oracle) / torch 2.14.0 (embedding venv pins)
 > **Infrastructure**: Docker Compose (platform services) + supervised host model stack · Prometheus · Grafana
 
 ---
@@ -47,11 +51,13 @@
 9. [IPC & Data Flow](#9-ipc--data-flow)
 10. [Hardware Constraints & Unified-Memory Budget](#10-hardware-constraints--unified-memory-budget)
 11. [Infrastructure & Deployment](#11-infrastructure--deployment)
-12. [Observability & Monitoring](#12-observability---monitoring)
+12. [Observability & Monitoring](#12-observability--monitoring)
 13. [Testing Strategy](#13-testing-strategy)
 14. [Security Model](#14-security-model)
 15. [Configuration Reference](#15-configuration-reference)
 16. [Waves 3–4: real roads, human authority and the contracts behind them](#16-waves-34-real-roads-human-authority-and-the-contracts-behind-them)
+17. [v2 and the 2026-10-26 fix rounds](#17-v2-and-the-2026-10-26-fix-rounds)
+18. [V3 interface (2026-10-27)](#18-v3-interface-2026-10-27)
 
 ---
 
@@ -65,8 +71,10 @@ the enforcement family's `crime_incident`/`vehicle_pursuit` kinds
 (`docs/USE_CASES.md`) — of which the Z+ VVIP run is the base case, and the
 same backbone carries the stolen-vehicle watchlist chain (earmark → ANPR
 reads → evidence-only sighting, never a fine on the owner → a named
-officer's approval → pursuit → interception plan) with five
-dispatchable agencies (Jan Rakshak first-class). The **event-emulator**
+officer's approval → pursuit → interception plan) with a human-approved
+dispatch request recorded per agency for five agencies (Jan Rakshak
+first-class; no agency CAD or radio integration — the units are
+emulated). The **event-emulator**
 (§2.9) is the emulated half of the stack: it injects exogenous *causes*
 (procession schedules, weather onset, incidents, green-corridor requests,
 emulated ANPR camera reads, patrolling unit positions) through the real
@@ -128,7 +136,7 @@ ones quoted throughout this document.
 | Service | Language | Build Tool | Port | Purpose |
 |---|---|---|---|---|
 | signal-ingress | Rust 2024 | Cargo | — (NATS `:4223`) | Arrow IPC traffic feed ingestion over the 49-segment network |
-| corridor-store | SQL/PostGIS | Docker | 56434 | Spatial DB + pgRouting + pgvector + memory embeddings + generalized `events.*` schema; migrations 001–020 |
+| corridor-store | SQL/PostGIS | Docker | 56434 | Spatial DB + pgRouting + pgvector + memory embeddings + generalized `events.*` schema + `osint.*` + `decision.*`; migrations 001–025 |
 | traffic-oracle | Python 3.12+ | uv | 8091 | ML prediction, route optimization, adaptive situation layer, city fusion, enforcement, dispatch, signals |
 | convoy-brain | Python 3.12+ | uv | 8092 | Two-tier orchestration (decider strategic + Gemma tactical), live escort, MCP |
 | model-host | Python | uv (persistent venv) | 8083 | T5 strategic decider — typed questions, single forward pass |
@@ -242,7 +250,8 @@ to that bar against the real segment geometry. `cargo test --locked`:
 | `simulation/` | engine.py, twin.py, scenarios.py, calibration.py, network.py, events.py, rng.py, tod.py, router.py | **Digital-twin simulation engine** (the twin behind adaptive shadow-eval and `simulate_twin`) |
 | `ingest/` | nats_consumer.py, arrow_decoder.py, db_writer.py, cache_writer.py | NATS → Arrow decode → DB bulk insert + cache write |
 | `anomaly/` | stream_detector.py, ml_detector.py, feature_builder.py | The Tier-1 anomaly stream consumer (`stream_detector.py`: the ingress's flags → `traffic.anomaly_log`); `ml_detector.py`'s Isolation Forest is code only, not wired into the live path (§6.3) |
-| `synthetic/` | generator.py, gap_detector.py, pattern_matcher.py, spatial_interpolator.py, confidence_scorer.py | Gap-filling synthetic data generation |
+| `osint/` | router.py, ingest.py, store.py, promote.py, live_state.py | **OSINT situations (C-T, §17.1)**: `POST /api/v1/osint/signals` (redacted signals in; a title or text on which the shared PII patterns still fire, or that carries an Indic-script word the redactor must withhold, is refused `pii_unredacted`), `GET /api/v1/osint/events(/{id})`, the named-officer promotion `POST /api/v1/osint/events/{id}/promote` (409 officer-required), `GET /api/v1/osint/gazetteer/resolve`; places and situations, never persons |
+| `decision_support/` | router.py, engine.py, coa.py, mcda.py, wargame.py, cascade.py, dissent.py, feasibility.py, voi.py, store.py | **Decision support (C-U, §17.2)**: courses of action per event, AHP + lexical veto + TOPSIS, twin/cascade or seeded-surrogate wargame; `POST /api/v1/decision-support/{event_urn}/generate`, `GET /api/v1/decision-support/{dss_id}`, the human-gated `POST …/{dss_id}/decision` |
 | `evaluate/` | scenario_sim.py | Monte Carlo scenario comparison |
 | `runtime/` | gpu_arbiter.py, onnx_serve.py, memory_profiler.py, thread_pool.py | Unified-memory allocation, ONNX session management, memory guards |
 | `ops/` | `__init__.py` (API), router.py, degradation_taxonomy.py | **Wave-3 degradation ledger** — read-only failure surfaces over shared fleet state: mines convoy-brain's `decisions_log` into a recurring-cause taxonomy (`GET /api/v1/ops/degradation-taxonomy`, §13) |
@@ -374,17 +383,18 @@ adaptive shadow-eval fails closed.)
 
 | Module | Key Files | Purpose |
 |---|---|---|
-| Root | `__main__.py`, `orchestrator.py`, `decider.py`, `adaptive_params.py`, `http_guard.py`, `config.py`, `metrics.py`, `city_link.py`, `gps_sim.py` | FastAPI app (`PORT`; 8092 on the argus stack), two-tier turn loop + fallback chain, strategic-tier policy (cadence/budgets/degradation), fail-closed adaptive client, outbound URL guard, service-URL resolution |
+| Root | `__main__.py`, `orchestrator.py`, `grounding.py`, `decider.py`, `adaptive_params.py`, `http_guard.py`, `config.py`, `metrics.py`, `city_link.py`, `gps_sim.py` | FastAPI app (`PORT`; 8092 on the argus stack), two-tier turn loop + fallback chain, the grounding validator (§17.3), strategic-tier policy (cadence/budgets/degradation), fail-closed adaptive client, outbound URL guard, service-URL resolution |
 | `llm/` | `decider_client.py`, `llama_bridge.py`, `heuristics.py`, `parsing.py`, `schemas.py` | T5 typed-question client, T4 Gemma bridge (schema-constrained ladder), deterministic heuristic floor, JSON extraction, agent output schemas |
 | `agents/` | traffic_analyst.py, route_planner.py, security_liaison.py, diversion_coordinator.py | 4 tactical agents on Gemma (structured output schemas); `community_liaison.py` (a directive drafter for approved recommendations) is registered but not wired into any workflow |
 | `workflows/` | pre_movement.py, live_escort.py, post_clearance.py | 3 state-machine workflows |
-| `mcp/` | server.py, prompts.py | MCP server: 28 tools + 4 resources (both defined inline in `server.py`), 3 prompt templates (§7) |
+| `mcp/` | server.py, prompts.py | MCP server: 29 tools + 4 resources (both defined inline in `server.py`), 3 prompt templates (§7) |
 | `memory/` | convoy_context.py, store.py | Convoy state + **decisions audit log**, backed by Valkey |
 
 > **Retired**: `ollama_bridge.py` is gone (the retired Qwen/Ollama serving
 > path). Its replacement surface is `llm/decider_client.py` +
-> `llm/llama_bridge.py`. The compose file keeps `OLLAMA_BASE_URL` only as a
-> documented legacy transition variable.
+> `llm/llama_bridge.py`. `OLLAMA_BASE_URL` is gone from the compose files;
+> the brain names it, with `VVIP_DATABASE_URL` and `VVIP_NATS_URL`, as an
+> environment variable it does not read (`config.UNUSED_ENV`).
 
 #### Orchestrator Configuration (`orchestrator.py`)
 
@@ -524,13 +534,14 @@ checkpoints and tactical drafts in corridor history.
 - `convoy` — Movement records, planned routes, diversions
 - `events` / `emulator` / `adaptive` / `simulation` — corridor events + their status ledger, e-challan recommendations, the emulator's runs ledger, the adaptive audit tables, twin runs (§5)
 
-#### Migrations and the seed (a fresh install = 20 migrations + 4 data steps)
+#### Migrations and the seed (a fresh install = 25 migrations + 4 data steps)
 
-`scripts/migrate.py` applies `services/corridor-store/migrations/001…020`
+`scripts/migrate.py` applies `services/corridor-store/migrations/001–025`
 in order and ledgers each in `corridor.schema_migrations` (name, checksum,
-applied_at); 001–006 are byte-immutable (checksum ledger), 007–020 are
-additive, idempotent and schema-only (no migration references a seed
-row). The data then lands in the order `scripts/veer_up.sh` `seed()` runs
+applied_at); 001–006 are byte-immutable (checksum ledger), 007–025 are
+idempotent and schema-only (no migration references a seed row) and
+additive — 025 is the one deliberate exception, dropping 024's reversible
+mark hash. The data then lands in the order `scripts/veer_up.sh` `seed()` runs
 it: `sample_corridor.sql` (only into an empty store) →
 `reanchor_osm_network.sql` (completes and, on an existing store, converts
 the network to the OpenStreetMap roads in place — ids preserved, the
@@ -539,8 +550,9 @@ onto the real roads, a second apply is a no-op; applied whenever the
 store is not on the generated network, §11 / §16.1) →
 `post_seed_derivations.sql` (camera sites, stations, junction names,
 signal programs) → `display_geometry_osm.sql`. A fresh
-install built that way (this revision's private stack) ledgers **20**
-migrations and holds 49 segments, 34 junctions, 28 camera sites, 18
+install built that way ledgers **25** migrations (migrations 001–025
+fresh, re-run and the 020→025 upgrade all checked by the 2026-10-26
+deployment audit) and, at the wave-4 measurement, held 49 segments, 34 junctions, 28 camera sites, 18
 agency stations and 11 signal programs. The per-migration list is §5.
 
 #### OSM Importer and the network generator
@@ -572,18 +584,50 @@ loopback (`/api/v1` and `/api/traffic` → oracle `ORACLE_PORT` 8091,
 `EMULATOR_PORT` 8090 — `src/hooks.server.ts`) and forwards the signed-in
 officer as `x-veer-officer`.
 
+> **V3 interface (2026-10-27):** the surface map below is the V3 route
+> map — Home at `/`, the Analyst workspace at `/analyst`, a uniform shell on
+> every operator page. The V3 build was **deployed to the live stack on
+> 2026-10-27** (migrations 021–025, OSINT on, the operator gate restored);
+> §18 summarises it, and the acceptance records quoted elsewhere in this
+> document that name `/` as the cockpit are dated records of the earlier deck.
+
 #### Surface map (route groups under `src/routes/`)
+
+Three groups: `(v3)` (the V3 screens), `(deck)` (the Analyst family and the
+other operator pages — they draw the same V3 shell), and `(public)` (no
+sign-in, the V3 day look). The root is a **reroute** (`src/hooks.ts` →
+`src/lib/shell/root-flip.ts`, universal: server and browser): `/` resolves
+to Home's route node `/(v3)/home` and `/analyst` (and `/analyst/`) to the
+workspace's node `/(deck)` — a reroute, not a file move, so the workspace
+keeps `data-template="convoy-command"`, its test ids, its operator CSP and
+its gate, which `hooks.server.ts` reads from the RESOLVED route id, never
+from the URL. `/home` keeps answering as an alias; `/analyst/` is answered
+as `/analyst`; `/analyst/x` is a 404. An old bookmark `/#v=2…` (a workspace
+hash key) is handed to `/analyst#…` by an inline `<head>` script on Home
+before it paints (a fragment never reaches the server).
 
 | Group | Route | Theme | Surface |
 |---|---|---|---|
-| `(deck)` | `/ops` | `command` | **The situation wall** — the operator's wall; `/` is the Convoy Command cockpit (see the `/` row below), served directly with no route rewrite (asserted by design-smoke: `/` = 200 + `data-template="convoy-command"`). Band masthead (`data-prim=band-masthead`), Corridor Operations Board, Pursuit & Watchlist, Decision Queue, Jan Rakshak Dispatch, City Signal Plans, AMA module card, Decision-Audit Stream, band history, twin shadow-eval comparison, Event Emulator panel, and the wall God's-eye canvas (`.ge-canvas`) |
-| `(deck)` | `/gods-eye` | `command` | Fullscreen CesiumJS cinematic — eleven integrity-validated layers (`layers/index.ts`), FLIR sensor modes, share links; Google Photorealistic 3D Tiles for a signed-in operator on an ion-keyed deck, the keyless OSM globe otherwise (§16.9); viewer readiness at `window.__GODS_EYE__` |
-| `(deck)` | `/comms` | `command` | Trilingual advisory desk — EN/हिंदी/ગુજરાતી columns, same facts verbatim |
-| `(deck)` | `/chat` | `command` | Takeover chat console (context header, stream, degradation chip) |
-| `(deck)` | `/design` | both | The living style sheet — every primitive mounts (`[data-prim]`), both theme previews |
-| `(public)` | `/citizen` | `daylight` | Citizen Advisory — plain-language band strip, event cards from the deck's own server-side projection (`/api/public/events`); an emulated or test event is badged SIMULATED FEED · EMULATED, never LIVE (`emulated_labelling: true`, C-M); EN/HI/GU via the `veer_lang` cookie |
-| `(public)` | `/driver` | `daylight` | 108 Green-Corridor flow: idle → awaiting the duty officer (`requested`) → approved by a named officer on `/ops` → open window with live countdown + golden-hour counter; with no live event up, a labelled scripted fallback (`data-mode="scripted"`) walks idle → evaluating → proposal → open instead |
-| `(deck)` | `/` | `command` | **Convoy Command cockpit** — the restored VVIP template on the live stack (planner/escort/ladder/trace; 2026-10-14 merge, see `../../TEMPLATE_RESTORATION.md`) — replaced the retired `(legacy)` group |
+| `(v3)` | `/` (also `/home`) | V3 night | **Home** — the featured decision (soonest deadline, countdown, one button), the city pulse, and four rails of map-thumbnail cards: Needs your decision · Live operations · Reported in the city · Coming up (`routes/(v3)/home`, `lib/v3/home/**`) |
+| `(v3)` | `/decide`, `/decide/[unit]` | V3 night | **Decide** — queue, the real map of the place and one decision sheet per unit; courses of action as radio option cards; the primary button carries the named officer; a unit decided here turns green; the v2 DOM hooks (`data-kind`, `data-id`, `pursuit-step`) are kept (`lib/v3/decide/**`) |
+| `(v3)` | `/o/[urn]` | V3 night | **Object page** for every record kind (event, OSINT report, vehicle, place, operation, junction, camera, dispatch, recommendation, sighting): hero map (a raster MapThumb, no Cesium viewer), facts, timeline, a Record tab carrying every v2 inspector field, read-only "Ask about it"; a parameter that fails the URN grammar reads "Not a record" and fetches nothing (`lib/v3/object/**`) |
+| `(v3)` | `/map` | V3 night | **City map** — the same `GodsEyeCanvas` as `/gods-eye`, mounted with `chrome="v3"`: clean default layers, compact summary chips, a collapsible left Layers sheet, a Now list, a closed-by-default corridor-stats panel, a terse legend, focus on one event; opens on the natural-colour photoreal 3D city when the deck has an ion key, on the city map otherwise; the base-map choice is remembered per browser (`lib/v3/map/**`) |
+| `(v3)` | `/assistant` | V3 night | **Assistant** — the shared chat session (`lib/assistant/session.svelte.ts`, also run by the Analyst dock and `/chat`) as short prose with object chips; proposals as cards that open in Decide, never an apply/approve button; no model id, tool name or alert code reaches the DOM (`lib/v3/assistant/**`) |
+| `(v3)` | `/plan` | V3 night | **Planner** — "Plan a movement" on its own page (Where to · Routes · Launch · Live), reusing the v2 planner logic; the launch needs the lane-floor waiver (for conditional plans) and a named officer; a failed or dropped launch is stated in the brain's words and never retried on its own (`lib/v3/plan/**`) |
+| `(v3)` | `/v3-gallery` | dev | The identity gallery — mark, glyphs, colour roles, type scale, illustrations |
+| `(deck)` | `/analyst` | V3 night | **Analyst** — the workspace: the restored Convoy Command cockpit (planner/escort/ladder/trace; 2026-10-14 merge, see `../../TEMPLATE_RESTORATION.md`), reached by the reroute above; `data-template="convoy-command"` (design-smoke asserts 200 + the template at `/analyst`) |
+| `(deck)` | `/ops` | V3 night | **The situation wall** — the operator's wall, under the Analyst sub-nav. Band masthead (`data-prim=band-masthead`), Corridor Operations Board, Pursuit & Watchlist, Decision Queue, Jan Rakshak Dispatch, City Signal Plans, AMA module card, Decision-Audit Stream, band history, twin shadow-eval comparison, Event Emulator panel, and the wall God's-eye canvas (`.ge-canvas`) |
+| `(deck)` | `/gods-eye` | V3 night | Fullscreen CesiumJS cinematic (the Analyst "City map" tab) — eleven integrity-validated layers (`layers/index.ts`), FLIR sensor modes, share links; Google Photorealistic 3D Tiles for a signed-in operator on an ion-keyed deck, the keyless OSM globe otherwise (§16.9); viewer readiness at `window.__GODS_EYE__`; still mounts the canvas with `chrome="v2"` |
+| `(deck)` | `/chat` | V3 night | The takeover chat console (the Analyst "Assistant" tab) — context header, stream, degradation chip |
+| `(deck)` | `/comms` | V3 night | **Advisories** — a layout reset (`comms/+layout@.svelte`) puts it under one V3 shell: event list, the selected event framed on a satellite-style map, the EN/हिंदी/ગુજરાતી drafts side by side with the same facts verbatim, the status "Drafted — not delivered", the draft log and dispatch threads behind a non-modal side sheet; the withholding rules (operator-only kinds and OSINT events are not drafted for citizens; fail-closed) are unchanged (`lib/v3/comms/**`, `lib/comms/**`) |
+| `(deck)` | `/design` | dev | The living style sheet and the `/design/*` harness pages (developer surfaces with fixture data) — every primitive mounts (`[data-prim]`), both theme previews. A production server answers **404** for every `/design` route unless it was started with `VEER_DESIGN_HARNESS=1` (the smokes and `scripts/verify_all.sh`'s private preview set it; `vite dev` always serves them) |
+| `(public)` | `/citizen` | V3 day | Citizen Advisory — one plain posture sentence, hold cards each topped by a day-graded map of the stretch (solid route = live; **dashed = emulated / fixture / unverified**, the card itself dashed-outlined), Today / Later, "Why roads hold", a subscribe preview that sends nothing; event cards from the deck's own server-side projection (`/api/public/events`); an emulated or test event is badged SIMULATED FEED · EMULATED, never LIVE (`emulated_labelling: true`, C-M); EN/HI/GU via the `veer_lang` cookie |
+| `(public)` | `/driver` | V3 day | 108 Green-Corridor flow, Gujarati first: the golden-hour clock, four large steps (idle → awaiting the duty officer (`requested`) → approved by a named officer on `/ops` → open window with live countdown); **no approve control, no location, no registration mark**; with no live event up, a labelled scripted fallback (`data-mode="scripted"`) walks the steps and sends nothing |
+
+The Analyst family shares a sub-nav band (Workspace · Situation wall · City
+map · Assistant → `/analyst`, `/ops`, `/gods-eye`, `/chat`); the shell
+derives a page's title and rail item from `surfaceOf()` in
+`lib/v3/shell/nav.ts`. The retired `(legacy)` group is gone, as before.
 
 The deck's own server routes: `POST/GET/DELETE /api/session` (operator
 sign-in, §16.11), `GET /gods-eye/mode` (keyless vs ion-keyed basemap,
@@ -591,7 +635,15 @@ sign-in, §16.11), `GET /gods-eye/mode` (keyless vs ion-keyed basemap,
 `/api/public/events` + `/api/public/dispatches/{id}` that feed `/citizen`
 and `/driver` without exposing any operator API.
 
-#### Design system — one token contract, two themes
+#### Design system — one token contract, two themes (and the V3 tokens)
+
+> The V3 screens add a second token file, `src/lib/v3/tokens.css` /
+> `tokens.ts` (`--v3-*` keys, night as `:root`, day under
+> `[data-theme='daylight']`; neutral black / white / grey grounds with the
+> accent blue `#276EF1` since 2026-10-27), loaded by the `(v3)`
+> layout, by the `(deck)` layout (since the Analyst pages draw the V3 shell)
+> and by the V3 public shell. The v2 contract below is unchanged and still
+> what the Analyst panels consume. See §18.
 
 `src/lib/design/tokens.css` + `tokens.ts` are **the single token contract**:
 
@@ -618,8 +670,9 @@ and `/driver` without exposing any operator API.
 
 #### Interface acceptance cameras (all exit-0 gated)
 
-- `tests/design-smoke.mjs` — `/` IS the **Convoy Command cockpit** (200 +
-  `data-template="convoy-command"`); the **live URLs** (`/`, `/ops`,
+- `tests/design-smoke.mjs` — `/analyst` IS the **Convoy Command cockpit**
+  (the Analyst workspace; 200 + `data-template="convoy-command"`; `/` is
+  Home since the V3 root flip); the **live URLs** (`/`, `/analyst`, `/ops`,
   `/gods-eye`, `/comms`, `/chat`, `/citizen`, `/driver`, `/design`)
   return 200; `/design` primitives mount; token parity in BOTH themes via
   `getComputedStyle`; BLACK inverted-chip rule; modal focus-trap + Escape;
@@ -632,6 +685,9 @@ and `/driver` without exposing any operator API.
   00:21 IST** (live acceptance step 21 on the deployed stack, signed in,
   exit 0) — manifest and PNGs in `tests/artifacts/screens/`
   (`screens_manifest.json`, `screen_{ops,gods-eye,citizen,driver,comms,chat}.png`);
+  (a record of the pre-V3 deck — the camera still photographs those six
+  surfaces, and was not re-executed on the live deck after V3 because V3 is
+  not deployed there yet);
   that run recorded the `/ops` masthead band=GREEN over 12 panels and
   `/driver` in its scripted fallback (`screens.driver.mode: scripted`).
   History, kept: the 2026-10-13 interface-revision docs pass re-executed
@@ -658,8 +714,8 @@ and `/driver` without exposing any operator API.
 registry-validated layers, FLIR sensor modes, share links; Google
 Photorealistic 3D Tiles + Cesium World Terrain + Bing aerial imagery for
 signed-in operators on an ion-keyed deck, the keyless OSM globe for
-everyone else) is the centerpiece of `/`, `/ops` and the fullscreen
-`/gods-eye` route: architecture, the measured layer table and the ethics
+everyone else) is the centerpiece of `/analyst`, `/ops` and the fullscreen
+`/gods-eye` route (and, with the V3 chrome, `/map`): architecture, the measured layer table and the ethics
 rails in `docs/GODS_EYE_INTEGRATION.md`; the 3D path in §16.9.
 
 ---
@@ -813,9 +869,9 @@ clone).
 │   Typed choice/noul/score questions. Owns strategy + TOOL SELECTION│
 │   Event-driven cadence · ≥5 s spacing · p95>3 s → tactical fallback │
 ├────────────────────────────────────────────────────────────────────┤
-│ T4 TACTICAL — aditi-ps18-v7h Gemma 4 12B (llama-server :8084)      │
+│ T4 TACTICAL — Gemma 4 12B, shown as gemma4-12b-veer (:8084)        │
 │   4 agents · tool-argument drafting vs inputSchema (1 repair) ·    │
-│   dossiers · trilingual advisories (EN/HI/GU) · /chat narration    │
+│   /chat narration · grounding.py checks every argument + sentence  │
 ├────────────────────────────────────────────────────────────────────┤
 │ T3 NUMERIC — forecast ladder (t0-alpha · DSTGAT) · ETA · OR-Tools  │
 │   The deterministic tool surface the decider chooses among         │
@@ -1096,7 +1152,7 @@ diagnosed — kept here as history, not hidden.
     "p95_decide_latency_ms": 718.0
   },
   "tactical_tier": {
-    "model": "aditi-ps18-v7h-gemma4-12b",
+    "model": "gemma4-12b-veer",
     "llama_server": "connected | unreachable"
   }
 }
@@ -1160,19 +1216,24 @@ polling, an after-action report (escort duration, segments affected and
 recovered, recovery time, diversions lifted, and the counts of alerts and
 audited decisions — the decisions themselves stay in `decisions_log`).
 
-#### `POST /movements/{id}/dossier` · `POST /movements/{id}/threat-assessment`
-
-Security dossier and threat assessment — composed by the **Gemma tactical
-tier** as structured JSON sections.
-
-#### `GET/POST /movements/{id}/protocol` · `POST /movements/{id}/protocol/assess`
+#### `GET/POST /movements/{id}/protocol`
 
 Blue Book protocol state (ASL checklist, protocol compliance rules,
-anti-sabotage, transit status, plan B) — persisted with the movement context.
+anti-sabotage, transit status, plan B) — persisted with the movement
+context. `GET` reads the recorded state; `POST` records it and **needs a
+named officer** (422 without one), its enum fields checked; the threat
+level defaults to `not_assessed` — no model fills it in.
 
-#### `POST /analytics/reasoning` · `POST /recommendations/reasoning`
+#### Retired — `410 Gone`
 
-Reasoning-backed analytics and recommendation endpoints for the PREDICT tab.
+`POST /movements/{id}/dossier`, `/movements/{id}/threat-assessment`,
+`/movements/{id}/protocol/assess`, `/analytics/reasoning` and
+`/recommendations/reasoning` asked the tactical model for security
+dossiers, compliance verdicts, threat levels or after-the-fact metric
+reasoning. They now answer **410** (`{"retired": true, "path", "detail"}`)
+and generate or write nothing (`__main__.py`,
+the retired-route table). Operator questions go through
+`/chat/stream`, where every answer is grounded in tool results (§17.3).
 
 #### `POST /chat` and `POST /chat/stream` (NDJSON, contracts C-D / C-D2)
 
@@ -1180,9 +1241,12 @@ Single-turn and streaming chat with the two-tier orchestrator — the same
 turn, decider + argument validation + `decisions_log` audit, for both.
 Stream event types: `thought`, `tool_call`, `tool_result`, `directive`,
 `token` (prose only, never raw JSON), `done` (`session_id`, `tiers_used`,
-`operator_alerts`, `degraded`, `citations`), `error`; `event_id` /
+`operator_alerts`, `degraded`, `citations`, and `grounding.removed` when
+the grounding validator removed sentences — then also an
+`ungrounded_claims_removed` operator alert), `error`; `event_id` /
 `context_urn` on the request ground the turn in one corridor event or city
-entity. Sessions continue for 15 minutes.
+entity. Sessions continue for 15 minutes. `tiers_used` names the tactical
+tier `gemma:gemma4-12b-veer`.
 
 #### `POST /chat/directives/ack` · `POST /mcp`
 
@@ -1192,7 +1256,7 @@ on the canvas; the ack records that human answer (the verified officer)
 in the bound movement's `decisions_log` — 404 unknown/expired directive,
 409 already acknowledged, 422 another session's directive. `POST /mcp`
 is MCP over JSON-RPC 2.0 (initialize, tools/list|call, resources/list|read,
-prompts/list|get): **28 tools / 4 resources / 3 prompts** on this tree
+prompts/list|get): **29 tools / 4 resources / 3 prompts** on this tree
 (§7) — read-only city tools, compute tools and the canvas verbs; nothing
 reachable there approves, decides, dispatches or earmarks (R2).
 
@@ -1381,15 +1445,26 @@ The enforcement family and the multi-agency layer, additive-only:
 | `019_hourly_aggregates_synthetic.sql` | `traffic.hourly_aggregates_synthetic` — the simulated feed's rollup, kept apart from the REAL-only `traffic.hourly_aggregates` that calibration reads (§16.5) | WP-19 (C-P) |
 | `020_road_network_osm.sql` | `road_segments.geom_source` / `geom_meta`, `junctions.osm_node_id` — the provenance of the routing geometry; the network data itself is `reanchor_osm_network.sql` (§16.1) | WP-20 (C-K basis `osm`) |
 
+### Migrations 021–025 (v2: OSINT, decision support, the officer lookup audit)
+
+| Migration | Adds | Contract / package |
+|---|---|---|
+| `021_osint_events.sql` | the `osint` schema of places and situations — `osint.raw_signals` (already redacted at parse), `osint.gazetteer` (places only), `osint.resolved_events`, `osint.geocodes`, `osint.event_sources`; provenance columns on `events.corridor_events` (geotag, source kind, credibility, verification state); six reported-situation event kinds; `traffic.incidents` source `osint` | C-T (§17.1) |
+| `022_decision_support.sql` | the `decision` schema — `decision.decision_support` (at most one proposed per event), `decision.coa`, `decision.coa_sim_runs`, the append-only `decision.dss_decision_log`; memory-doc kind `osint` (CHECK only; nothing writes it yet) | C-U (§17.2) |
+| `023_osint_source_context_role.sql` | source role `context` on `osint.event_sources` — a district or state alert attached to a point-level situation is context, never corroboration | C-T |
+| `024_vehicle_lookup_audit.sql` | `corridor.vehicle_lookup_audit` — one row per completed officer full-mark lookup: who, when, the MASKED mark, found or not, the disclosure class | FIX-C-PLATESEARCH (§17.4) |
+| `025_vehicle_lookup_audit_nohash.sql` | drops 024's `mark_sha256` (an unsalted hash of a mark the mask leaves three digits short is reversible in at most 1000 tries) — the one subtractive migration | FIX-AUDIT-A |
+
 *Correction (this revision):* the `interrupted` status of
 `emulator.emulation_runs` is widened by migration **016** (WP-19) — not
 014, as an earlier note had it; 014 touches only the anomaly log and the
 dispatch audit.
 
-Migrations 001–006 are byte-immutable (checksum ledger); 007–020 are
-additive-only, idempotent and schema-only. A fresh install of this tree
-ledgers **20/20** in `corridor.schema_migrations` (verified on the
-private fresh-install stack); the live store ledgered 19 at the
+Migrations 001–006 are byte-immutable (checksum ledger); 007–025 are
+idempotent and schema-only, additive except 025. A fresh install of this
+tree ledgers all 25 in `corridor.schema_migrations` (the 2026-10-26
+deployment audit). History, kept: the wave-4 tree ledgered 20 on its
+private fresh-install stack; the live store ledgered 19 at the
 2026-10-23 reboots and applied 020 with the wave-4 deploy at 23:33 IST
 that night (`veer_up.sh --build` ran `migrate.py` — `apply
 020_road_network_osm.sql (82 ms)`, 20 in the ledger — then the
@@ -1506,10 +1581,11 @@ heavy convoy delay penalty.
 | Queue | 8 serialized computes; 429 + Retry-After past this |
 | Cold load | ≈5 min; resident forever, supervised restart-on-exit |
 
-### 6.6 aditi-ps18-v7h Gemma 4 12B (T4 tactical, llama-server :8084)
+### 6.6 Gemma 4 12B (T4 tactical, llama-server :8084)
 
 | Property | Value |
 |---|---|
+| Name | operator-facing **`gemma4-12b-veer`** (`config.GEMMA_DISPLAY_NAME`: `/health` `tactical_tier.model`, `done.tiers_used`, metrics); the llama-server `--alias` the brain calls stays internal (`config.GEMMA_MODEL_ID`) and is never shown to an operator |
 | Quantization | Q4_K_M GGUF — `q4-stack/v7h-merged-Q4_K_M.gguf`, **7,381,382,880 B (≈6.87 GiB)** measured |
 | Server | llama.cpp llama-server, **build 69bf643** (pinned in `models-config/configs/veer_models.yaml`; `/health` returns `{"status":"ok"}` when up — the running build string was recorded when the pin was made, not re-checked this pass) |
 | Slots | 2 parallel × 8192-token contexts (`-c 16384`) |
@@ -1534,17 +1610,17 @@ safetensors 0.8.0.
 
 ## 7. MCP Tools, Resources & Prompts
 
-### MCP Tools (28 tools — `convoy-brain/src/convoy_brain/mcp/server.py`; `tools/list` on the wave-4 brain)
+### MCP Tools (29 tools — `convoy-brain/src/convoy_brain/mcp/server.py` `TOOL_DEFINITIONS`, counted on this tree 2026-10-26)
 
 The original twelve compute/read tools:
 
 | # | Tool Name | Purpose | Backend |
 |---|---|---|---|
-| 1 | `predict_traffic_flow` | DSTGAT T+5/10/15/30 forecast | `POST /api/v1/predict/flow` |
+| 1 | `predict_traffic_flow` | T+5/10/15/30 forecast from the forecaster ladder (t0-alpha today; DSTGAT has no weights; heuristic last) — `provenance.rung` names the rung, `provenance.simulated_feed` the feed | `POST /api/v1/predict/flow` |
 | 2 | `find_convoy_routes` | OR-Tools CP-SAT multi-objective routing | `POST /api/v1/optimize/routes` |
 | 3 | `plan_diversions` | Per-segment diversion plans with timing | `POST /api/v1/optimize/diversions` |
 | 4 | `evaluate_scenarios` | Monte Carlo scenario comparison | `POST /api/v1/evaluate/scenarios` |
-| 5 | `predict_eta` | HistGBT travel time prediction | `POST /api/v1/predict/eta` |
+| 5 | `predict_eta` | Travel time: `model: fallback` (length ÷ speed) until a regressor is trained; its inputs must come from earlier tool results (§17.3) | `POST /api/v1/predict/eta` |
 | 6 | `query_shortest_path` | pgRouting Dijkstra | `GET /api/v1/graph/shortest-path` |
 | 7 | `query_k_shortest_paths` | pgRouting KSP alternatives | `GET /api/v1/graph/k-shortest-paths` |
 | 8 | `query_segments_in_bbox` | Spatial bbox segment query | `GET /api/v1/spatial/segments` |
@@ -1561,10 +1637,15 @@ read-only city tools — `get_active_corridor_events`, `city_query_entities`,
 verbs `canvas_fly_to`, `canvas_track_entity`, `canvas_highlight`,
 `canvas_annotate`, `canvas_set_sensor`, `canvas_toggle_layer`, which call
 no HTTP at all: they return a **directive** the operator applies or
-dismisses on the canvas (`/chat/directives/ack`). **The read-only rail
-(R2):** the executor POSTs only to seven compute endpoints
-(`POST_ALLOWLIST`: predict flow / ETA, optimize routes / diversions,
-evaluate scenarios, the live-cache read, the twin), and no tool name may
+dismisses on the canvas (`/chat/directives/ack`). And one added for
+decision support (C-U): `city_decision_support` computes, or reuses, the
+ranked courses of action for one event (§17.2) — it proposes, it never
+decides. **The read-only rail (R2):** the executor POSTs only to seven
+compute endpoints (`POST_ALLOWLIST`: predict flow / ETA, optimize routes /
+diversions, evaluate scenarios, the live-cache read, the twin) and one
+compute pattern (`POST_ALLOWLIST_PATTERNS`: the decision-support
+`/generate` for a well-formed event URN — never `/decision` or
+`/promote`), and no tool name may
 make the AI an actor (`FORBIDDEN_TOOL_VERBS`: approve, decide, earmark,
 dispatch_request, withdraw, transition — pinned by the test suite).
 
@@ -1730,14 +1811,17 @@ free of 3.7 TiB (`df`, 2026-10-23).
 ### Bring-up — one command, and it survives a reboot
 
 `bash scripts/veer_up.sh` (as the user that owns the stack, never root) is
-the one idempotent bring-up: preflight → the model units → `docker
-compose -p vvip-argus … up -d` → PostGIS healthy → `migrate.py` → seed if
+the one idempotent bring-up: preflight → the model units → (with
+`--build`: build the service images) → `docker compose -p vvip-argus …
+up -d postgis` alone → PostGIS healthy → `migrate.py` → seed if
 empty (+ the OpenStreetMap network step — `reanchor_osm_network.sql`,
 applied whenever the store is not on the generated network or the step
 changed — and the post-seed repairs and the display file when they
-change; after a network step the services that cache the network are
-restarted once) → converge → a readiness table of **11
-rows** (postgis — which names the network basis, e.g. `network osm 49/49 ·
+change) → `up -d` for every service → after a network step the services
+that cache the network restarted once → converge → a readiness table of **11
+rows** (12 with `VEER_OSINT=1`: `osint`, loopback `:8093`, READY whenever
+`/health` answers and reaches the oracle — never dependent on the
+internet) (postgis — which names the network basis, e.g. `network osm 49/49 ·
 34 junctions` — valkey, nats, signal-ingress, oracle, brain, deck,
 emulator, decider, gemma, embeddings) ending `READY 11/11` (exit 0 only
 then). `--status` prints the same table read-only (with the deck's bind
@@ -1749,7 +1833,16 @@ the systemd `--user` units of `infra/systemd/`; `--demo` switches the city
 signal-plan writer and the living city on (refused while the citizen feed
 does not label emulated events); `--build` rebuilds the `-argus` images
 (they bake the source, so changed service code reaches the stack only
-through it). One bring-up runs at a time (a lock).
+through it) **but never the PostGIS image** — a new one would recreate the
+store container; `--rebuild-postgis` is the explicit opt-in (the data
+stays on the `postgis_data` volume). The order guarantees that no service
+is recreated against an older schema: migrations always run before the
+services start. (It applies to `veer_up.sh` bring-ups; at boot, Docker's
+restart policy starts the existing containers before `veer-up.service`
+runs.) `veer_up.sh` probes the ports the rendered compose files bind and
+warns when a shell export (e.g. a sandbox `ORACLE_PORT`) disagrees; the
+brain row reads DEGRADED, with its reason, while the brain's `/health`
+says `degraded`. One bring-up runs at a time (a lock).
 
 **The road-network step** (`seed()`, `seed/reanchor_osm_network.sql`,
 generated by `scripts/gen_osm_network.py`): one transaction, idempotent (a
@@ -1802,14 +1895,15 @@ the LAN.
 
 | Container | Image | Bind | Notes |
 |---|---|---|---|
-| `vvip-argus-postgis` | `vvip-argus-postgis:arm64` (PostGIS + pgRouting + pgvector) | 127.0.0.1:56434 | Own volume; migrations 001–020 + the seed via `veer_up.sh` |
+| `vvip-argus-postgis` | `vvip-argus-postgis:arm64` (PostGIS + pgRouting + pgvector) | loopback :56434 | Own volume; migrations 001–025 + the seed via `veer_up.sh` |
 | `vvip-argus-valkey` | valkey | 127.0.0.1:6380 | Max memory 512 MB, allkeys-lfu |
 | `vvip-argus-nats` | nats:2-alpine (JetStream) | 127.0.0.1:4223 (monitoring :8223) | |
 | `vvip-argus-signal-ingress` | `vvip-argus-signal-ingress:latest` | — (NATS client) | the 49-segment network compiled in (§2.1) |
-| `vvip-argus-traffic-oracle` | `vvip-argus-traffic-oracle:latest` | 127.0.0.1:8091 (host network) | `PORT` env; host networking so the loopback model hosts are reachable |
-| `vvip-argus-convoy-brain` | `vvip-argus-convoy-brain:latest` | 127.0.0.1:8092 (host network) | model URLs loopback `{8083,8084,8085}`, `TRAFFIC_ORACLE_URL` → loopback 8091; `VVIP_REQUIRE_OFFICER`, `VVIP_ESCORT_SIM_GPS` from veer.env |
-| `vvip-argus-command-deck` | `vvip-argus-command-deck:latest` | 0.0.0.0:5273 (host network) | proxy targets `ORACLE_PORT` / `BRAIN_PORT` / `EMULATOR_PORT`; `VEER_OPERATOR_PIN`, `VEER_SESSION_SECRET`, `VEER_CESIUM_ION_TOKEN` from veer.env |
+| `vvip-argus-traffic-oracle` | `vvip-argus-traffic-oracle:latest` (uid 10004) | loopback :8091 (host network) | `PORT` env; host networking so the loopback model hosts are reachable; `VVIP_REQUIRE_OFFICER` (default **1**: earmark create / clear and city signal-plan apply / restore need a named officer, else 422); healthcheck on `/health` |
+| `vvip-argus-convoy-brain` | `vvip-argus-convoy-brain:latest` (uid 10005) | loopback :8092 (host network) | model URLs loopback `{8083,8084,8085}`, `TRAFFIC_ORACLE_URL` → loopback 8091; `VVIP_REQUIRE_OFFICER` (default 1: escort start / stop / clear), `VVIP_ESCORT_SIM_GPS` from veer.env; healthcheck (connectivity only: up while a model host loads) |
+| `vvip-argus-command-deck` | `vvip-argus-command-deck:latest` (uid 10006) | 0.0.0.0:5273 (host network) | proxy targets `ORACLE_PORT` / `BRAIN_PORT` / `EMULATOR_PORT`; `VEER_OPERATOR_PIN`, `VEER_SESSION_SECRET`, `VEER_CESIUM_ION_TOKEN` from veer.env |
 | `vvip-argus-event-emulator` | `vvip-argus-event-emulator:latest` | 127.0.0.1:8090 (host network) | the only writer of `corridor.traffic.emulated` and of emulator runs-ledger rows; `EMULATOR_LIVING_CITY` off unless `--demo` |
+| `vvip-argus-osint-ingress` (only with `VEER_OSINT=1`, `infra/compose.osint-ingress.yml`) | `Dockerfile.osint-ingress` (uid 10003) | loopback :8093 | starts once the oracle is **healthy**; egress only to an allow-list of exact hosts over https; posts redacted signals to the loopback oracle |
 
 ### Dockerfiles
 
@@ -1818,28 +1912,39 @@ What the argus project builds (`infra/compose.argus-override.yml`):
 pgRouting), `Dockerfile.signal-ingress` (`rust:alpine` → `alpine:3.21`),
 `Dockerfile.traffic-oracle.gb10` and `Dockerfile.convoy-brain.gb10`
 (`python:3.12-slim`, the repo-tree-mirroring images), `Dockerfile.event-emulator`
-(`python:3.12-slim`), `Dockerfile.command-deck` (`oven/bun:1` build →
-`oven/bun:1-slim`, the adapter-node build run by bun). Also in the tree:
+(`python:3.12-slim`), `Dockerfile.command-deck` (`oven/bun:1.4.3` build →
+`oven/bun:1.4.3-slim`, the adapter-node build run by bun). Also in the tree:
 `Dockerfile.postgis` (x86, `postgis/postgis:17-3.5`), the plain
 `Dockerfile.traffic-oracle` / `Dockerfile.convoy-brain`, and
 `Dockerfile.frontend` (the offline fallback, `node:20-alpine` → nginx).
+
+**Non-root, pinned (2026-10-26).** Every image the argus project builds runs
+as a non-root user — signal-ingress uid 10001, event-emulator 10002,
+osint-ingress 10003, traffic-oracle 10004, convoy-brain 10005,
+command-deck 10006 — and no volume or host path is owned by those uids.
+The Python and bun bases are digest-pinned (`python:3.12-slim@sha256:…`,
+uv 0.13.5, `oven/bun:1.4.3@sha256:…`), and the deck build runs
+`bun install --frozen-lockfile` with no fallback, so a drifted `bun.lock`
+fails the build. Still open: signal-ingress's `rust:alpine` /
+`alpine:3.21` tags are not digest-pinned, and the plain x86
+`Dockerfile.traffic-oracle` / `Dockerfile.convoy-brain` still run as root.
 
 ### Deployment and gate scripts
 
 | Script | Purpose |
 |---|---|
-| `scripts/veer_up.sh` | The bring-up above (`--status`, `--install-units`, `--demo`, `--boot`) |
+| `scripts/veer_up.sh` | The bring-up above (`--status`, `--install-units`, `--build`, `--rebuild-postgis`, `--demo`, `--boot`) |
 | `scripts/veer_env.sh` | The host environment in one place (`~/.config/veer/veer.env`); `--set KEY -` reads a secret from stdin |
 | `infra/scripts/serve_models.sh` | The three model hosts (run by the systemd units) |
-| `scripts/migrate.py` | Ledgered migrations 001–020 |
+| `scripts/migrate.py` | Ledgered migrations 001–025 |
 | `scripts/gen_osm_network.py` · `gen_ingress_segments.py` · `gen_display_geometry.py` | The real-road network, the ingress table, the display file — each with a verify/check mode |
 | `scripts/smoke_models.sh` | Live model-stack smoke (decider choice+noul+score; Gemma agent call; both embedders) |
 | `scripts/verify_all.sh` | The acceptance ladder (§13): offline by default, `--live` signs in to the deck through `scripts/deck_session.sh` |
 | `scripts/deck_session.sh` · `scripts/lib/deck_session.mjs` | The ONE operator sign-in helper every gated tool uses (PIN read at run time from `VEER_OPERATOR_PIN`, `VEER_OPERATOR_PIN_FILE` or veer.env — never printed; one attempt per run) |
 | `scripts/argus_full_smoke.sh` · `scripts/fleet_smoke.sh` | Full-system live smoke of the stack |
 | `scripts/showcase_run.sh` · `scripts/repetition_gate.sh` | The flagship "God's Eye Morning" (§13) and the consistency-under-repetition gate |
-| `scripts/journeys.mjs` | The judge's journeys J1–J7 through the deck's own proxy (a private stack by default; `--live` only with the go-ahead) |
-| `scripts/demo_reset.sh` | Pre-judging hygiene: dry-run (GET-only) by default; `--apply --officer '<name>'` stops at PENDING — a signed-in human approves live on `/ops` |
+| `scripts/journeys.mjs` | The operator journeys J1–J7 through the deck's own proxy (a private stack by default; `--live` only with the go-ahead) |
+| `scripts/demo_reset.sh` | Pre-demo data hygiene: dry-run (GET-only) by default; `--apply --officer '<name>'` stops at PENDING — a signed-in human approves live on `/ops` |
 | `scripts/impact_run.py` | Deterministic impact model → `IMPACT_REPORT.md` (reads a running stack's network, or `--offline` the committed one) |
 
 ---
@@ -1886,23 +1991,30 @@ printed) — a suite is never skipped wholesale. signal-ingress runs
 scripts (`tests/*.unit.mjs`, `tests/contract/run.mjs`, the SwiftShader
 smokes).
 
-*Collected on this tree (wave 4, as deployed) by the gate venv —
-`VVIP/.venvs/gate/bin/python -m pytest --collect-only` per suite, the same
-discovery `submission_consistency_check.mjs` performs, re-run on
-2026-10-24 after the tier-0 fix:* convoy-brain
-**635** (634 passed + 1 skipped), corridor-store importer **22** + store **107**,
-embedding-service **113**, event-emulator **328**, traffic-oracle
-**1500**, plus the command-deck's own **4** proxy-guard tests — **2709**
-in all (the tier-0 fix added 50 convoy-brain tests to the 585 of
-2026-10-23). Run whole on that tree (2026-10-24 01:19 IST, the gate
-venv): 2624 passed and 85 skipped — convoy-brain 1, corridor-store 29,
-event-emulator 13, traffic-oracle 42, each a test whose optional
-dependency or scratch store (a database, a Valkey) is absent — 0 failed. `cargo test --locked` (signal-ingress): **120 passed** —
+*Collected on this tree (2026-10-26, after the fix rounds) by the gate
+venv — `VVIP/.venvs/gate/bin/python -m pytest --collect-only` per suite,
+the same discovery the docs-consistency oracle performs:*
+convoy-brain **743**, corridor-store importer **22** + store **146**,
+embedding-service **113**, event-emulator **331**,
+traffic-oracle **2168**, osint-common **444**, osint-ingress **382**, osint-geo **390**,
+osint-analysis **360**, plus the command-deck's own **20** Python tests —
+**5119** in all. The last whole-suite runs (2026-10-26, the fix rounds
+and their merge into this tree): traffic-oracle 2064 passed / 104 skipped,
+convoy-brain 742 passed / 1 skipped, event-emulator 318 passed / 13
+skipped, osint-common 444 passed, osint-ingress 381 passed / 1 skipped,
+osint-geo 390 passed, osint-analysis 360 passed — each skip a test whose
+optional dependency or scratch store (a database, a Valkey) is absent.
+`cargo test --locked` (signal-ingress): **120 passed** —
 49 lib + 7 + 45 + 19 (§2.1; re-run 2026-10-24 in `rust:alpine` on a clean
-in-container target). A cargo target volume shared with other checkouts
-can report a stale build: the live acceptance ladder's offline run
-(2026-10-23 23:34 IST) read 118 from the shared `veer-cargo-target`
-volume — the stale-build caveat, not this tree's count.
+in-container target, and again in the 2026-10-26 deployment audit). A cargo
+target volume shared with other checkouts can report a stale build: the
+live acceptance ladder's offline run (2026-10-23 23:34 IST) read 118 from
+the shared `veer-cargo-target` volume — the stale-build caveat, not this
+tree's count.
+*(History, kept: the wave-4 tree as deployed (2026-10-24) collected 2709 —
+convoy-brain 635, importer 22 + store 107, embedding-service 113,
+event-emulator 328, traffic-oracle 1500, the deck's 4 — and ran 2624
+passed / 85 skipped.)*
 *(History, kept: the 2026-10-13 interface revision's gate session
 collected 182 / 22+12 / 113 / 93+1skip / 453+1skip; the 2026-10-18 run
 262 / 22+12 / 113 / 94 / 633; the merged tree of 2026-10-23 2659, with
@@ -1917,14 +2029,16 @@ keyless). It runs, in order and failing fast: **scripts-syntax** (`bash
 -n`, `node --check`, a Python AST parse and a JSON load over the gate and
 release scripts), **gods-eye-check** (svelte-check), **gods-eye-canvas**
 (SwiftShader canvas smoke),
-**design-smoke** (the cockpit-topology tripwire: `/` IS the Convoy
+**design-smoke** (the cockpit-topology tripwire: `/analyst` IS the Convoy
 Command cockpit), **deck-ui** (the hermetic ops-wall smoke incl. the C6
 'no officer' masking group, the recorded-payload contract tests, every
 `*.unit.mjs`, the edge-basemap entry, the GET-only ops-write probe),
-**`pytest-<suite>`** (every suite, whole), **cargo**,
+**`pytest-<suite>`** (every suite, whole), **osint-offline**
+(`osint_smoke.sh --offline` over the SIMULATED sandbox capture and
+`gen_osint_gazetteer.py --check`), **cargo**,
 **display-geometry** (`gen_display_geometry.py --verify`),
 **ingress-segments** (`gen_ingress_segments.py --check`),
-**submission-consistency** (the docs-vs-tree oracle and its
+the docs-consistency tier (`scripts/submission_consistency_check.mjs`, the docs-vs-tree oracle, and its
 `--selftest`), then the wave tiers **wave1-hatches**,
 **wave2-forecaster**, **wave2-routing**, **wave2-tier0**,
 **wave3-repetition** (`repetition_gate.sh --fast`) and **wave3-ledger**.
@@ -1944,7 +2058,7 @@ tier inventory and its order live in the script
 header; the legacy React `frontend/` (the offline fallback demo) was
 retired from the ladder. The ladder's earlier shape, kept as history: the
 2026-10-17/18 waves ran frontend-bundle, frontend-e2e, the two gods-eye
-tiers, the pytest suites, submission-consistency, the six wave tiers,
+tiers, the pytest suites, the docs-consistency oracle, the six wave tiers,
 models and model-drift in one offline run.
 
 The wave tiers, as introduced:
@@ -2026,7 +2140,7 @@ honest EmptyState, never invented entries.
 consistency-under-repetition proof for the flagship showcase: restore an
 identical baseline, run `showcase_run.sh` N times (default 2) against the
 live argus fleet, and the terminal database state the showcase's phase-8
-assertions are judged over (`adaptive.situation_log`,
+assertions are evaluated over (`adaptive.situation_log`,
 `adaptive.param_overrides`, the `events.*` tables, plus the
 pursuit/dispatch/earmark terminal tables) is IDENTICAL across rounds —
 after normalizing exactly the volatility classes that are provably not
@@ -2084,7 +2198,7 @@ artifacts the gate leaves in `showcase/` (§13's flagship table) are round
 Proves the tree runs LIVE end to end on the argus stack (compose project
 `vvip-argus`), one line per leg, after a bounded converge-wait that
 absorbs exactly the redeploy window: the decider, Gemma and embeddings
-(:8083/:8084/:8085); the emulator (judged on connectivity — a historical
+(:8083/:8084/:8085); the emulator (rated on connectivity — a historical
 `degraded` prints its `degraded_reasons`); the oracle and its corridor
 summary; **the road network** — 49 segments over the city, every one
 `geometry_basis: osm`, none schematic; **`traffic:latest` freshness** (the
@@ -2123,20 +2237,19 @@ this tree under an `-argus` tag (`infra/compose.argus-override.yml`,
 signal-ingress images are argus-owned too, so a cleanup of the retired
 project's images can never strand the live stack.
 
-**Submission-consistency oracle — `scripts/submission_consistency_check.mjs`.**
-The submission-material registry as code (~20 checks, each with a
-failure path proven by `--selftest`): deck/script/maker path existence,
-figure-vs-artifact agreement (bench, showcase, pursuit, pixel proofs),
-PPTX/PDF freshness, pytest-count agreement between the deck and adjacent
-docs, and gate-script contract checks. It is itself the
-submission-consistency tier of the ladder above; the submission deck was
-regenerated against it (2026-10-18 evening, again for wave 4, and again
-from the live run's artifacts on 2026-10-24). Hero shots taken apart from
+**Docs-consistency oracle — `scripts/submission_consistency_check.mjs`.**
+The documentation registry as code (~20 checks, each with a failure path
+proven by `--selftest`): referenced-path existence, figure-vs-artifact
+agreement (bench, showcase, pursuit, pixel proofs), the migration range
+and the pytest counts the docs quote against the tree, and gate-script
+contract checks; a repository checkout runs it `--vvip-only` (the
+workspace documents beside the repository are not in it). It is itself
+the docs-consistency tier of the ladder above. Hero shots taken apart from
 the run they illustrate must be disclosed with their own trace figure
 (`showcase-artifacts-single-run`), and every colour, entity and card
 figure quoted for them must equal the shot logs.
 
-### The judge's journeys — `scripts/journeys.mjs` (J1–J7)
+### The operator journeys — `scripts/journeys.mjs` (J1–J7)
 
 Every journey runs end to end through ONE deck origin (`DECK_URL`) — the
 operator gate, the verified `x-veer-officer` header and the loopback
@@ -2182,9 +2295,9 @@ and no plate on the public feed in EN, HI and GU. The same 92/92 was
 recorded earlier on the WP-15 package's private fresh-install stack
 (2026-10-23 20:20 IST, before the merge).
 
-### Pre-judging hygiene — `scripts/demo_reset.sh`
+### Pre-demo hygiene — `scripts/demo_reset.sh`
 
-Puts the stack into the judged starting state **without deciding
+Puts the stack into the demo's starting state **without deciding
 anything a human must decide** — it never approves a sighting, a dispatch
 or an e-challan; a signed-in officer authorises the pursuit live on
 `/ops`.
@@ -2206,7 +2319,7 @@ or an e-challan; a signed-in officer authorises the pursuit live on
   history — decisions are final); stages `watchlist_anpr_sweep`, which
   ensures the FIR earmark first, and waits until a PENDING
   `R_STOLEN_SIGHTING` and that run's JR-EM patrol units exist; then
-  verifies the judged state GET-only and prints the judge checklist.
+  verifies the staged state GET-only and prints the operator checklist.
   Rehearsed on the clone: the first apply made 5 writes (the pursuit
   cancelled, 3 penal recommendations rejected, the sweep staged); a second
   apply was a no-op.
@@ -2218,7 +2331,7 @@ or an e-challan; a signed-in officer authorises the pursuit live on
   approval — never an e-challan. Like the deck, it skips an approval
   already spent on a closed pursuit (one approval authorises one pursuit,
   §16.3), so the showcase's scripted approval — its pursuit closed by the
-  showcase itself — no longer pre-empts the judged AUTHORISE. An approved
+  showcase itself — no longer pre-empts the operator's AUTHORISE. An approved
   sighting of the stolen plate that is NOT yet spent (no closed pursuit
   behind it) would: decisions are final, so the dry-run WARNs and the
   `--apply` verification FAILS and names it.
@@ -2244,13 +2357,13 @@ or an e-challan; a signed-in officer authorises the pursuit live on
   `--apply --cancel-debris` 2 writes and exit 0, a further `--apply` 0.
 - The staged EMULATED sweep keeps running for 45 minutes — the JR-EM
   patrol units exist only while a run publishes them (C-A, Valkey EX 30) —
-  so re-run it within about 20 minutes of judging; a second `--apply` is
+  so re-run it within about 20 minutes of the demo; a second `--apply` is
   a no-op while the sweep is fresh, `--restage` forces a safe re-stage.
 - **The live order on release day** (each write with the user's
   go-ahead): the live smokes → `showcase_run.sh` → `repetition_gate.sh`
   (with `/ops` idle) → `journeys.mjs --live` → `demo_reset.sh --apply
   --officer '<name>' --cancel-debris`, the last ≥ 30 minutes after the
-  showcase and the journeys and ≤ 20 minutes before judging.
+  showcase and the journeys and ≤ 20 minutes before the demo.
 - **Audit rows are never deleted**: `--purge-acceptance` only lists the
   rows a purge would delete unless `VEER_PURGE_ACCEPTANCE_OK=yes`
   (rehearsed on a scratch copy of the database only). Exit: 0 done · 1 a
@@ -2337,7 +2450,7 @@ or an e-challan; a signed-in officer authorises the pursuit live on
 ledger), the network step applied (`reanchor_osm_network.sql`, the
 post-seed derivations, the display file), the oracle, emulator and deck
 restarted once after it, and one WARN: the old pursuit `4508d86d`'s
-route is no longer a legal path on the real-road network (the pre-judging
+route is no longer a legal path on the real-road network (the pre-demo
 reset cancels it). A `corridor_db` dump, the seed stamps and
 `:pre-wave3c` rollback tags on every `vvip-argus-*` image were taken
 first.
@@ -2380,7 +2493,7 @@ first.
   pursuit `4508d86d` shifting City Command's action frame: the canvas-ux
   smoke had picked that old pursuit as its target and found no spine of
   it on screen, and the city-command smoke missed the stolen vehicle's
-  dossier marker. Once the pre-judging reset had cancelled them
+  dossier marker. Once the pre-demo reset had cancelled them
   (00:28, `demo_reset.sh` above) both **re-ran green**: the canvas-ux
   pick and focus group at 00:30 (it picked the staged sweep's spine, its
   card, the hover and the LOCKED chip) and the city-command smoke at
@@ -2389,8 +2502,8 @@ first.
   Those re-runs used the 23:33 build; the 01:20 redeploy added the tier-0
   fix and the canvas's `SUPERSEDED · STOLEN` pin (§16.3).
 
-After the ladder: the pre-judging reset (00:28, and the final run at
-01:23 that passed every check and verified the judged state;
+After the ladder: the pre-demo reset (00:28, and the final run at
+01:23 that passed every check and verified the staged state;
 `demo_reset.sh` above) and
 the hero shots recaptured on that staged state at 01:25–01:26 (the
 flagship table below). Logs of every step are kept with the orchestration
@@ -2417,8 +2530,8 @@ own rows (flagship event `c7073ae6`, pursuit `38423ac5`) are no longer in
 the live store, while the step-12 run's are (flagship `dd43b362`, sweep
 `29e3030d`, its scripted pursuit `33ed536b` closed at run end). Every
 approval in these runs was made unattended by the script and is recorded
-as **`Scripted demo officer (showcase script)`**; in the judged demo a
-signed-in human approves on `/ops`.
+as **`Scripted demo officer (showcase script)`**; when an operator runs
+the demo, a signed-in human approves on `/ops`.
 
 | Assertion | Result (the artifacts' run, 2026-10-24 00:00 IST) |
 |---|---|
@@ -2428,11 +2541,11 @@ signed-in human approves on `/ops`.
 | Adaptive response | 1 band transition this run (AMBER → RED at situation row n=8, `none:CONGESTED:RAIN:HIGH`, `band_easing.json`); band ledger AMBER 7 / RED 18; once the flagship event completed the engine released it and the city band read GREEN (`showcase_results.json` `band_transitions`) |
 | Engine's closure answer | `signal_hold`, 45 s advance — "regulated, not stopped" |
 | Green corridor | **4 `emergency_vehicle` windows** in the audited twin schedule (Relief Road stretch → Nehru Bridge crossing → Riverfront West → Ashram South handover) — the scenario's scripted 108 crossings (forced events of `rath_yatra_monsoon_ambulance`, `simulation/scenarios.py`), i.e. causes the twin schedules and charges closure/queue delay, not windows the engine granted; 12-replication twin (seed 202506271) ambulance-delay mean **231.92 s** (model output, `twin_audit.json`) |
-| Pursuit chain (enforcement family) | GJ27EM9001 earmarked (`lawful_basis=stolen_vehicle_fir`, FIR 4401/2026 Kalupur PS, retention 30 d) → **6 emulated ANPR reads this run** (EM-CAM-01..04, EM-J01B, EM-J05 at 95–115 km/h, `source=emulated_anpr`, `matched_plate_hit=stolen_vehicle`; 17 reads of the plate in all) → **`R_STOLEN_SIGHTING` ×6, evidence only** — 0 penal recommendations; the penal rules the reads would have fired are withheld, none filed (the script's re-evaluation of the 6 reads: `R_SPD_SEGMENT` ×6, `R_SIGNAL_VIOLATION` ×2 — the red-phase rule is a wall-clock lottery the chain never asserts; the chosen row's own evidence, written as the read landed, lists `R_SPD_SEGMENT` and `R_CLOSED_CORRIDOR_ENTRY`, `pursuit_chain.json` `chosen.withheld`) → the newest sighting ("stolen vehicle (FIR 4401/2026) sighted at EM-CAM-03 — e-challan withheld, vehicle reported stolen") **approved by `Scripted demo officer (showcase script)`**: "pursuit authorised on a reported-stolen vehicle (evidence, no fine)" (append-only audit tail) → the C-N probe: approving a pending `R_SPD_SEGMENT` of the plate (filed on 2026-10-18 under that day's FIR earmark, before the stolen-vehicle rule existed) answered **409 "e-challan withheld — vehicle reported stolen"**, the row still pending, nothing written → operator-opened `vehicle_pursuit` event `38423ac5` (metadata vehicle_id + the approved sighting's recommendation_id + FIR + opened_by, merged into `pursuit_chain.json` from `events.corridor_events` — the POST response echoes metadata as `{}`) → **10 choke junctions ranked** by pgRouting off the latest sighting (top: junction 15 "Kalupur (Relief Road - Station Road)", unsignalised, score 0.008683, graph cost 79.6 s) → a 12-position trace on the vehicle-traces layer (`source=emulated_anpr`; its 24 h window, 23:53:58 → 00:00:55 IST, held this run's 6 reads and the 6 of the step-12 run's sweep 24 — the restore removed round 1's) → phase 8c closed the scripted pursuit (planning → cancelled, C-F): its approval is spent — one approval, one pursuit — and never stands in for the judged AUTHORISE. No fine anywhere in the chain |
+| Pursuit chain (enforcement family) | the emulated stolen plate (`GJ27EM•••1`, masked) earmarked (`lawful_basis=stolen_vehicle_fir`, FIR 4401/2026 Kalupur PS, retention 30 d) → **6 emulated ANPR reads this run** (EM-CAM-01..04, EM-J01B, EM-J05 at 95–115 km/h, `source=emulated_anpr`, `matched_plate_hit=stolen_vehicle`; 17 reads of the plate in all) → **`R_STOLEN_SIGHTING` ×6, evidence only** — 0 penal recommendations; the penal rules the reads would have fired are withheld, none filed (the script's re-evaluation of the 6 reads: `R_SPD_SEGMENT` ×6, `R_SIGNAL_VIOLATION` ×2 — the red-phase rule is a wall-clock lottery the chain never asserts; the chosen row's own evidence, written as the read landed, lists `R_SPD_SEGMENT` and `R_CLOSED_CORRIDOR_ENTRY`, `pursuit_chain.json` `chosen.withheld`) → the newest sighting ("stolen vehicle (FIR 4401/2026) sighted at EM-CAM-03 — e-challan withheld, vehicle reported stolen") **approved by `Scripted demo officer (showcase script)`**: "pursuit authorised on a reported-stolen vehicle (evidence, no fine)" (append-only audit tail) → the C-N probe: approving a pending `R_SPD_SEGMENT` of the plate (filed on 2026-10-18 under that day's FIR earmark, before the stolen-vehicle rule existed) answered **409 "e-challan withheld — vehicle reported stolen"**, the row still pending, nothing written → operator-opened `vehicle_pursuit` event `38423ac5` (metadata vehicle_id + the approved sighting's recommendation_id + FIR + opened_by, merged into `pursuit_chain.json` from `events.corridor_events` — the POST response echoes metadata as `{}`) → **10 choke junctions ranked** by pgRouting off the latest sighting (top: junction 15 "Kalupur (Relief Road - Station Road)", unsignalised, score 0.008683, graph cost 79.6 s) → a 12-position trace on the vehicle-traces layer (`source=emulated_anpr`; its 24 h window, 23:53:58 → 00:00:55 IST, held this run's 6 reads and the 6 of the step-12 run's sweep 24 — the restore removed round 1's) → phase 8c closed the scripted pursuit (planning → cancelled, C-F): its approval is spent — one approval, one pursuit — and never stands in for the operator's AUTHORISE. No fine anywhere in the chain |
 | Jan Rakshak dispatch | JR-EM-01 to the market spillover behind the Swami Vivekananda Road barricades (segment 1013, waypoint junction 5): requested → approved → en_route → on_scene, every transition audited (each step taken by the scripted officer); the unit projected deterministically (`emulated_dispatch_projection`) — the script walks the statuses in seconds, so at `on_scene` its projected unit had not yet left its post (progress ≈ 0, ETA 227.8 s, `arrived: false`, `jan_rakshak.json`): the status is the officer's report, the position the projection's (journey J2 shows a unit moving) |
 | Signal-policy guard (C7) | band AMBER → a plan for 11 junctions proposed → the operator apply returned **409 `shadow_eval_failed_closed`** (`twin_not_calibrated`): the twin's calibration replay is **`no_data`** — 0 field hourly aggregates in the last 72 h (`traffic.hourly_aggregates` holds REAL field observations only, and the store has none: the feed is synthetic) — fail-closed by design; 0 committed writes; the refusal is the oracle's last-plan answer in `GET /api/v1/signals/plans` (held in the process, so the run kept it in `signal_policy.json` `last_plan_auditable` — only a committed apply writes `corridor.signal_plan_log`, and the oracle was recreated after the run); the writer was switched on for the gate's rounds only and put back to its pre-gate value afterwards (verified) |
 | Citizen advisory | the active-movements feed reflected the public event (no protectee); the public `/citizen` page showed no pursuit and no plate |
-| Interface evidence | each run proves its own shots non-blank (SwiftShader WebGL; every saved PNG reload-decoded, ≥ 8 colours; the two `/gods-eye` shots also by a live-canvas readback). **The four hero shots on disk were recaptured at 01:25–01:26 IST on 2026-10-24**, on the clean, staged state the final pre-judging reset left, at 1440×900 — the three operator shots on the photoreal 3D city (`imagery=photoreal`, first attempt), the citizen page on its keyless Daylight map: the 3D city at rest — city band GREEN, the flow network draped in the simulated feed's colours, 110 entities (PNG 10,515 colours, `shots_city.log`); the pursuit trace — the camera on the stolen vehicle's trace centroid as the trace stood at capture (a 13-point trace, `shots_manifest.json`: the 23:51 run's 6 reads and the staging sweeps' 7), its pins reading `STOLEN · NO FINE · APPROVED` (the 23:51 run's scripted approval `c3431600`) and, on the e-challan a rehearsal script approved on 2026-10-18 under a cast officer name before the stolen-vehicle rule, `SUPERSEDED · STOLEN` (PNG 10,031 colours); the public citizen advisory — the deck's public projection, the same for every visitor: no pursuit, no plate, 0 event cards (the one live event, the staged sweep, is operator-only; PNG 2,060 colours); the `/ops` wall — band GREEN, 1 pending decision, 2 Decision Queue cards (the stolen-vehicle card with AUTHORISE PURSUIT and its pursuit card, no basis yet; PNG 7,268 colours, `shots_ops.log`). On the city and pursuit shots the fusion rail's newest human-decision rows are the 01:23 reset's, under its label `Scripted demo officer (demo reset)`. Per-surface screen checks: §2.7's screens camera, **40/40** on the live deck |
+| Interface evidence | each run proves its own shots non-blank (SwiftShader WebGL; every saved PNG reload-decoded, ≥ 8 colours; the two `/gods-eye` shots also by a live-canvas readback). **The four hero shots on disk were recaptured at 01:25–01:26 IST on 2026-10-24**, on the clean, staged state the final pre-demo reset left, at 1440×900 — the three operator shots on the photoreal 3D city (`imagery=photoreal`, first attempt), the citizen page on its keyless Daylight map: the 3D city at rest — city band GREEN, the flow network draped in the simulated feed's colours, 110 entities (PNG 10,515 colours, `shots_city.log`); the pursuit trace — the camera on the stolen vehicle's trace centroid as the trace stood at capture (a 13-point trace, `shots_manifest.json`: the 23:51 run's 6 reads and the staging sweeps' 7), its pins reading `STOLEN · NO FINE · APPROVED` (the 23:51 run's scripted approval `c3431600`) and, on the e-challan a rehearsal script approved on 2026-10-18 under a cast officer name before the stolen-vehicle rule, `SUPERSEDED · STOLEN` (PNG 10,031 colours); the public citizen advisory — the deck's public projection, the same for every visitor: no pursuit, no plate, 0 event cards (the one live event, the staged sweep, is operator-only; PNG 2,060 colours); the `/ops` wall — band GREEN, 1 pending decision, 2 Decision Queue cards (the stolen-vehicle card with AUTHORISE PURSUIT and its pursuit card, no basis yet; PNG 7,268 colours, `shots_ops.log`). On the city and pursuit shots the fusion rail's newest human-decision rows are the 01:23 reset's, under its label `Scripted demo officer (demo reset)`. Per-surface screen checks: §2.7's screens camera, **40/40** on the live deck |
 
 **The hero-shot camera** (`scripts/showcase_canvas_shots.mjs` — a camera,
 not a test: it signs in once through the shared helper, clicks nothing
@@ -2463,8 +2576,8 @@ schedules them); every
 pending→approved transition was the showcase script's, under the honest
 label `Scripted demo officer (showcase script)` (§2.9,
 `docs/GODS_EYE_INTEGRATION.md` §3) — the emulated/real split stated
-plainly, covering ANPR reads and dispatch projections too. In the judged
-demo a signed-in human approves live on `/ops`, and `demo_reset.sh`
+plainly, covering ANPR reads and dispatch projections too. When an
+operator runs the demo, a signed-in human approves live on `/ops`, and `demo_reset.sh`
 stops at PENDING. **History, kept:** the artifacts before this run were a
 2026-10-18 run on the schematic network of the time and before the
 stolen-vehicle rule — its stolen-plate reads filed a penal e-challan that
@@ -2472,7 +2585,7 @@ the script approved under a cast officer name ("Duty Officer R. Mehta
 (God's Eye Morning)"), the fine C-N now refuses. That approval
 (`e91d4591`) stays in the store as superseded audit history — decisions
 are final — and on the canvas its pin reads `SUPERSEDED · STOLEN`
-(§16.3); its pursuit `4508d86d` was cancelled by the pre-judging reset.
+(§16.3); its pursuit `4508d86d` was cancelled by the pre-demo reset.
 That run's twin-replay figure came from seed hourly aggregates since
 found fabricated and deleted (C-P, §16.5); the replay is an honest
 `no_data` today.
@@ -2623,8 +2736,8 @@ The wave-3 contracts (C-K … C-S, frozen and additive) and the two
 user-decided packages that close the gap between the demo and the city:
 the road network on real OpenStreetMap roads (WP-20) and escort authority
 (WP-21), plus the God's-eye in 3D (WP-22). Every figure below was measured
-on a fresh install of this tree (migrations 001–020 and the bring-up's
-seed order) or read from the code it names; the few measured on a
+on a fresh install of the wave-4 tree (its migrations through 020 and the
+bring-up's seed order) or read from the code it names; the few measured on a
 converted copy of the live store, or on a keyed, signed-in preview of
 the merged deck, say so.
 
@@ -2764,7 +2877,7 @@ before the earmark — answers **409** `{detail: 'e-challan withheld —
 vehicle reported stolen', reason: 'stolen_vehicle_fir'}`; rejecting stays
 allowed. A named officer still decides every `R_STOLEN_SIGHTING` (approve
 = the authorised basis of a pursuit, reject = dismissed) — nothing is
-auto-approved (a signed-in human in the judged demo; an unattended
+auto-approved (a signed-in human when an operator runs the demo; an unattended
 script's decisions carry its own label, `Scripted demo officer (showcase
 script)` / `(demo reset)`). A `vehicle_pursuit` event is accepted only when its
 metadata names a vehicle with an active earmark and a recommendation for
@@ -2777,7 +2890,7 @@ authorised only by its R_STOLEN_SIGHTING, approved by a human officer
 (C-N)" (`events/__init__.py` `_validate_pursuit`), and the `/ops` pursuit
 card offers only the sighting as the basis. (The WP-15 rehearsal on a
 live-store clone found an old approved e-challan still offered as a
-pursuit basis; the rule above closed that gap, and the pre-judging reset
+pursuit basis; the rule above closed that gap, and the pre-demo reset
 cancels the old fine-based pursuit.)
 
 **One officer approval authorises ONE pursuit.** An approval that already
@@ -2796,7 +2909,7 @@ a closed pursuit in for the officer's next authorisation (`client.ts`
 `pursuitCandidates`; an approval behind a still-open pursuit keeps
 counting, and that pursuit is on the board). So the showcase's scripted
 approval, whose pursuit the showcase closes, never pre-empts the human's
-AUTHORISE PURSUIT in the judged demo; `scripts/demo_reset.sh` mirrors the
+AUTHORISE PURSUIT in an operator-run demo; `scripts/demo_reset.sh` mirrors the
 rule when it verifies the `/ops` offer (§13). The
 emulator's stolen-vehicle sweep ensures the
 FIR earmark as an explicit, labelled scenario precondition before its
@@ -2964,7 +3077,7 @@ tool dock; no frame over 3 s under SwiftShader, median 567 ms):
   and the globe carries the view. When the ion IMAGERY fails or does not
   answer and no 3D tiles cover the view, the canvas falls back to the
   keyless OSM raster with the `OSM · DARK · FALLBACK` chip and the reason.
-- **A judge-grade City Command.** On the ion key with the 3D layer on,
+- **A command-grade City Command view.** On the ion key with the 3D layer on,
   City Command frames the live action obliquely at **−42°** (range capped
   at 4.4 km, so the camera stays at most ≈ 2.94 km up; measured on the
   merged tree at 2.3–2.7 km, and on the live stack at −42.0° with the
@@ -2991,9 +3104,11 @@ read, and a map request is grounded first by one deterministic, read-only
 `city_query_entities` call. A **directive** ("fly to the stolen vehicle")
 is a proposal: the deck shows it as an "AI suggests" chip that is never
 auto-applied; the operator's Apply or Dismiss is acknowledged once through
-`POST /chat/directives/ack` and audited. `POST /mcp` exposes the 28 tools
+`POST /chat/directives/ack` and audited. `POST /mcp` exposes the 29 tools
 of §7 — read-only city tools, compute tools and canvas verbs; no tool can
-approve, decide, dispatch or earmark (R2).
+approve, decide, dispatch or earmark (R2). Since the 2026-10-26 fix
+round the turn's arguments and every sentence of its answer are also
+checked in code against the tool results (§17.3).
 
 ### 16.11 The operator gate, officer attribution and plate masking
 
@@ -3070,6 +3185,435 @@ approve, decide, dispatch or earmark (R2).
 
 ---
 
+## 17. v2 and the 2026-10-26 fix rounds
+
+What the tree adds after wave 4, and what the pre-release audit's fix
+rounds changed, read from the code each item names. The operator
+interface is not described here: it is being redesigned, and its
+documentation follows that work.
+
+### 17.1 OSINT event intelligence — places and situations, never persons (C-T, migrations 021 + 023)
+
+- **Off by default.** `VEER_OSINT=0` keeps the stack at its 11 components;
+  with `VEER_OSINT=1` the compose invocation adds
+  `infra/compose.osint-ingress.yml` — `vvip-argus-osint-ingress` on
+  loopback `:8093`, started only once the oracle is healthy. Its readiness
+  never depends on the internet (§11). The ingress CLI's default oracle URL
+  is the discard port `http://127.0.0.1:9` (`osint_ingress/config.py`
+  `UNSET_ORACLE_URL`), never a running oracle.
+- **Packages.** `services/osint-common` (the C-T types and the ethics
+  checks), `osint-ingress` (connectors: GDELT, Google News, Reddit and the
+  official NDMA SACHET CAP alerts; a Common Crawl backfill that runs only
+  on demand), `osint-geo` (the gazetteer resolver onto the real network),
+  `osint-analysis` (fusion and credibility); the oracle's `osint/` package
+  stores and serves the situations (§2.2).
+- **Labels.** Every signal and situation carries `OFFICIAL-VERIFIED`,
+  `NEWS-REPORTED`, `UNVERIFIED-OSINT` or `SIMULATED`. The sandbox capture
+  is developer-written, so its signals are `SIMULATED` and its Reddit
+  replica names a fictional community (`r/example_city`), never a real
+  one; a live fetch keeps the source's own label.
+- **No person, no URL.** News and social URLs are never emitted, stored or
+  logged (the outlet's domain and a `url_sha256:` hint only); poster
+  blocks, GDELT actor columns and court-record portals are never read.
+- **Credibility.** Syndicated near-duplicates count as one source across
+  every news tier (one wire story from N outlets is one independent
+  source); a single social source is capped at 0.30
+  (`credibility.SINGLE_SOCIAL_CAP`); a district or state alert attached to
+  a point-level situation is `context` and never corroborates (023).
+- **Spatial honesty.** A neighbourhood is resolved as an area and keeps no
+  road anchor; a landmark keeps a road segment only within 900 m
+  (`osint_geo/confidence.py` `SNAP_ANCHOR_MAX_M`), and no snap credit is
+  paid beyond it. Decision support drops a segment anchor whose residual
+  exceeds 900 m and offers only monitor / advisory / verify options for an
+  area-level situation (`decision_support/engine.py`
+  `SEGMENT_RESIDUAL_MAX_M`). The gazetteer
+  (`scripts/data/osint_gazetteer.json`, regenerated and linted by
+  `scripts/gen_osint_gazetteer.py --check`) never lets an area word
+  stand as a junction alias.
+- **Redaction — what it does and does not promise.** Names and ages are
+  redacted at parse (`[PERSON]`, `[AGE]`, `[CONTACT]`, `[URL]`); a
+  Gujarati or Devanagari word that is neither a gazetteer place nor an
+  ordinary word is withheld as `[WITHHELD]`. There is no NER.
+  `osint_common.ethics.find_pii` proves only that its own patterns no
+  longer fire — the redactor uses the same pattern family, so that check
+  is not a leak measurement. The honest figure is the **held-out recall**
+  on a corpus written blind and never tuned on
+  (`services/osint-ingress/tests/test_heldout_recall.py`): latin-script
+  names **0.882**, Indic-script names **1.0** (withheld), age markers
+  **0.895**, ordinary words kept **0.987**. A name with no cue word, no
+  listed surname and no role noun, a single given name after an unlisted
+  verb, or an ALL-CAPS headline can survive
+  (`services/osint-ingress/README.md` §Ethics). The oracle's ingest guard
+  refuses a signal on which `find_pii` fires or that still carries an
+  Indic-script word the redactor must withhold (`pii_unredacted`,
+  `traffic_oracle/osint/ingest.py`).
+- **Human gate.** A surfaced situation becomes a corridor event only when
+  a named officer promotes it (`POST /api/v1/osint/events/{id}/promote`;
+  409 `officer-required` before any lookup).
+
+### 17.2 Decision support (C-U, migration 022)
+
+`POST /api/v1/decision-support/{event_urn}/generate` is compute-only (no
+officer); it proposes courses of action — AHP weights, a lexical veto,
+TOPSIS over nine criteria and a Dirichlet sensitivity check
+(`decision_support/mcda.py`), each option wargamed on the twin and the
+cascade model, or on a seeded surrogate when they do not answer.
+`POST /api/v1/decision-support/{dss_id}/decision` is human-gated: no named
+officer → 409 `officer-required`, before any lookup. Approve, reject and
+defer are logged in the append-only `decision.dss_decision_log`; an
+approval writes no field action — it creates dispatch REQUESTS, each then
+decided on its own.
+
+Labels that say what a number is (fix round, `mcda.py` `CRITERIA`):
+"Public-safety risk reduction (fixed prior by COA actions, not
+simulated)" and "Speed of effect (nominal time by COA kind, not a unit
+ETA)"; the dissent never claims a lead on either as a simulated advantage.
+The ambulance-delay penalty applies only to an option that dispatches a
+108 (`wargame.py`), and the value-of-information note says the
+credibility it weighs is an uncalibrated source-prior score
+(`voi.py`).
+
+### 17.3 The brain: grounding in code, retired model-made assessments
+
+`convoy_brain/grounding.py`, wired into `orchestrator.py`, makes
+"state only what the tools returned" a rule the code applies:
+
+1. **Argument provenance.** A drafted road-segment id must come from the
+   operator's message, the session context or an earlier tool result;
+   `predict_eta` needs a tool-reported route length and speed (softer
+   inputs are labelled ASSUMED INPUTS). A call that fails is refused, and
+   the refusal is shown.
+2. **Road names** are resolved against the network: a name the network
+   does not carry is answered "no road segment named X", never with
+   another road's data.
+3. **Every sentence** of the answer is checked against the turn's tool
+   results, the session context and the operator's words; a sentence
+   naming an unreported road or place, an unreported figure with a unit,
+   a clock time or a segment id, a vehicle position the lookups did not
+   find, or a unit ETA while no unit is fielded is removed — the answer
+   says so (`done.grounding.removed`, an `ungrounded_claims_removed`
+   operator alert). When every lookup about the named subject came back
+   empty, the answer is the deterministic "not in the city picture". A
+   position quoted for a "right now" question carries the sighting's age.
+
+The routes that asked the model for security dossiers, compliance
+verdicts, threat levels or metric reasoning answer **410** and write
+nothing (§4); the recorded threat level defaults to `not_assessed`, and
+recording protocol state needs a named officer. The tactical model is
+shown to operators as `gemma4-12b-veer`; its served alias stays internal
+(§6.6). The brain's own defaults are loopback; it lists the environment
+variables it does not read (`config.UNUSED_ENV`).
+
+### 17.4 The officer full-mark lookup (migrations 024 + 025)
+
+`GET /api/v1/vehicles/lookup?plate=` answers only a named duty officer —
+the deck-verified `x-veer-officer` header, checked before the plate is
+even parsed; an anonymous caller gets 409 `officer-required` and nothing
+is written. Every completed lookup, found or not, writes one
+`corridor.vehicle_lookup_audit` row: the officer, the time, the MASKED
+mark, whether a vehicle was found and the disclosure class. Migration 025
+dropped the unsalted mark hash 024 had stored (reversible in at most 1000
+tries); the raw mark is never stored or logged, and uvicorn's access line
+has its `plate=` value masked. The full mark leaves only in the 200 body,
+to that officer.
+
+### 17.5 The oracle's officer rule and emulated evidence
+
+- `VVIP_REQUIRE_OFFICER` now reaches the oracle as well as the brain
+  (`infra/compose.argus-override.yml`, default **1**): earmark create and
+  clear (`vehicles/`) and city signal-plan apply and restore (`signals/`)
+  without a named officer return 422 — before, they were recorded as
+  `operator`. The emulator's precondition earmark names its system actor;
+  `showcase_run.sh` names its officer. `scripts/veer_env.sh --set
+  VVIP_REQUIRE_OFFICER 0` relaxes both services.
+- A pursuit whose evidence is emulated is labelled emulated: the oracle
+  stamps `metadata.evidence_source = emulated` on an event whose linked
+  vehicle or recommendation is emulated, `city/common.py` honours it, and
+  an FIR reference on emulated entities, feed rows, events and DSS
+  summaries reads "demo FIR …" (`mark_demo_fir`).
+- Junction signal state from the signal program is labelled planned
+  (`planned_green` / `planned_lost`, `phase_status` "planned (signal
+  program)"), never a live phase; synthetic feed tags map to emulated.
+- The dead `traffic_oracle/synthetic/` package (gap-filling generation
+  with stale columns) and its tests are deleted.
+
+### 17.6 Deployment hardening
+
+The bring-up order (build → PostGIS → migrate → seed → services),
+`--rebuild-postgis`, the non-root images, the digest-pinned bases and the
+oracle / brain / deck healthchecks are in §11. Pass-through settings that
+are absent from the container while unset (so the service default holds)
+can be persisted in veer.env: `VVIP_ACCEPT_LIVE_ANPR`,
+`VVIP_ADAPTIVE_ROBUST_INPUTS` (oracle); `VVIP_ESCORT_SIM_SPEED_KMH`,
+`VVIP_ESCORT_GPS_TIMEOUT_SEC`, `VVIP_ESCORT_APPROVAL_TIMEOUT_SEC`,
+`VVIP_CONFIDENCE_FLOOR`, `DECIDER_TIER0_DISABLE` (brain);
+`INGRESS_CITY_SEED` (signal-ingress).
+
+### 17.7 Deck route-JS ceilings
+
+The deck's first-load JavaScript per route is held under ceilings
+committed with their rationale in
+`services/command-deck/tests/route-budget.json` (gzip bytes), read by
+`tests/route-budget.unit.mjs` (the static graph) and
+`tests/route-coldload.mjs` (a cold load, EN and HI/GU):
+
+| Route | static | cold load EN | cold load HI / GU |
+|---|---|---|---|
+| `/analyst` (the workspace; the ceilings the old `/` carried) | 368,640 | 404,480 | 475,136 |
+| `/ops` | 440,320 | 473,088 | 540,160 |
+| `/gods-eye` | 376,832 | 402,432 | 473,088 |
+
+The V3 routes are held to ceilings of their own in the same file (the
+`routes` map and the per-route entries — `/` and `/home`, `/map`,
+`/assistant`, `/plan`, `/decide`, `/o/[urn]`, `/citizen`, `/driver`,
+`/comms`), each set from the honest measurement plus about 10 KB; read the
+file for the numbers. The HI/GU ceilings of `/analyst`, `/ops` and
+`/gods-eye` were raised once for the V3 string pack those pages now fetch
+(the first row above is the figure after that change).
+
+The ceilings are the honest 2026-10-26 measurement plus about 10 KB of
+headroom. They stop regressions; the redesign's original budget (the
+kickoff baseline + 120 KB) is **not** met — the OSINT and
+decision-support features and the workspace redesign add weight on the
+first screen — and the remaining reductions are listed in the file's
+note.
+
+---
+
+## 18. V3 interface (2026-10-27)
+
+> **Status:** merged and **deployed to the live stack on 2026-10-27**
+> (after a verified `pg_dump` and rollback image tags: migrations 021–025
+> applied, `VEER_OSINT=1`, every service recreated on its non-root image,
+> the operator gate restored; `veer_up.sh --status` READY 12/12). The live
+> acceptance ladder was re-run that day (§18.8).
+
+### 18.1 Design intent — simple by default, depth on demand
+
+V3 keeps the whole v2 machine and puts a simpler first screen on top of it.
+The question the first screen answers is "what do I do now?": Home features
+the one decision with the soonest deadline, shows the city's state, and
+lists what is live, what waits, what was reported and what is coming. Every
+object has a page; the map is clean until the officer asks for more; the
+assistant talks in short prose; and every power tool — the workspace, the
+situation wall, graph, table, timeline, audit, lab — stays one click away
+under **Analyst** (visible to every officer, one rail item). Nothing was
+removed; some things moved one level deeper. The rules that were never
+negotiable carry over untouched: **AI proposes, a named officer decides**
+(no approve control on the map, the assistant, the object pages or the
+public pages — only Decide's sheet, with the officer named, and the existing
+Analyst/`/ops` homes); vehicles only; registration marks masked unless a
+duty officer is named; OSINT is about places and situations, never persons;
+honest labels (EMULATED / SIMULATED / UNVERIFIED-OSINT / NEWS-REPORTED /
+OFFICIAL-VERIFIED) and no visual effect presented as a sensor feed or a
+real photo.
+
+### 18.2 Screens
+
+| Screen | Route | Notes |
+|---|---|---|
+| Home | `/`, `/home` | featured decision + countdown, city pulse, four rails (`lib/v3/home/**`) |
+| Decide | `/decide`, `/decide/[unit]` | queue + real map + one sheet; reads only existing stores (no new endpoint) (`lib/v3/decide/**`) |
+| Object page | `/o/[urn]` | ten record kinds + a generic layout; tabs per kind (Overview, Sources, Reads, Pursuit, Timeline, Nearby, Record); a sighting without a lawful basis reads "Withheld: no lawful basis" (`lib/v3/object/**`) |
+| City map | `/map` | `GodsEyeCanvas` with `chrome="v3"`; Layers sheet, Now list, closed stats panel, terse legend, focus mode, tools (3D, thermal-style view, measure, follow, zoom, north) |
+| Assistant | `/assistant` | shared `ChatSession`; proposal cards open in Decide |
+| Planner | `/plan` | four-step sheet beside the real map; protection class Z+/Z/Y/X with floors read from `shared/schemas/protocol_params.json` |
+| Analyst | `/analyst` | the v2 workspace (route node `/(deck)`), plus the sub-nav to `/ops`, `/gods-eye`, `/chat` |
+| Advisories | `/comms` | event list, satellite-style map, three drafts side by side, "Drafted — not delivered", side sheet for the draft log and dispatch threads |
+| Public | `/citizen`, `/driver` | V3 day theme; `PublicShell` replaces the old citizen shell; no operator module is in their static graph; the satellite key is asked of `/gods-eye/mode`, which answers an anonymous visitor keyless |
+
+Every user-visible string of the V3 screens ships in EN, HI and GU
+(`packs.v3*`, `packs.object*`, `packs.map3*`, `packs.asst3*`, `packs.plan*`,
+`packs.comms3*`, `packs.pub3*`, `packs.decide*`), loaded on the route that
+needs them.
+
+### 18.3 The shell
+
+`lib/v3/shell/V3Shell.svelte` is the one frame, on every operator page: the
+**AppRail** (Home · Map · Decide · Plan · Assistant · Advisories, then
+Analyst, separated; the Decide item carries the only badge, the waiting
+count; `G` then `H`/`M`/`D`/`P`/`A`/`V` navigate), the slim **TopBar** (one
+search — the page's omnibar; a **HeaderMenu** that holds language, exercise
+data, data status and the map-style choice; the **alerts bell**; the
+named-officer pill, whose panel keeps the `duty-officer` input and the
+operator gate), the **OpsBand** (the Analyst sub-nav, band tag, Inbox, Data,
+Policies, More, and the `?` shortcuts sheet — drawn on the `(deck)` pages)
+and the **LiveBand** (the live-operations strip, 36 px, only while something
+is live; "live operations are never hidden"). `(deck)/+layout.svelte` wraps
+the old pages in `V3Shell`; `comms/+layout@.svelte` resets out of it and
+renders one shell of its own, so nothing is double-wrapped.
+
+The **alerts bell** keeps the last 50 alerts with read state per browser.
+The **chime** is on by default for each new waiting decision (a soft
+two-note WebAudio sine, no file, no network; mutable; remembered in
+`veer.v3.chime`). `chimeAllowed` is the one place the rule lives: decisions
+already waiting at load never chime; one chime per sync however many units
+arrive; an EMULATED or test unit chimes only while the console declares
+exercise data (otherwise it is listed silently, so the chime never trains
+officers to react to a rehearsal).
+
+Tokens: `lib/v3/tokens.css` / `tokens.ts` (`--v3-*`), night as `:root`, day
+under `[data-theme='daylight']`. Since 2026-10-27 the grounds are neutral —
+night `#000000` with `#111111`–`#2E2E2E` surfaces and white primary actions,
+day `#F6F6F6`/`#FFFFFF` with black primary actions — and colour carries
+meaning only: decision orange, alert red, ok green, route teal, and the
+accent blue `#276EF1` for links, focus and the assistant (formerly violet).
+The v2 `--v-*` command theme follows the same neutrals, so the Analyst pages
+match. Every text ink is proven ≥ 4.5:1 on every surface of its theme
+(`tests/v3-tokens.unit.mjs`, `tests/design-tokens.mjs`). Glyphs
+(`lib/v3/icons.ts`, `Glyph.svelte`), the brand SVGs under `static/brand/`
+and the illustrations under `static/illustrations/` are original assets.
+Collapsible map overlays are translucent glass over the map with a solid
+fallback.
+
+### 18.4 Imagery and the satellite quota guard
+
+**Pictures, not only maps (2026-10-27).** Every V3 surface leads with imagery
+through `lib/v3/media/` (`Cover`, `VehicleShot`, `AgencyMark`; the `v3i_*`
+pack in EN/HI/GU): `static/artwork/` — studio shots of ten vehicle classes and
+four convoy compositions (Z+, Z, Y, X), 16:9 key art for every corridor and
+reported-event kind, and time-of-day riverfront scenes plus an all-clear
+scene, all written by a deterministic generator (crowds only as distant
+masses, no faces); `static/photos/` — 21 Wikimedia Commons photographs of
+Ahmedabad's places under their own licences (`NOTICE.md`), drawn only through
+`Cover`, which always captions them "Reference photo · not live" with the
+credit (photos with legible plates, faces or riders as the subject were left
+out); `static/logos/` — the agencies' and data sources' marks (resized only,
+on a light or dark plate), with one ownership line in the header menu, Home
+and the public footers. Decision cards keep the place map and inset the
+vehicle shot; operation, report and planned cards lead with key art or a place
+photo with the map inset. `tests/v3-media.unit.mjs` pins the generator byte
+for byte, coverage of every kind and class, budgets (≤ 40 KB a file, ≤ 900 KB
+in all), credits and licences.
+
+Map thumbnails (`lib/v3/map/MapThumb.svelte`) are raster tiles drawn on a
+canvas with SVG overlays — **no Cesium viewer per card**. Two styles follow
+one shared preference (`veer.v3.map.style`, default satellite when the deck
+has the key): a night-graded OSM map, and **natural-colour satellite** —
+Cesium ion asset 2 (Bing aerial), fetched as plain 256 px tiles through
+ion's asset endpoint and Bing's imagery metadata, drawn ungraded and
+credited as text. The key is the deck's ion key (`VEER_CESIUM_ION_TOKEN`);
+it lives only in the satellite source and the endpoint URL — never in the
+DOM, storage, console or errors. `/map` opens on the photoreal 3D city when
+the key exists (base-map choice `veer.v3.map.base`, "Satellite 3D · City
+map"); without the key it opens on the city map and says why on the 3D
+tool. Honest labels, the thermal-style view and `__GODS_EYE__` are
+unchanged.
+
+The **quota guard** (documented in `map/satellite.ts`, so that thumbnails
+can never exhaust the ion allowance):
+
+- at most **6 tiles per card** (an eager hero or stage may use more — the
+  tests hold it to 40);
+- at most **4 requests in flight**, through the same queue as the night
+  tiles;
+- one shared **192-tile LRU** for night and satellite;
+- **800 network requests per browser-tab session** (endpoint, metadata and
+  tiles, counted in `sessionStorage` so a reload loop cannot reset it);
+- the first **401 / 403 / 429 stands satellite down** for the session
+  (remembered) and requests queued behind it are not sent; repeated
+  transient failures stand it down for the page view; the setup requests
+  are bounded;
+- fallback is silent: thumbnails draw the night tiles.
+
+On satellite imagery, route/trail casings are near-opaque scrims, labels
+get a dark halo and neutral lines are drawn stronger (contrast is computed
+from the shipped CSS in `v3-map-style.unit.mjs`).
+
+### 18.5 Content-security policy — per document
+
+A CSP is per DOCUMENT, and a client-side navigation from Home to the map or
+to Analyst keeps the document it started in. So `hooks.server.ts` treats
+the `(deck)` **and** the `(v3)` groups as operator pages (the policy that
+admits what Cesium needs: eval for knockout, blob task workers, Google's
+Map Tiles API and the Bing aerial tiles) and keeps the `(public)` pages on
+the strict policy — no eval, no blob scripts, no operator tiles (user
+decision 2026-10-26). The decision reads the RESOLVED route id
+(`event.route.id`), never the URL, which is what keeps `/analyst` (route
+node `/(deck)`) and `/` (route node `/(v3)/home`) on the operator policy.
+The public shell links no operator route.
+
+### 18.6 Tests added
+
+New with V3 (under `services/command-deck/tests/`):
+
+- unit: `v3-assets.unit.mjs`, `v3-tokens.unit.mjs`, `v3-shell.unit.mjs`,
+  `v3-map.unit.mjs`, `v3-map-style.unit.mjs`, `v3-assistant.unit.mjs`,
+  `v3-plan.unit.mjs`, `v3-comms.unit.mjs`, `v3-public.unit.mjs`,
+  `root-flip.unit.mjs`, plus `home.unit.mjs`, `decide.unit.mjs` and
+  `object-page.unit.mjs`;
+- hermetic browser smokes (GETs stubbed, every non-GET and every third
+  party aborted): `v3-shell-smoke.mjs`, `v3-map-smoke.mjs`,
+  `v3-map-style-smoke.mjs` (fake token, stubbed ion/Bing/OSM),
+  `v3-assistant-smoke.mjs`, `v3-plan-smoke.mjs`, `v3-comms-smoke.mjs`,
+  `v3-public-smoke.mjs`, `root-flip-smoke.mjs`, plus `home-smoke.mjs`,
+  `decide-smoke.mjs` and `object-page-smoke.mjs`;
+- `route-budget.json` / `route-budget.unit.mjs` / `route-coldload.mjs`
+  carry the V3 routes' ceilings (§17.7).
+
+Existing tests were re-pointed, not weakened: `design-smoke.mjs` and the
+route helpers treat `/analyst` as the workspace; `citizen-smoke.mjs`
+addresses the comms buttons by test id and opens the draft log and the
+dispatch threads through the side sheet. The implementers' reports record
+mutation testing of the new units (scratch copies outside the tree); the
+full gate on the merged tree was still running when this section was
+written, so no pass/fail count for the merged tree is quoted here.
+
+### 18.7 Known leftovers (recorded, not hidden)
+
+- The tablet **bottom-sheet "Now"** list is not built.
+- The `#evt=`, `#rec=` and `#dsp=` hash hand-overs (V3-SPEC §3.2: to
+  `/decide/<unit>` / `/o/<urn>`) are **not done**; those fragments stay on
+  Home (the old root never read them). `/ops` keeps its own `#evt=`/`#rec=`
+  deep links. Only the workspace's hash keys are handed over to `/analyst`.
+- The **alerts bell is not fed on the Analyst pages** (`/analyst`, `/ops`,
+  `/gods-eye`, `/chat`): the bell follows the decision list a V3 page
+  supplies, and the `(deck)` pages supply none.
+- `lib/shell/Navbar.svelte` (and the v2 `MoreMenu` and `shell/nav.ts`) is
+  **still on disk**, no longer drawn, because `root-flip.unit.mjs` pins their
+  source and tables.
+- A `/home` entry in the route budget duplicates `/` (same route node, same
+  ceilings, kept so both URLs are held).
+- The acceptance runs recorded before 2026-10-27 (`screens-verify` 40/40
+  included) predate V3; §18.8 records the V3 live run.
+
+
+### 18.8 The V3 live run (2026-10-27)
+
+The deploy, in order: a verified `pg_dump` and rollback image tags; migrations
+021–025 (`5 applied, 25 in ledger`); `VEER_OSINT=1`; `veer_up.sh` (every
+service recreated on its non-root image: oracle 10004, brain 10005, deck
+10006); the operator gate restored; the deck rebuilt twice the same day (the
+neutral palette, then the imagery layer) and recreated alone. Status:
+**READY 12/12**. The live acceptance ladder (`live_gates.sh`), gate on:
+
+- **Green:** status; API probes (49/49 OSM segments, escort authority
+  `officer_approves_every_switch`, ≥ 20 MCP tools); `argus_full_smoke`; the
+  feed-dark negative and its recovery; fleet; tier-0; the drift panel;
+  `verify_all --live`; repetition (fast); the journeys J1–J6 (J7 is the manual
+  reboot record); God's-eye; **God's-eye 3D** (photoreal tiles, draping, the
+  imagery chip); canvas UX; the ops-live and agent-integration smokes;
+  **screens-verify** (its two dev-harness checks skipped on a production
+  deck, not counted); both leak checks; the four OSINT checks (health,
+  surfaces, officer gates, the public firewall).
+- **Not green, with the reason:** the flagship `showcase_run.sh` — every
+  assertion but one passed; its pursuit-trace hero shot fell back from the
+  photoreal tiles under load, so the run is not cited (the accepted 2026-10-24
+  run and its artifacts stay the flagship record). `verify_all`'s offline
+  deck-ui tier — the assistant smoke's live-strip checks need a pursuit on the
+  board, and after the demo reset none exists until an officer authorises the
+  staged sighting; it also found one long event title clipped at the edge of
+  the Analyst assistant dock at 1440 px (cosmetic, recorded). `city-command`
+  — the replay picker passes against the current runs ledger; its anomaly-pick
+  check found no anomaly pulse on the wall at that moment (state, re-checked
+  on the next run). Test drifts the ladder exposed (the V3 chip and badge
+  wording, OSINT as an honest entity source, the layer sheet, the `/design`
+  harness being 404 in production, the workspace route) were fixed in the
+  tests, never by loosening a product rule.
+
+---
+
+
 *Revision v2.4 — city-platform pass (2026-10-13, IST). The platform is
 restated as Veer, a **city-scale multi-agency corridor-and-enforcement
 operating system** — VVIP routing one component among many. Added this
@@ -3133,7 +3677,7 @@ dated runs they are and are re-run on the deployed wave-4 stack (the
 showcase was, on 2026-10-24 — v2.7).*
 
 *Revision v2.6.1 — the integrated tree (2026-10-23, IST): WP-22's 3D
-draping, chip and judge view merged and verified (§16.9 states them
+draping, chip and command view merged and verified (§16.9 states them
 as shipped); the stolen-vehicle pursuit basis (an e-challan
 basis → 422) and **one officer approval → one pursuit** (reuse → 422, the
 `pursuit` link on every recommendation row, `/ops` and `demo_reset.sh`
@@ -3154,13 +3698,33 @@ the three failures, their causes, the fixes and the green re-runs, with
 times (§13); the tier-0 fix — pre-movement route options labelled by
 their own segments and the pre-movement own-doc filing — redeployed at
 01:20 and its live gate green (§3); the flagship showcase table, the
-journeys, the repetition gate and the pre-judging reset regenerated from
+journeys, the repetition gate and the pre-demo reset regenerated from
 the LIVE runs (§13) — the showcase artifacts are now the live run of
 2026-10-24 00:01 IST, its stolen-vehicle chain without a fine; the hero
-shots recaptured on the staged judging state (the operator views in
+shots recaptured on the staged demo state (the operator views in
 photoreal 3D), with the `--ops-only` capture (§13); the canvas's `SUPERSEDED · STOLEN` pin
 (§16.3); the live 3D verification (§16.9); the test collection recounted
 after the fix — 2709 pytest, convoy-brain 635, cargo 120 (§13). The
 replay MAE once quoted for the 2026-10-18 run stood on seed hourly
 aggregates since found fabricated and deleted; no such figure is quoted
 any more.*
+
+*Revision v2.8 — pre-release fix rounds (2026-10-26, IST): §17 documents
+the v2 additions (OSINT about places, decision support, the officer
+lookup audit; migrations 021–025) and what the audit's fix rounds
+changed — the brain's grounding validator and its retired model-made
+assessment routes (410), the tactical model's operator-facing name, the
+oracle's officer rule, emulated pursuit evidence labelled as such, the
+bring-up order and `--rebuild-postgis`, non-root images, the deleted
+`synthetic/` package, the honest OSINT redaction figures and the deck's
+route-JS ceilings; the test collection recounted (5119 pytest, §13);
+dispatch described as a recorded, human-approved request with no agency
+integration.*
+
+*Revision v2.9 — the V3 interface (2026-10-27, IST): §2.7's surface map is
+rewritten for the V3 route map (Home at `/`, the Analyst workspace at
+`/analyst` by a reroute, the `(v3)`, `(deck)` and `(public)` groups), §17.7
+gains the V3 ceilings pointer and §18 summarises the V3 design intent,
+screens, shell, the satellite quota guard, the per-document CSP decision,
+the tests added and the known leftovers. The V3 build was deployed to the
+live stack on 2026-10-27.*

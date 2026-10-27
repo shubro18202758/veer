@@ -65,7 +65,7 @@
  *                ('approved by <officer>'); an answer after the deadline
  *                gets the brain's 409 (expired — current plan held), once
  *   escort (/)   the cockpit adopts a running escort; the HUD's hold line,
- *                SIMULATED FEED / EMULATED GPS provenance; 'AI PROPOSES …
+ *                simulated feed / emulated GPS provenance; 'Proposed by Veer AI …
  *                expires in mm:ss' locked until an officer is named, the
  *                same proposal on the planner rail; APPROVE and REJECT each
  *                send ONE POST and the HUD names the officer; an unanswered
@@ -82,6 +82,16 @@
  *                IST rendering of the wire instants
  *   hygiene      no 404, no page error, nothing passed through to a backend
  *
+ * Old-or-new (UI-S7A, the first UI merge): every pin into markup or copy the
+ * redesign rebuilds accepts today's deck AND the redesigned one
+ * (tests/lib/tolerant.mjs; SPEC §12.4–12.5) — a decision item is expanded
+ * (tests/lib/queue.mjs expandQueueItem) before its buttons are clicked, the
+ * /ops Lab section is opened (openIfCollapsed, plan X23) before the emulator
+ * steps, and the fixture world answers the GETs the redesign adds: the
+ * inspector's GET /city/entity/{kind}/{id}?audit_limit=60, the event history
+ * GET /events?limit=200, and a /city/entities snapshot of vehicles, cameras,
+ * sightings and recommendations as well as junctions. No new POST.
+ *
  * Usage:
  *   node tests/ops-wall-smoke.mjs [origin]     # default http://127.0.0.1:5199
  *
@@ -97,6 +107,10 @@ import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { expandQueueItem, openIfCollapsed, textIs, textMatches } from './lib/queue.mjs';
+import { COPY, SEL, ensurePlanner, selectEventRow, textHas } from './lib/tolerant.mjs';
+import { nameOfficer } from './lib/operator-session.mjs';
+import { WORKSPACE } from './lib/routes.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DECK = path.resolve(HERE, '..');
@@ -159,6 +173,19 @@ function ok(name, cond, detail = '') {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * V3-P6B: the duty-officer input is in the V3 top bar's officer popover (the pill `v3-officer`), not inline in a
+ * navbar. Open the popover (when it is not already) so the input exists, and return the input's selector.
+ */
+async function openOfficerField(page) {
+	const sel = 'input[data-testid="duty-officer"]';
+	if (!(await page.$(sel))) {
+		await page.click('[data-v3="top-bar"] [data-testid="v3-officer"]');
+		await page.waitForSelector(sel, { timeout: 8000 });
+	}
+	return sel;
+}
 const T0 = Date.now();
 const iso = (msAgo = 0) => new Date(T0 - msAgo).toISOString();
 /** A registration mark in raw form (masked marks carry •••). */
@@ -221,6 +248,28 @@ const JUNCTIONS = [
 	age_sec: null,
 	links: [],
 	props: { name, name_gu: null, junction_type: type, signal_control: sig },
+}));
+
+/** The fixture's ANPR cameras (C-C camera entities): the sites its sightings name. */
+const CAMERAS = [
+	['EM-CAM-02', 'Lal Darwaja east approach', 72.5813, 23.0264, 1012],
+	['EM-CAM-03', 'Relief Road at Kalupur', 72.585, 23.0202, 1005],
+	['EM-CAM-04', 'Tilak Road', 72.595, 23.0202, 1013],
+	['EM-CAM-05', 'Kankaria Road', 72.595, 23.01, 1038],
+].map(([id, label, lon, lat, seg]) => ({
+	urn: `camera:${id}`,
+	kind: 'camera',
+	id,
+	label,
+	lon,
+	lat,
+	state: 'active',
+	band: null,
+	source: 'emulated',
+	t: null,
+	age_sec: null,
+	links: [`segment:${seg}`],
+	props: { camera_kind: 'anpr', camera_source: 'emulated', registered: true, junction_id: null, segment_id: seg, heading_deg: 90, reads_15m: 0, hits_15m: 0, last_read_t: null },
 }));
 
 const USE_CASES = [
@@ -402,6 +451,14 @@ const world = {
 	escort: null,
 	/** Escort proposals the brain refuses 409 when answered: approval_id → {status, detail, reason}. */
 	escortRefusals: {},
+	/** ms the escorts read lags an ACCEPTED answer (0 = no lag): the cockpit's HUD section sets it, so a click
+	 *  after the brain accepted the answer — but before the poll closes the proposal — is deterministic. */
+	escortPollLagMs: 0,
+	escortPollHeldUntil: 0,
+	/** URNs whose dossier the page read (GET /city/entity/{kind}/{id}). */
+	dossierReads: [],
+	/** Event-history reads (GET /events). */
+	historyReads: 0,
 };
 
 const MVMT = 'mvmt-smoke-01';
@@ -589,7 +646,7 @@ const PROBE_NDJSON = [
 	{ type: 'tool_result', data: { id: 't1', name: 'get_active_events', ok: true, summary: '3 events: PURSUIT — stolen GJ27EM9001 (FIR 4401/2026, Kalupur PS)' } },
 	{ type: 'token', data: 'The pursuit of GJ27EM' },
 	{ type: 'token', data: '9001 is near Lal Darwaja; band AMBER.' },
-	{ type: 'done', data: { session_id: 'smoke-probe', tiers_used: ['gemma:aditi-ps18-v7h-12b'], operator_alerts: [], degraded: false } },
+	{ type: 'done', data: { session_id: 'smoke-probe', tiers_used: ['gemma:gemma4-12b-veer'], operator_alerts: [], degraded: false } },
 ]
 	.map((l) => JSON.stringify(l))
 	.join('\n');
@@ -643,6 +700,140 @@ function runRow(r) {
 		movement_id: null,
 		event_status: r.event_status ?? null,
 	};
+}
+
+// ─── the fused picture, dossiers and the event history (C-C, C-F) ─────────
+// SPEC §12.7: the redesigned /ops and / read the city snapshot for every kind
+// (the inspector, the omnibar, the graph), open an entity's dossier on
+// selection, and page the event history. GETs only — no new POST.
+
+const S = (n) => `5a1e0000-0000-4000-8000-0000000004${String(n).padStart(2, '0')}`;
+const SEGMENT = new Map(SEGMENTS.map((s) => [s.segment_id, s]));
+const stolenBasis = (v) => v.lawful_basis === 'stolen_vehicle_fir';
+/** The fixture camera nearest a fix (a sighting names the camera that read it). */
+const nearestCamera = (lon, lat) => CAMERAS.reduce((a, c) => (Math.hypot(c.lon - lon, c.lat - lat) < Math.hypot(a.lon - lon, a.lat - lat) ? c : a), CAMERAS[0]);
+
+/** Statuses of the events that are still open (traffic_oracle/city/entities.py LIVE_EVENT_STATUSES): the snapshot carries these. */
+const LIVE_EVENT_STATUSES = ['planning', 'approved', 'active'];
+
+/**
+ * The world's C-C entities: its open events, each watchlisted vehicle, its
+ * latest sighting, the cameras, every recommendation and the junctions.
+ * Labels and text are server-masked (city/common.py); the raw mark travels
+ * only in props.plate — and, as the oracle's event_entity has it, in an
+ * event's props.title (its label is masked).
+ */
+function cityEntities() {
+	const vehicles = [];
+	const sightings = [];
+	world.vehicles.forEach((v, i) => {
+		const fix = v.last_sighting;
+		const cam = fix ? nearestCamera(fix.position[0], fix.position[1]) : null;
+		const sid = S(i + 1);
+		const recs = world.recommendations.filter((r) => r.vehicle_id === v.vehicle_id).map((r) => `recommendation:${r.recommendation_id}`);
+		if (fix) {
+			sightings.push({
+				urn: `sighting:${sid}`, kind: 'sighting', id: sid, label: `${cam.id} · ${wireMask(v.plate)}`, lon: fix.position[0], lat: fix.position[1],
+				state: stolenBasis(v) ? 'stolen_vehicle' : v.earmark_state, band: null, source: 'emulated', t: fix.t, age_sec: 180, links: [`vehicle:${v.vehicle_id}`, cam.urn],
+				props: { plate: v.plate, plate_masked: wireMask(v.plate), camera_id: cam.id, vehicle_id: v.vehicle_id, speed_kmh: fix.speed_kmh, heading: fix.heading, vehicle_class: v.vehicle_class, matched_plate_hit: stolenBasis(v) ? 'stolen_vehicle' : null, read_source: fix.source },
+			});
+		}
+		vehicles.push({
+			urn: `vehicle:${v.vehicle_id}`, kind: 'vehicle', id: v.vehicle_id, label: wireMask(v.plate), lon: fix?.position[0] ?? null, lat: fix?.position[1] ?? null,
+			state: v.earmark_state, band: null, source: 'emulated', t: fix?.t ?? null, age_sec: fix ? 180 : null, links: [...(fix ? [`sighting:${sid}`, cam.urn] : []), ...recs],
+			props: { plate: v.plate, plate_masked: wireMask(v.plate), vehicle_class: v.vehicle_class, earmark_state: v.earmark_state, earmark_reason: v.earmark_reason, lawful_basis: v.lawful_basis, retention_until: v.retention_until },
+		});
+	});
+	const byId = new Map(vehicles.map((v) => [v.id, v]));
+	const recommendations = world.recommendations.map((r) => ({
+		urn: `recommendation:${r.recommendation_id}`, kind: 'recommendation', id: r.recommendation_id, label: `${r.rule_id} · ${r.status.toUpperCase()} · ${wireMask(r.plate)}`,
+		lon: byId.get(r.vehicle_id)?.lon ?? null, lat: byId.get(r.vehicle_id)?.lat ?? null, state: r.status, band: null, source: 'emulated', t: r.created_at, age_sec: null,
+		links: [`vehicle:${r.vehicle_id}`, `camera:${r.evidence.camera_id}`],
+		props: { rule_id: r.rule_id, status: r.status, recommendation: wireMask(r.recommendation), decided_by: r.decided_by, decided_at: r.decided_at, created_at: r.created_at, vehicle_id: r.vehicle_id, plate_masked: wireMask(r.plate), evidence: { camera_id: r.evidence.camera_id, speed_kmh: r.evidence.speed_kmh, source: r.evidence.source } },
+	}));
+	const events = world.events.filter((e) => LIVE_EVENT_STATUSES.includes(e.status)).map(eventEntity);
+	return [...events, ...vehicles, ...sightings, ...CAMERAS, ...recommendations, ...JUNCTIONS];
+}
+
+/** C-C entity kinds (traffic_oracle/city/common.py ENTITY_KINDS): the snapshot reports a feed for each unless ?kinds= narrows it. */
+const ENTITY_KINDS = ['event', 'vehicle', 'sighting', 'camera', 'junction', 'unit', 'convoy', 'dispatch', 'recommendation', 'anomaly'];
+
+/** The audit narrative's sources (traffic_oracle/city/feed.py FEED_SOURCES): [name, FeedItem kind]. */
+const FEED_SOURCES = [
+	['event_status_log', 'event'],
+	['enforcement_recommendations', 'enforcement'],
+	['vehicle_sightings', 'anpr'],
+	['dispatch_events', 'dispatch'],
+	['signal_program_history', 'signals'],
+	['situation_log', 'ama'],
+	['param_overrides', 'ama'],
+	['decisions_log', 'brain'],
+];
+
+/** A dossier's audit_sources as the oracle reports them: every source, {status, count} of its rows (before the limit). */
+function auditSources(rows) {
+	const sourceOf = (r) => {
+		const prefix = String(r.id).split(':')[0];
+		return (FEED_SOURCES.find(([n]) => n === prefix) ?? FEED_SOURCES.find(([, k]) => k === r.kind) ?? [null])[0];
+	};
+	return Object.fromEntries(FEED_SOURCES.map(([n]) => [n, { status: 'ok', count: rows.filter((r) => sourceOf(r) === n).length }]));
+}
+
+/** Per-kind feed health of a snapshot (an unlocated entity is counted, never drawn); a kind with no entity is healthy and empty. */
+function cityFeeds(entities, kinds) {
+	return Object.fromEntries(
+		kinds.map((k) => {
+			const of = entities.filter((e) => e.kind === k);
+			const newest = of.map((e) => (e.t ? Date.parse(e.t) : NaN)).filter(Number.isFinite).sort((a, b) => b - a)[0];
+			return [k, { count: of.filter((e) => e.lon != null).length, newest_t: newest ? new Date(newest).toISOString() : null, age_sec: newest ? Math.round((Date.now() - newest) / 1000) : null, unlocated: of.filter((e) => e.lon == null).length, status: 'ok' }];
+		}),
+	);
+}
+
+/** Events the board no longer carries (closed): only the event history knows them. */
+const CLOSED_EVENTS = [
+	eventRow(GONE, 'procession', 'God’s Eye Morning showcase procession (closed)', 'completed', { routes: [{ label: 'primary', segment_ids: [1014] }], updated_at: iso(8_000_000) }),
+	eventRow('5a1e0000-0000-4000-8000-0000000003f1', 'vehicle_pursuit', 'PURSUIT — stolen GJ01PQ8080 (FIR 120/2026, Vastrapur PS)', 'cancelled', {
+		routes: [{ label: 'pursuit anchor', segment_ids: [1016] }],
+		metadata: { vehicle_id: V(8), recommendation_id: R(9) },
+		updated_at: iso(2_300_000),
+	}),
+];
+
+/** GET /events (C-F event history): every event, closed ones included, newest first. */
+function historyRows() {
+	return [...world.events.map((e) => ({ ...e, updated_at: e.updated_at ?? iso(0) })), ...CLOSED_EVENTS].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+}
+
+/** An event as a C-C entity (dossier records): the label masked, the raw title in props. */
+function eventEntity(e) {
+	const seg = SEGMENT.get(e.routes?.[0]?.segment_ids?.[0]);
+	const mid = seg ? seg.geometry.coordinates[Math.floor(seg.geometry.coordinates.length / 2)] : [null, null];
+	return {
+		urn: `event:${e.event_id}`, kind: 'event', id: e.event_id, label: wireMask(e.title), lon: mid[0], lat: mid[1], state: e.status, band: null,
+		source: e.metadata?.source === 'event-emulator' ? 'emulated' : 'live', t: e.updated_at ?? iso(0), age_sec: 0, links: e.metadata?.vehicle_id ? [`vehicle:${e.metadata.vehicle_id}`] : [],
+		props: { event_kind: e.event_kind, title: e.title, status: e.status, protection_class: e.protection_class, movement_id: e.movement_id, route_segment_ids: (e.routes ?? []).flatMap((r) => r.segment_ids) },
+	};
+}
+
+/** Relation names of a dossier's related entities, by the related kind (C-C). */
+const RELATION = { sighting: 'sighting', camera: 'seen_by_camera', recommendation: 'recommendation', vehicle: 'vehicle', event: 'pursuit', junction: 'at_junction' };
+
+/** GET /city/entity/{kind}/{id}: {entity, related, audit, audit_sources} for a known entity, else null. */
+function dossierOf(urn, limit = 60) {
+	// one entity per URN: an open event is in the snapshot and in the history (the snapshot's wins)
+	const all = [...cityEntities(), ...historyRows().map(eventEntity)].filter((e, i, xs) => xs.findIndex((x) => x.urn === e.urn) === i);
+	const entity = all.find((e) => e.urn === urn);
+	if (!entity) return null;
+	const pursuits = entity.kind === 'vehicle' ? historyRows().filter((e) => e.metadata?.vehicle_id === entity.id).map((e) => `event:${e.event_id}`) : [];
+	const related = [...new Set([...entity.links, ...pursuits])]
+		.map((u) => all.find((x) => x.urn === u))
+		.filter(Boolean)
+		.map((x) => ({ relation: RELATION[x.kind] ?? 'linked', entity: x }));
+	const rows = [...world.cityFeed, ...Object.values(world.audit).flat()].filter((r) => r.urns.includes(urn) || (entity.kind === 'event' && (world.audit[entity.id] ?? []).includes(r)));
+	const unique = [...new Set(rows)];
+	const audit = unique.sort((a, b) => Date.parse(b.t) - Date.parse(a.t)).slice(0, Math.max(1, Math.min(200, limit)));
+	return { entity, related, audit, audit_sources: auditSources(unique) };
 }
 
 /**
@@ -730,7 +921,7 @@ function route(method, pathname, search, body) {
 		return world.escort ? json(world.escort) : json({ detail: 'no escort for this movement' }, 404);
 	}
 	// escort authority: every console's lane, and a named officer's answer
-	if (pathname === '/api/convoy/escorts' && method === 'GET') return json(escortsDoc());
+	if (pathname === '/api/convoy/escorts' && method === 'GET') return json(escortsDoc(), 200, Math.max(0, world.escortPollHeldUntil - Date.now()));
 	if ((hit = pathname.match(/^\/api\/convoy\/movements\/([^/]+)\/escort\/approvals\/([^/]+)$/)) && method === 'POST') {
 		world.posts.push({ method, path: pathname, body });
 		const e = world.escort;
@@ -745,6 +936,7 @@ function route(method, pathname, search, body) {
 		if (!p || p.approval_id !== aid) return json({ detail: 'proposal already decided', status: 'approved', approval_id: aid }, 409);
 		const status = body?.decision === 'approve' ? 'approved' : 'rejected';
 		closeEscortProposal(aid, status, body?.officer ?? null);
+		if (world.escortPollLagMs) world.escortPollHeldUntil = Date.now() + 700 + world.escortPollLagMs; // the answer lands at +700 ms
 		return json({ movement_id: e.movement_id, approval_id: aid, status, action: p.action, kind: p.kind, summary: p.summary, decided_by: body?.officer ?? null, decided_at: new Date().toISOString() }, 200, 700);
 	}
 	if (pathname === `/api/convoy/movements/${MVMT}/escort/approve` && method === 'POST') {
@@ -773,7 +965,7 @@ function route(method, pathname, search, body) {
 		return json({
 			status: 'ok',
 			strategic_tier: { model_host: 'connected', model: 'pplx-decider-v1-27b', p95_decide_latency_ms: 2300, novelty_latch: 'armed', degraded: false },
-			tactical_tier: { llama_server: 'connected', model: 'aditi-ps18-v7h-12b' },
+			tactical_tier: { llama_server: 'connected', model: 'gemma4-12b-veer' },
 		});
 	}
 
@@ -781,7 +973,13 @@ function route(method, pathname, search, body) {
 	const v1 = pathname.slice('/api/v1'.length);
 
 	// ── board + lifecycle ───────────────────────────────────────────────────
-	if (v1 === '/events/active') return json({ events: world.events.filter((e) => ['planning', 'approved', 'active'].includes(e.status)) });
+	if (v1 === '/events/active') return json({ events: world.events.filter((e) => LIVE_EVENT_STATUSES.includes(e.status)) });
+	if (v1 === '/events' && method === 'GET') {
+		// the event history (C-F; the redesign's timeline reads ?limit=200)
+		world.historyReads++;
+		const rows = historyRows().slice(0, Math.min(500, Math.max(1, Number(q.get('limit')) || 100)));
+		return json({ events: rows, count: rows.length });
+	}
 	if (v1 === '/events' && method === 'POST') {
 		world.posts.push({ method, path: pathname, body });
 		world.events.push(eventRow(NEWP, 'vehicle_pursuit', body?.title ?? 'PURSUIT', 'planning', { routes: [{ label: 'pursuit anchor', segment_ids: body?.route_spines?.[0]?.segment_ids ?? [] }], metadata: body?.metadata ?? {} }));
@@ -816,7 +1014,22 @@ function route(method, pathname, search, body) {
 		return json(row);
 	}
 	if (v1 === '/city/feed') return json({ as_of: iso(0), items: [...world.cityFeed, ...(world.audit[P] ?? [])].sort((a, b) => Date.parse(b.t) - Date.parse(a.t)) });
-	if (v1 === '/city/entities') return json({ as_of: iso(0), entities: q.get('kinds') === 'junction' ? JUNCTIONS : [], feeds: {} });
+	if (v1 === '/city/entities') {
+		// vehicles, cameras, sightings and recommendations as well as junctions (SPEC §12.7); ?kinds= filters.
+		// As the oracle: a feed for every entity kind (a kind the world has none of is healthy and empty)
+		// unless ?kinds= narrows it, and the build time.
+		const kinds = (q.get('kinds') ?? '').split(',').map((k) => k.trim()).filter(Boolean);
+		const all = cityEntities().filter((e) => !kinds.length || kinds.includes(e.kind));
+		const served = kinds.length ? kinds : ENTITY_KINDS;
+		return json({ as_of: iso(0), entities: all.filter((e) => e.lon != null && e.lat != null), feeds: cityFeeds(all, served), took_ms: 2 });
+	}
+	if ((hit = v1.match(/^\/city\/entity\/([a-z_]+)\/([^/]+)$/)) && method === 'GET') {
+		// the inspector's dossier; an unknown id answers the oracle's 404 body INSIDE a 200,
+		// so the hygiene check's "no 404" keeps meaning "no route the world does not know"
+		const urn = `${hit[1]}:${decodeURIComponent(hit[2])}`;
+		world.dossierReads.push(urn);
+		return json(dossierOf(urn, Number(q.get('audit_limit')) || 60) ?? { detail: `entity not found: ${urn}` });
+	}
 
 	// ── decisions ───────────────────────────────────────────────────────────
 	if (v1 === '/enforcement/recommendations') return json({ recommendations: world.recommendations.filter((r) => r.status === (q.get('status') ?? 'pending')) });
@@ -940,8 +1153,13 @@ const browser = await puppeteer.launch({ executablePath, headless: true, args: S
 const responses = [];
 const pageErrors = [];
 
-/** Text of the whole wall (what a reader sees). */
-const wallText = (page) => page.evaluate(() => document.body.innerText);
+/**
+ * Text of the whole wall (what a reader sees) and its tooltips and labels:
+ * the redesign keeps a row's full sentence in its tooltip (SPEC §3.4 brief),
+ * so a raw mark there is as visible as one in the text (C6).
+ */
+const wallText = (page) =>
+	page.evaluate(() => `${document.body.innerText} ${[...document.querySelectorAll('[title],[aria-label]')].map((el) => `${el.getAttribute('title') ?? ''} ${el.getAttribute('aria-label') ?? ''}`).join(' ')}`);
 const rawPlates = async (page) => [...new Set((await wallText(page)).match(RAW_PLATE) ?? [])];
 const postsTo = (re) => world.posts.filter((p) => re.test(p.path));
 async function waitFor(page, fn, arg, timeout = 15000) {
@@ -961,6 +1179,15 @@ async function buttonIn(page, rootSel, text) {
 		if (label.toLowerCase().includes(text.toLowerCase())) return h;
 	}
 	return null;
+}
+/**
+ * A decision item's button by label. The item is expanded first
+ * (expandQueueItem: the redesign's collapsed two-line row keeps its
+ * ProposalCard hidden until opened; a no-op on today's always-open cards).
+ */
+async function itemButton(page, itemSel, text) {
+	await expandQueueItem(page, itemSel);
+	return buttonIn(page, itemSel, text);
 }
 
 /**
@@ -1029,14 +1256,23 @@ try {
 		return v?.dataset.view === 'event' && Number(v.dataset.serverRows) >= 3;
 	}, null, 5000);
 	ok('audit: ≥ 3 server rows of the selected pursuit within 5 s', auditOk, `${Date.now() - tLoad} ms`);
+	// A row's words: its text plus its tooltips (the redesign's AuditTable shows a
+	// short brief(row) and keeps the full sentence in the row's tooltip, SPEC §3.4).
+	// The EMULATED pill is read from the row's text alone (X2: the compact provenance glyph keeps
+	// 'Emulated' as visually hidden text, which textContent reads) — a tooltip never stands in for it.
 	const rows = await page.$$eval('[data-testid="audit-feed"] [data-prim="feed-item"]', (els) =>
-		els.map((e) => ({ kind: e.dataset.actorKind, id: e.dataset.rowId ?? null, text: e.textContent.replace(/\s+/g, ' ').trim() })),
+		els.map((e) => ({
+			kind: e.dataset.actorKind,
+			id: e.dataset.rowId ?? null,
+			text: `${e.textContent} ${[e, ...e.querySelectorAll('[title]')].map((x) => x.getAttribute('title') ?? '').join(' ')}`.replace(/\s+/g, ' ').trim(),
+			shown: e.textContent.replace(/\s+/g, ' ').trim(),
+		})),
 	);
 	const server = rows.filter((r) => r.id);
 	ok("audit: a human 'approved by …' row on the act rail", server.some((r) => r.kind === 'human' && /approved by/i.test(r.text)), `${server.length} server rows`);
-	ok('audit: camera, oracle and model rows are machine, never human', server.filter((r) => /EM-CAM|convoy-brain/.test(r.text)).every((r) => r.kind === 'machine') && server.some((r) => r.kind === 'machine'));
-	ok('audit: emulator bookkeeping rides the system rail', server.some((r) => r.kind === 'system' && /event-emulator/.test(r.text)));
-	ok('audit: emulated server rows carry the EMULATED pill', server.some((r) => /EMULATED/.test(r.text) && /EM-CAM-02/.test(r.text)));
+	ok('audit: camera, oracle and model rows are machine, never human', server.filter((r) => /EM-CAM|convoy-brain|Veer AI/.test(r.text)).every((r) => r.kind === 'machine') && server.some((r) => r.kind === 'machine'));
+	ok('audit: emulator bookkeeping rides the system rail', server.some((r) => r.kind === 'system' && /event-emulator|scenario emulator/i.test(r.text)));
+	ok('audit: emulated server rows carry the EMULATED pill', server.some((r) => textMatches(r.shown, COPY.emulated) && /EM-CAM-02/.test(r.text)));
 
 	// ── masking: no officer named → no raw plate anywhere ──────────────────
 	await waitFor(page, () => !!document.querySelector('[data-testid="pursuit-sighting"]') && !!document.querySelector('[data-testid="queue-card"][data-kind="echallan"]'), null, 15000);
@@ -1047,14 +1283,14 @@ try {
 	// C-N: a penal card on a vehicle reported stolen — warning chip, NO approve.
 	const stolenPenal = `[data-testid="queue-card"][data-kind="echallan"][data-id="${R(1)}"]`;
 	ok('stolen: a penal card on a reported-stolen vehicle carries the warning chip', (await page.$eval(stolenPenal, (e) => e.dataset.stolen).catch(() => '')) === '1' && !!(await page.$(`${stolenPenal} [data-testid="stolen-warning"]`)) && !!(await page.$(`${stolenPenal} [data-testid="stolen-note"]`)));
-	ok('stolen: …and offers no APPROVE (reject only)', !(await buttonIn(page, stolenPenal, 'approve')) && !!(await buttonIn(page, stolenPenal, 'reject')));
-	ok('stolen: a warrant-watch (not stolen) penal card still offers APPROVE', !!(await buttonIn(page, `[data-testid="queue-card"][data-id="${R(3)}"]`, 'approve')));
+	ok('stolen: …and offers no APPROVE (reject only)', !(await itemButton(page, stolenPenal, 'approve')) && !!(await itemButton(page, stolenPenal, 'reject')));
+	ok('stolen: a warrant-watch (not stolen) penal card still offers APPROVE', !!(await itemButton(page, `[data-testid="queue-card"][data-id="${R(3)}"]`, 'approve')));
 	// R_STOLEN_SIGHTING rows fold into one card per vehicle.
 	const stolenCard = `[data-testid="queue-card"][data-kind="stolen-sighting"][data-id="${V(8)}"]`;
 	const sc = await page.$eval(stolenCard, (e) => ({ count: e.dataset.count, ids: e.dataset.recIds ?? '', text: e.textContent.replace(/\s+/g, ' ') })).catch(() => null);
 	ok('stolen: two R_STOLEN_SIGHTING rows → ONE card for the vehicle', !!sc && sc.count === '2' && sc.ids.includes(R(6)) && sc.ids.includes(R(7)) && (await page.$$(`[data-testid="queue-card"][data-kind="stolen-sighting"]`)).length === 1, sc ? `${sc.count} sightings` : 'no card');
 	ok("stolen: the card says 'e-challan withheld (vehicle reported stolen, FIR …)', masked", !!sc && /e-challan withheld \(vehicle reported stolen, FIR 120\/2026\)/.test(sc.text) && sc.text.includes('GJ01PQ•••0') && !sc.text.includes('GJ01PQ8080'), sc?.text.slice(0, 140));
-	ok('stolen: AUTHORISE PURSUIT + DISMISS, never a fine', !!(await buttonIn(page, stolenCard, 'authorise pursuit')) && !!(await buttonIn(page, stolenCard, 'dismiss')) && !(await buttonIn(page, stolenCard, 'approve')), await page.$$eval(`${stolenCard} button`, (bs) => bs.map((b) => b.textContent.replace(/\s+/g, ' ').trim()).join(' | ')).catch(() => 'no card'));
+	ok('stolen: AUTHORISE PURSUIT + DISMISS, never a fine', !!(await itemButton(page, stolenCard, 'authorise pursuit')) && !!(await itemButton(page, stolenCard, 'dismiss')) && !(await itemButton(page, stolenCard, 'approve')), await page.$$eval(`${stolenCard} button`, (bs) => bs.map((b) => b.textContent.replace(/\s+/g, ' ').trim()).join(' | ')).catch(() => 'no card'));
 	ok("masking: a model's raw mark in a server row is masked on the wall", rows.some((r) => r.text.includes('hold GJ27EM•••1 at Lal Darwaja')));
 	const planPlate = await page.$eval('[data-testid="pursuit-sighting"]', (e) => e.textContent).catch(() => '');
 	ok('masking: the interception plan prints the masked mark', planPlate.includes('GJ27EM•••1'), planPlate.replace(/\s+/g, ' ').slice(0, 60));
@@ -1068,11 +1304,11 @@ try {
 	const answered = await waitFor(page, () => /band AMBER/.test(document.querySelector('[data-testid="audit-probe-answer"]')?.textContent ?? ''), null, 10000);
 	const answer = await page.$eval('[data-testid="audit-probe-answer"]', (e) => e.textContent).catch(() => '');
 	ok('masking: the audit-probe answer box prints the masked mark', answered && answer.includes('GJ27EM•••1') && !answer.includes('GJ27EM9001'), answer.trim().slice(0, 80));
-	await waitFor(page, () => [...document.querySelectorAll('[data-testid="audit-feed"] [data-prim="feed-item"]')].some((r) => /get_active_events/.test(r.textContent) && /result/.test(r.textContent)), null, 6000);
+	await waitFor(page, ([tool, result]) => [...document.querySelectorAll('[data-testid="audit-feed"] [data-prim="feed-item"]')].some((r) => new RegExp(tool, 'i').test(r.textContent) && new RegExp(result, 'i').test(r.textContent)), [COPY.probeTool.source, COPY.probeResult.source], 6000);
 	ok('masking: the probe went out once (a read — no officer needed)', world.probes.length === 1 && typeof world.probes[0]?.message === 'string', JSON.stringify(world.probes[0] ?? {}).slice(0, 120));
 	// A plate typed into a dispatch note.
 	await (await page.$(`[data-testid="dispatch-tile"][data-dispatch-id="${D(2)}"] .audit-toggle`)).click();
-	const tail = await page.$eval(`[data-testid="dispatch-tile"][data-dispatch-id="${D(2)}"] ul.audit`, (e) => e.textContent).catch(() => '');
+	const tail = await page.$eval(SEL.dispatchTail(D(2)), (e) => e.textContent).catch(() => '');
 	ok('masking: a plate typed into a dispatch note prints masked in the tile’s audit tail', tail.includes('GJ05CD•••8') && !tail.includes('GJ05CD5678'), tail.replace(/\s+/g, ' ').trim().slice(0, 90));
 	raw = await rawPlates(page);
 	ok('masking: still no raw mark on the wall after the probe and the open tail', raw.length === 0, raw.join(',') || 'none');
@@ -1080,7 +1316,7 @@ try {
 
 	// ── band / AMA / posture ───────────────────────────────────────────────
 	ok('AMA: a band nobody reported is UNKNOWN, never GREEN', (await page.$eval('[data-testid="ama-band"]', (e) => e.dataset.band)) === 'UNKNOWN');
-	const floors = await page.$$eval('[data-testid="ama-floors"] li', (els) => Object.fromEntries(els.map((e) => [e.dataset.class, e.dataset.sec])));
+	const floors = await page.$$eval(SEL.amaFloors, (els) => Object.fromEntries(els.map((e) => [e.dataset.class, e.dataset.sec])));
 	ok('AMA: protocol floors Z+ 180 / Z 120 / Y 60 s', floors['Z+'] === '180' && floors.Z === '120' && floors.Y === '60', JSON.stringify(floors));
 	await waitFor(page, () => document.querySelector('[data-testid="brain-posture"]')?.dataset.decider === 'loaded', null, 15000);
 	const posture = await page.$eval('[data-testid="brain-posture"]', (e) => ({ ...e.dataset, text: e.textContent.replace(/\s+/g, ' ') }));
@@ -1104,7 +1340,9 @@ try {
 	ok('counters: a closed event’s unit is not counted out', (await page.$eval('[data-counter="units-dispatched"]', (e) => e.dataset.value)) === '0');
 
 	// ── the officer names themself → plates unmask ─────────────────────────
+	await openOfficerField(page);
 	await page.type('[data-testid="duty-officer"]', OFFICER, { delay: 4 });
+	await page.keyboard.press('Escape'); // closes the officer popover, never navigates
 	await waitFor(page, () => /GJ27EM9001/.test(document.body.innerText), null, 8000);
 	raw = await rawPlates(page);
 	ok('masking: a named officer sees the raw mark', raw.includes('GJ27EM9001'), raw.join(','));
@@ -1124,12 +1362,12 @@ try {
 	// the board re-poll can re-render the card a beat after the counter moved
 	await waitFor(page, (id) => !!document.querySelector(`[data-testid="event-card"][data-event-id="${id}"] [data-testid="event-outcome"]`), P, 5000);
 	const outcome = await page.$eval(`[data-testid="event-card"][data-event-id="${P}"] [data-testid="event-outcome"]`, (e) => e.textContent.replace(/\s+/g, ' ').trim()).catch(() => '');
-	ok("lifecycle: inline 'activated by <officer>'", outcome.includes(`activated by ${OFFICER}`), outcome);
-	const feedRow = await waitFor(page, (who) => [...document.querySelectorAll('[data-testid="audit-feed"] [data-prim="feed-item"]')].some((r) => r.dataset.actorKind === 'human' && r.dataset.rowId && r.textContent.includes('Event activated') && r.textContent.includes(who)), OFFICER, 10000);
+	ok("lifecycle: inline 'activated by <officer>'", textHas(outcome, `activated by ${OFFICER}`), outcome);
+	const feedRow = await waitFor(page, ([who, src, flags]) => [...document.querySelectorAll('[data-testid="audit-feed"] [data-prim="feed-item"]')].some((r) => r.dataset.actorKind === 'human' && r.dataset.rowId && new RegExp(src, flags).test(r.textContent) && r.textContent.includes(who)), [OFFICER, COPY.eventActivated.source, COPY.eventActivated.flags], 10000);
 	ok("lifecycle: the server's 'activated … by <officer>' row lands on the human rail", feedRow);
 
 	// ── e-challan: double-click APPROVE → one POST (a vehicle NOT reported stolen) ──
-	const approve = await buttonIn(page, `[data-testid="queue-card"][data-id="${R(3)}"]`, 'approve');
+	const approve = await itemButton(page, `[data-testid="queue-card"][data-id="${R(3)}"]`, 'approve');
 	await approve.click({ count: 2 });
 	await approve.click().catch(() => undefined);
 	await sleep(2500);
@@ -1140,24 +1378,24 @@ try {
 
 	// ── C-N: the oracle's 409 is printed verbatim and never retried ─────────
 	const refusedCard = `[data-testid="queue-card"][data-id="${R(4)}"]`;
-	await (await buttonIn(page, refusedCard, 'approve')).click();
+	await (await itemButton(page, refusedCard, 'approve')).click();
 	const refusedShown = await waitFor(page, (sel) => !!document.querySelector(`${sel} [data-testid="decision-refusal"]`), refusedCard, 8000);
 	const refusalLine = await page.$eval(`${refusedCard} [data-testid="decision-refusal"]`, (e) => e.textContent.trim()).catch(() => '');
 	ok("stolen: the oracle's 409 'e-challan withheld — vehicle reported stolen' shows verbatim", refusedShown && refusalLine === 'e-challan withheld — vehicle reported stolen', refusalLine);
-	ok('stolen: …the refused card no longer offers APPROVE', !(await buttonIn(page, refusedCard, 'approve')) && (await page.$eval(refusedCard, (e) => e.dataset.refused)) === '1');
+	ok('stolen: …the refused card no longer offers APPROVE', !(await itemButton(page, refusedCard, 'approve')) && (await page.$eval(refusedCard, (e) => e.dataset.refused)) === '1');
 	await sleep(2500);
 	ok('stolen: …and the refused decision is never retried (ONE POST)', postsTo(new RegExp(`/recommendations/${R(4)}/decision$`)).length === 1, `${postsTo(new RegExp(`/recommendations/${R(4)}/decision$`)).length} POST`);
 
 	// ── R_STOLEN_SIGHTING: AUTHORISE PURSUIT approves the newest sighting ───
-	const authorise = await buttonIn(page, stolenCard, 'authorise pursuit');
+	const authorise = await itemButton(page, stolenCard, 'authorise pursuit');
 	await authorise.click({ count: 2 });
 	await authorise.click().catch(() => undefined);
 	const authorised = await waitFor(page, (sel) => !!document.querySelector(`${sel} [data-testid="stolen-authorised"]`), stolenCard, 10000);
 	const authPosts = postsTo(/\/recommendations\/[0-9a-f-]{36}\/decision$/).filter((x) => x.path.includes(R(6)) || x.path.includes(R(7)));
 	ok('stolen: AUTHORISE PURSUIT sends ONE POST approving the NEWEST sighting', authPosts.length === 1 && authPosts[0].path.includes(R(7)) && authPosts[0].body?.decision === 'approve' && authPosts[0].body?.officer === OFFICER, JSON.stringify(authPosts.map((x) => [x.path.slice(-50), x.body])));
-	ok("stolen: …the card then reads 'pursuit authorised by <officer>' with DISMISS only", authorised && !(await buttonIn(page, stolenCard, 'authorise pursuit')) && !!(await buttonIn(page, stolenCard, 'dismiss')) && (await page.$eval(`${stolenCard} [data-testid="stolen-authorised"]`, (e) => e.textContent)).includes(OFFICER));
+	ok("stolen: …the card then reads 'pursuit authorised by <officer>' with DISMISS only", authorised && !(await itemButton(page, stolenCard, 'authorise pursuit')) && !!(await itemButton(page, stolenCard, 'dismiss')) && (await page.$eval(`${stolenCard} [data-testid="stolen-authorised"]`, (e) => e.textContent)).includes(OFFICER));
 
-	// ── escort lane: the AI PROPOSES, a named officer decides (officer approves every switch) ──
+	// ── escort lane: the AI proposes, a named officer decides (officer approves every switch) ──
 	world.events.push(eventRow(PM, 'protected_movement', 'VVIP movement — smoke escort', 'active', { movement_id: MVMT, protection_class: 'Z' }));
 	world.audit[PM] = [];
 	world.escort = escortDoc();
@@ -1170,17 +1408,17 @@ try {
 	ok("escort lane: the escort AI's open proposal leads the /ops decision queue", laneShown && !!lane?.first, lane?.text.slice(0, 120) ?? 'no card');
 	ok(
 		"escort lane: it reads the route, the km, what it avoids, the closures, the decider's tier + confidence and the countdown",
-		!!lane && /Plan B via Kankaria Road ·/.test(lane.text) && /4\.3 km left \(now 3\.4 km\)/.test(lane.text) && /avoids Tilak Road \(congestion 86%\)/.test(lane.text) && /closures: \+1 new · 1 lifted/.test(lane.text) && /decider · strategic tier · confidence 0\.93/.test(lane.text) && /expires in 01:\d\d/.test(lane.text),
+		!!lane && /Plan B via Kankaria Road ·/.test(lane.text) && /4\.3 km left \(now 3\.4 km\)/.test(lane.text) && /avoids Tilak Road \(congestion 86%\)/.test(lane.text) && /closures: \+1 new · 1 lifted/.test(lane.text) && textMatches(lane.text, COPY.deciderConfidence) && textMatches(lane.text, COPY.expiresIn),
 		lane?.text.slice(0, 260),
 	);
-	ok('escort lane: SIMULATED FEED + EMULATED GPS provenance on the card', !!lane && /SIMULATED FEED/.test(lane.text) && /EMULATED GPS/.test(lane.text));
+	ok('escort lane: SIMULATED FEED + EMULATED GPS provenance on the card', !!lane && textMatches(lane.text, COPY.simulatedFeed) && textMatches(lane.text, COPY.emulatedGps));
 	// the board's next poll brings the escort's corridor event (its name)
 	const laneNamed = await waitFor(page, (s) => /escort · VVIP movement — smoke escort/.test(document.querySelector(s)?.textContent ?? ''), `${laneSel}[data-id="esc-ops-1"]`, 10000);
 	ok('escort lane: the escort is named by its corridor event', laneNamed);
-	const laneApprove = await buttonIn(page, `${laneSel}[data-id="esc-ops-1"]`, 'approve');
+	const laneApprove = await itemButton(page, `${laneSel}[data-id="esc-ops-1"]`, 'approve');
 	await laneApprove?.click({ count: 2 });
 	await laneApprove?.click().catch(() => undefined);
-	const laneReceipt = await waitFor(page, () => /approved by/.test(document.querySelector('[data-testid="escort-outcome"][data-approval-id="esc-ops-1"]')?.textContent ?? ''), null, 10000);
+	const laneReceipt = await waitFor(page, () => /approved by/i.test(document.querySelector('[data-testid="escort-outcome"][data-approval-id="esc-ops-1"]')?.textContent ?? ''), null, 10000);
 	await sleep(1500);
 	const lanePosts = postsTo(/\/escort\/approvals\/esc-ops-1$/);
 	ok(
@@ -1189,7 +1427,7 @@ try {
 		JSON.stringify(lanePosts.map((x) => x.body)),
 	);
 	const receiptText = await page.$eval('[data-testid="escort-outcome"][data-approval-id="esc-ops-1"]', (e) => e.textContent.replace(/\s+/g, ' ').trim()).catch(() => '');
-	ok("escort lane: the card leaves the queue; its receipt reads 'approved by <officer>'", laneReceipt && !(await page.$(`${laneSel}[data-id="esc-ops-1"]`)) && receiptText.includes(`approved by ${OFFICER}`), receiptText);
+	ok("escort lane: the card leaves the queue; its receipt reads 'approved by <officer>'", laneReceipt && !(await page.$(`${laneSel}[data-id="esc-ops-1"]`)) && textHas(receiptText, `approved by ${OFFICER}`), receiptText);
 	ok('escort lane: no POST ever went to the older /escort/approve', postsTo(/\/escort\/approve$/).length === 0);
 	// A stale answer: the proposal ran out meanwhile — the brain's 409 (the
 	// convoy held its current plan) is shown, never retried.
@@ -1197,8 +1435,8 @@ try {
 	openEscortProposal(escortProposal('esc-ops-2', 'hold', { ttlMs: 6_000 }));
 	await waitFor(page, (s) => !!document.querySelector(`${s}[data-id="esc-ops-2"]`), laneSel, 10000);
 	const holdText = await page.$eval(`${laneSel}[data-id="esc-ops-2"]`, (e) => e.textContent.replace(/\s+/g, ' ')).catch(() => '');
-	ok('escort lane: a hold proposal says where and for how long', /hold the convoy short of Relief Road \(congestion 86%\) until it clears · up to 180 s/.test(holdText), holdText.slice(0, 160));
-	await (await buttonIn(page, `${laneSel}[data-id="esc-ops-2"]`, 'approve'))?.click();
+	ok('escort lane: a hold proposal says where and for how long', textMatches(holdText, COPY.holdProposal), holdText.slice(0, 160));
+	await (await itemButton(page, `${laneSel}[data-id="esc-ops-2"]`, 'approve'))?.click();
 	const staleShown = await waitFor(page, () => {
 		const r = document.querySelector('[data-testid="escort-outcome"][data-approval-id="esc-ops-2"]');
 		return r?.dataset.status === 'expired' && r.dataset.refused === '1';
@@ -1207,14 +1445,14 @@ try {
 	await sleep(2500);
 	ok(
 		"escort lane: an answer after the deadline gets the brain's 409 — 'expired — no officer response, current plan held' — sent ONCE",
-		staleShown && staleText?.text.includes('expired — no officer response, current plan held') && staleText.title === `proposal expired — ${ESCORT_TIMEOUT_REASON}` && postsTo(/\/escort\/approvals\/esc-ops-2$/).length === 1,
+		staleShown && textHas(staleText?.text, COPY.expiredHeld) && staleText.title === `proposal expired — ${ESCORT_TIMEOUT_REASON}` && postsTo(/\/escort\/approvals\/esc-ops-2$/).length === 1,
 		`${JSON.stringify(staleText)} · ${postsTo(/\/escort\/approvals\/esc-ops-2$/).length} POST`,
 	);
 	await page.screenshot({ path: path.join(ARTIFACTS, 'ops-wall-escort-lane.png') });
 	world.escort = null; // the escort ends; the cockpit section below starts its own
 
 	// ── gate: RESTORE ALL is city-wide — the first click only arms it ──────
-	const restoreAll = () => page.$('button:has([data-testid="gate-restore-all"])');
+	const restoreAll = () => page.$(SEL.btn('gate-restore-all'));
 	await (await restoreAll()).click();
 	await sleep(400);
 	const armed = await page.$eval('[data-testid="gate-restore-all"]', (e) => e.dataset.armed);
@@ -1232,8 +1470,8 @@ try {
 	ok('dispatch: the agency registry pre-fills its unit', unit === 'PCR-EM-01', unit);
 	await waitFor(page, () => document.querySelectorAll('[data-testid="dispatch-waypoint"] option').length > 1, null, 10000);
 	const wp = await page.$eval('[data-testid="dispatch-waypoint"]', (s) => ({ value: s.value, text: s.selectedOptions[0]?.textContent ?? '' }));
-	ok('dispatch: the default waypoint skips a likely-passed choke #1', wp.value === '5' && /choke #2/.test(wp.text), wp.text);
-	const reqBtn = await page.$('[data-testid="dispatch-request"] button:has([data-testid="dispatch-request-btn"])');
+	ok('dispatch: the default waypoint skips a likely-passed choke #1', wp.value === '5' && /choke #2/i.test(wp.text), wp.text);
+	const reqBtn = await page.$(SEL.btnIn('[data-testid="dispatch-request"]', 'dispatch-request-btn'));
 	await reqBtn.click();
 	await waitFor(page, (id) => !!document.querySelector(`[data-testid="dispatch-tile"][data-dispatch-id="${id}"]`), D(9), 10000);
 	const dispatchPost = postsTo(new RegExp(`/events/${P}/dispatch$`))[0];
@@ -1243,7 +1481,7 @@ try {
 	const hist = await page.$eval('[data-testid="dispatch-history"]', (e) => ({ count: e.dataset.count, text: e.textContent.replace(/\s+/g, ' ').trim() })).catch(() => null);
 	const tileIds = () => page.$$eval('[data-testid="dispatch-tile"]', (els) => els.map((e) => e.dataset.dispatchId));
 	const before = await tileIds();
-	ok("dispatch: old terminal dispatches fold behind 'history (2)'", hist?.count === '2' && hist.text === 'history (2)' && !before.includes(D(4)) && !before.includes(D(5)) && before.includes(D(6)), `${hist?.text ?? 'no toggle'} · tiles ${before.length}`);
+	ok("dispatch: old terminal dispatches fold behind 'history (2)'", hist?.count === '2' && textIs(hist.text, COPY.history2) && !before.includes(D(4)) && !before.includes(D(5)) && before.includes(D(6)), `${hist?.text ?? 'no toggle'} · tiles ${before.length}`);
 	await page.click('[data-testid="dispatch-history"]');
 	await sleep(300);
 	const after = await tileIds();
@@ -1263,20 +1501,23 @@ try {
 	const refusalText = await page.$eval(`[data-testid="event-card"][data-event-id="${W}"] [data-testid="event-outcome"]`, (e) => e.textContent.replace(/\s+/g, ' ').trim()).catch(() => '');
 	const cancelPost = postsTo(new RegExp(`/events/${W}/status$`))[0];
 	ok('lifecycle: CANCEL confirms first, carries the reason', cancelPost?.body?.to_status === 'cancelled' && cancelPost.body.note === 'resurfacing deferred (smoke)', JSON.stringify(cancelPost?.body));
-	ok('lifecycle: a 409 renders inline with the moves the server allows', refused && /409/.test(refusalText) && /allowed from here/.test(refusalText), refusalText);
+	ok('lifecycle: a 409 renders inline with the moves the server allows', refused && /409/.test(refusalText) && textMatches(refusalText, COPY.allowedFromHere), refusalText);
 	// That CANCEL was about the work zone, not the selected pursuit: its echo and
 	// refusal stay out of the pursuit's view and show in the city's.
 	const feedTexts = () => page.$$eval('[data-testid="audit-feed"] [data-prim="feed-item"]', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')));
-	const inEventView = (await feedTexts()).filter((t) => /Metro work zone|cancelled refused/.test(t));
+	const inEventView = (await feedTexts()).filter((t) => /metro work zone|cancelled refused/i.test(t));
 	ok('audit: an echo about another event stays out of the selected event’s view', (await page.$eval('[data-testid="audit-view"]', (e) => e.dataset.view)) === 'event' && inEventView.length === 0, inEventView.join(' | ').slice(0, 120) || 'none');
 	await page.click('[data-testid="audit-scope-city"]');
-	const cityHas = await waitFor(page, () => document.querySelector('[data-testid="audit-view"]')?.dataset.view === 'city' && [...document.querySelectorAll('[data-testid="audit-feed"] [data-prim="feed-item"]')].some((r) => /CANCEL Metro work zone/.test(r.textContent)), null, 8000);
-	ok('audit: …and shows in the city view', cityHas);
+	// F-28 (FIX-H-DECK): the REFUSAL shows in the city view; a refused CANCEL leaves no "Cancel Metro work
+	// zone" decision row — the oracle never accepted it, so the trail never says the officer cancelled it
+	const cityHas = await waitFor(page, () => document.querySelector('[data-testid="audit-view"]')?.dataset.view === 'city' && [...document.querySelectorAll('[data-testid="audit-feed"] [data-prim="feed-item"]')].some((r) => /cancelled refused \(409\)/i.test(r.textContent)), null, 8000);
+	const cityTexts = await feedTexts();
+	ok('audit: …and its refusal shows in the city view, with no decision row for the refused CANCEL (F-28)', cityHas && !cityTexts.some((t) => new RegExp(COPY.cancelWorkZone.source, COPY.cancelWorkZone.flags).test(t)), cityTexts.filter((t) => /work zone|refused/i.test(t)).join(' | ').slice(0, 200));
 	await page.click('[data-testid="audit-scope-event"]');
 	await waitFor(page, () => document.querySelector('[data-testid="audit-view"]')?.dataset.view === 'event', null, 8000);
 
 	// ── IST: the procession's windows, board == dossier == IST ─────────────
-	await (await page.$(`[data-testid="event-card"][data-event-id="${E}"] .select-btn`)).click();
+	await selectEventRow(page, `[data-testid="event-card"][data-event-id="${E}"]`);
 	await waitFor(page, () => document.querySelectorAll('[data-testid="dossier-phase-window"]').length === 2, null, 10000);
 	const ist = (s) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(Date.parse(s));
 	const istDay = (s) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short' }).format(Date.parse(s));
@@ -1292,7 +1533,7 @@ try {
 	// ── RESTORE is disabled while a preview fixture is selected ────────────
 	await page.click('[data-testid="preview-toggle"]');
 	await waitFor(page, () => !!document.querySelector('[data-testid="event-card"].fixture'), null, 10000);
-	await (await page.$('[data-testid="event-card"].fixture .select-btn')).click();
+	await selectEventRow(page, '[data-testid="event-card"].fixture');
 	await sleep(600);
 	const restoreDisabled = await page.$eval('[data-testid="gate-restore"]', (s) => s.closest('button')?.disabled ?? null);
 	ok('gate card: RESTORE disabled while a preview fixture is selected', restoreDisabled === true);
@@ -1300,6 +1541,32 @@ try {
 	await waitFor(page, () => !document.querySelector('[data-testid="event-card"].fixture'), null, 10000);
 
 	// ── emulator control plane (C-G + the synchronous fallback) ────────────
+	// The /ops Lab section is COLLAPSED on load (plan X23, UI-S5B) — the strict
+	// final form: the section carries data-open="false" and the toggle
+	// aria-expanded="false" before anything clicks it, then openIfCollapsed
+	// OPENS it with ONE click and must return true (UI-S7B: no no-op path).
+	const labLoad = await page.evaluate(() => ({
+		sectionOpen: document.querySelector('[data-testid=lab-section]')?.getAttribute('data-open') ?? null,
+		toggleExpanded: document.querySelector('[data-testid=lab-toggle]')?.getAttribute('aria-expanded') ?? null,
+	}));
+	ok(
+		'lab section: collapsed on load (data-open=false, toggle aria-expanded=false)',
+		labLoad.sectionOpen === 'false' && labLoad.toggleExpanded === 'false',
+		`section data-open=${labLoad.sectionOpen ?? 'absent'} · toggle aria-expanded=${labLoad.toggleExpanded ?? 'absent'}`,
+	);
+	let labError = null;
+	const labOpened = await openIfCollapsed(page, '[data-testid=lab-toggle]', '[data-testid=lab-section]').catch((err) => {
+		labError = String(err?.message ?? err).slice(0, 120);
+		return null;
+	});
+	const lab = await page.evaluate(() => ({
+		section: document.querySelector('[data-testid=lab-section]')?.getAttribute('data-open') ?? null,
+	}));
+	ok(
+		'lab section: openIfCollapsed opened it with ONE click (returned true)',
+		labOpened === true && lab.section === 'true' && labError == null,
+		`openIfCollapsed → ${labOpened}${labError ? ` (${labError})` : ''} · section data-open=${lab.section ?? '—'}`,
+	);
 	await waitFor(page, () => Number(document.querySelector('[data-testid="emu-library-count"]')?.dataset.count) === 10, null, 15000);
 	ok('emulator: the panel lists the emulator’s 10 tapes', (await page.$$eval('[data-testid="emu-use-case"] option', (os) => os.length)) === 10);
 	await page.select('[data-testid="emu-use-case"]', 'rath_yatra_monsoon_ambulance');
@@ -1307,8 +1574,8 @@ try {
 	const clocks = await page.$$eval('[data-testid="emu-clock"] option', (os) => os.map((o) => `${o.value}${o.disabled ? '!' : ''}`));
 	ok('emulator: a flagship is capped at ×10', clocks.join(' ') === '1 10 60!', clocks.join(' '));
 	const sampling = await page.$eval('[data-testid="emu-sampling"]', (e) => e.textContent.replace(/\s+/g, ' '));
-	ok('emulator: the effective sampling is stated', /1 decision \/ 50 sim-s/.test(sampling), sampling.trim());
-	await (await page.$('button:has([data-testid="emu-launch-btn"])')).click();
+	ok('emulator: the effective sampling is stated', textMatches(sampling, COPY.emuSampling), sampling.trim());
+	await (await page.$(SEL.btn('emu-launch-btn'))).click();
 	const cg = await waitFor(page, () => {
 		const s = document.querySelector('[data-testid="emu-launch-state"]');
 		return s?.dataset.contract === 'c-g' && s.dataset.runId === '41';
@@ -1319,22 +1586,22 @@ try {
 	ok('emulator: C-G progress is shown', progressed && world.runGets > 0);
 	const pendingShown = await waitFor(page, () => !!document.querySelector('[data-testid="emu-event-pending"]'), null, 8000);
 	const pendingText = await page.$eval('[data-testid="emu-event-pending"]', (e) => e.textContent.replace(/\s+/g, ' ').trim()).catch(() => '');
-	ok("emulator: a run whose event is still 'planning' says so", pendingShown && pendingText === 'corridor event not live yet — activation retried every 5 s', pendingText);
-	await clickWhenShown(page, '[data-testid="emu-run"][data-run-id="41"] button:has([data-testid="emu-stop"])');
+	ok("emulator: a run whose event is still 'planning' says so", pendingShown && textIs(pendingText, COPY.emuEventPending), pendingText);
+	await clickWhenShown(page, SEL.btnIn('[data-testid="emu-run"][data-run-id="41"]', 'emu-stop'));
 	const stopped = await waitFor(page, () => document.querySelector('[data-testid="emu-run"][data-run-id="41"]')?.dataset.status === 'stopped', null, 10000);
 	ok('emulator: STOP ends the run (one POST)', stopped && postsTo(/\/runs\/41\/stop$/).length === 1);
 	ok('emulator: progress polls skip the tape (include_tape=false)', world.runGetQueries.length > 0 && world.runGetQueries.every((q) => /include_tape=false/.test(q)), `${world.runGetQueries.length} polls · ${world.runGetQueries[0] ?? '—'}`);
-	await clickWhenShown(page, '[data-testid="emu-run"][data-run-id="40"] button:has([data-testid="emu-replay"])');
+	await clickWhenShown(page, SEL.btnIn('[data-testid="emu-run"][data-run-id="40"]', 'emu-replay'));
 	const replayed = await waitFor(page, () => document.querySelector('[data-testid="emu-launch-state"]')?.dataset.runId === '43', null, 8000);
 	ok('emulator: REPLAY re-runs a recorded tape (202 tracked)', replayed && postsTo(/\/runs\/40\/replay$/).length === 1);
 	// The replayed run's row trails its launch state by a runs poll: wait for it, then STOP.
-	const stop43 = await clickWhenShown(page, '[data-testid="emu-run"][data-run-id="43"] button:has([data-testid="emu-stop"])');
+	const stop43 = await clickWhenShown(page, SEL.btnIn('[data-testid="emu-run"][data-run-id="43"]', 'emu-stop'));
 	const stopped43 = stop43 && (await waitFor(page, () => document.querySelector('[data-testid="emu-run"][data-run-id="43"]')?.dataset.status === 'stopped', null, 10000));
 	ok('emulator: the replayed run can be stopped from its row', stopped43);
 	await page.select('[data-testid="emu-use-case"]', 'metro_work_zone');
 	await sleep(300);
 	const t1 = Date.now();
-	await (await page.$('button:has([data-testid="emu-launch-btn"])')).click();
+	await (await page.$(SEL.btn('emu-launch-btn'))).click();
 	const sync = await waitFor(page, () => {
 		const s = document.querySelector('[data-testid="emu-launch-state"]');
 		return s?.dataset.contract === 'sync' && s.dataset.phase === 'running';
@@ -1348,12 +1615,12 @@ try {
 	const syncDone = await waitFor(page, () => document.querySelector('[data-testid="emu-launch-state"]')?.dataset.phase === 'completed', null, 12000);
 	ok('emulator: …and it completes when the run ends', syncDone);
 	const lcSupported = await page.$eval('[data-testid="living-city"]', (e) => e.dataset.supported);
-	await (await page.$('button:has([data-testid="living-city-toggle"])')).click();
+	await (await page.$(SEL.btn('living-city-toggle'))).click();
 	const lcRunning = await waitFor(page, () => document.querySelector('[data-testid="living-city"]')?.dataset.status === 'running', null, 8000);
 	ok('emulator: LIVING CITY status + start', lcSupported === '1' && lcRunning && postsTo(/\/living-city$/)[0]?.body?.action === 'start');
 
 	// ── pursuit opening from an anchored, approved vehicle (C6) ────────────
-	const openBtn = await buttonIn(page, `[data-testid="queue-card"][data-kind="pursuit"][data-id="${V(5)}"]`, 'open pursuit');
+	const openBtn = await itemButton(page, `[data-testid="queue-card"][data-kind="pursuit"][data-id="${V(5)}"]`, 'open pursuit');
 	await openBtn.click();
 	await waitFor(page, (id) => !!document.querySelector(`[data-testid="event-card"][data-event-id="${id}"]`), NEWP, 10000);
 	const openPost = postsTo(/\/api\/v1\/events$/)[0];
@@ -1380,9 +1647,11 @@ try {
 	await page.evaluate(() => history.replaceState(null, '', location.pathname));
 
 	// ── clearing the officer masks again ────────────────────────────────────
+	await openOfficerField(page);
 	await page.click('[data-testid="duty-officer"]', { count: 3 });
 	await page.keyboard.press('Backspace');
 	await waitFor(page, () => !document.querySelector('[data-testid="duty-officer"]')?.value, null, 4000);
+	await page.keyboard.press('Escape');
 	await sleep(800);
 	raw = await rawPlates(page);
 	ok('masking: clearing the officer masks every mark again', raw.length === 0, raw.join(',') || 'none');
@@ -1397,7 +1666,7 @@ try {
 		await page2.close();
 	}
 
-	// ── the cockpit ('/'): an escort already running is adopted; its proposals + CLEAR ──
+	// ── the cockpit (WORKSPACE): an escort already running is adopted; its proposals + CLEAR ──
 	if (!world.events.some((e) => e.event_id === PM)) {
 		world.events.push(eventRow(PM, 'protected_movement', 'VVIP movement — smoke escort', 'active', { movement_id: MVMT, protection_class: 'Z' }));
 	}
@@ -1406,20 +1675,20 @@ try {
 	openEscortProposal(escortProposal('apr-smoke-1', 'reroute'));
 	const page3 = await hermeticPage();
 	try {
-		await page3.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+		await page3.goto(`${ORIGIN}${WORKSPACE}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 		const adopted = await waitFor(page3, () => document.querySelector('[data-template="convoy-hud"]')?.dataset.phase === 'escorting', null, 20000);
 		ok('escort: the cockpit adopts the escort already running for the active movement', adopted);
 		// The cockpit rail's EMULATED marker sits on the kind line, never inside the cut name.
 		const emuMark = await page3
-			.$eval(`.rail [data-event-id="${E}"] [data-testid="liverail-emulated"]`, (e) => {
+			.$eval(SEL.railMarker(E, 'liverail-emulated'), (e) => {
 				const r = e.getBoundingClientRect();
-				const row = e.closest('button').getBoundingClientRect();
+				const row = e.closest('[data-event-id]').getBoundingClientRect();
 				return { text: e.textContent.trim(), shown: r.width > 0 && r.right <= row.right + 1 };
 			})
 			.catch(() => null);
-		ok("cockpit: the LiveRail's EMULATED marker shows in full (outside the cut event name)", !!emuMark && emuMark.text === 'EMULATED' && emuMark.shown, JSON.stringify(emuMark));
-		// Escort authority: the AI only PROPOSES — 'AI PROPOSES: <route> ·
-		// decider <tier> <confidence> · expires in mm:ss', locked until a duty
+		ok("cockpit: the LiveRail's EMULATED marker shows in full (outside the cut event name)", !!emuMark && textMatches(emuMark.text, COPY.liverailEmulated) && emuMark.shown, JSON.stringify(emuMark));
+		// Escort authority: the AI only PROPOSES — 'Proposed by Veer AI: <route>
+		// · decider <tier> <confidence> · expires in mm:ss', locked until a duty
 		// officer is named.
 		const propSel = '[data-testid="convoy-hud-proposal"]';
 		const outSel = '[data-testid="convoy-hud-proposal-outcome"]';
@@ -1428,28 +1697,41 @@ try {
 			.$eval(propSel, (e) => ({ text: e.textContent.replace(/\s+/g, ' ').trim(), kind: e.dataset.kind, left: Number(e.dataset.expiresSec) }))
 			.catch(() => null);
 		ok(
-			"escort: the HUD shows 'AI PROPOSES: <route, km, closures> · decider <tier> <confidence> · expires in mm:ss'",
-			propShown && !!prop && prop.kind === 'reroute' && /AI PROPOSES/.test(prop.text) && /Re-route via Kankaria Road ·/.test(prop.text) && /4\.3 km left \(now 3\.4 km\)/.test(prop.text) && /closures: \+1 new · 1 lifted/.test(prop.text) && /decider · strategic tier · confidence 0\.93/.test(prop.text) && /expires in 01:\d\d/.test(prop.text) && prop.left > 60 && prop.left <= 90,
+			"escort: the HUD shows 'Proposed by Veer AI: <route, km, closures> · decider <tier> <confidence> · expires in mm:ss'",
+			propShown && !!prop && prop.kind === 'reroute' && textMatches(prop.text, COPY.aiProposes) && /Re-route via Kankaria Road ·/.test(prop.text) && /4\.3 km left \(now 3\.4 km\)/.test(prop.text) && /closures: \+1 new · 1 lifted/.test(prop.text) && textMatches(prop.text, COPY.deciderConfidence) && textMatches(prop.text, COPY.expiresIn) && prop.left > 60 && prop.left <= 90,
 			prop?.text.slice(0, 260),
 		);
 		ok("escort: a confident decider's own sentence is not printed twice (the decider line + authority note say it)", !(await page3.$('[data-testid="convoy-hud-proposal-why"]')));
 		const lockedBefore = await page3.$$eval(`${propSel} .ap-actions button`, (bs) => bs.map((b) => b.disabled)).catch(() => []);
 		ok('escort: APPROVE / REJECT are locked until a duty officer is named (and the HUD says so)', lockedBefore.length === 2 && lockedBefore.every(Boolean) && !!(await page3.$('[data-testid="convoy-hud-proposal-officer"]')), JSON.stringify(lockedBefore));
+		// FIX-E-WORKSPACE round 2: the cockpit no longer auto-opens the Plan tab
+		// (an escort opening its own dock yanked the map under the decision card,
+		// audit E S1) — the smoke opens it the way an operator does
+		await ensurePlanner(page3);
 		ok('escort: the planner rail carries the same proposal', (await page3.$eval('[data-testid="planner-proposal"]', (e) => e.dataset.approvalId).catch(() => null)) === 'apr-smoke-1');
 		ok("escort: an older brain's referred-actions list is not shown beside it", !(await page3.$('[data-testid="convoy-hud-approvals"]')));
-		await page3.type('[data-testid="planner-officer"]', OFFICER, { delay: 4 });
+		// the planner's field (today), the navbar's (plan X12), or the escort decision card's own (SPEC §12.1 rule 3)
+		await nameOfficer(page3, OFFICER, { prefer: ['planner-officer', 'duty-officer', 'decision-officer'] });
 		const unlocked = await waitFor(page3, (s) => {
 			const bs = [...document.querySelectorAll(`${s} .ap-actions button`)];
 			return bs.length === 2 && bs.every((b) => !b.disabled);
 		}, propSel, 8000);
 		ok('escort: …and unlock once the officer is named', unlocked);
 		const hold = await page3.$eval('[data-testid="convoy-hud-hold"]', (e) => e.textContent.replace(/\s+/g, ' ').trim()).catch(() => '');
-		ok("escort: the HUD says 'HOLDING on <road> (<ordered by>)' — an officer's approved hold", /HOLDING on Tilak Road \(officer Duty Officer R\. Mehta\)/.test(hold), hold);
-		ok('escort: SIMULATED FEED and EMULATED GPS provenance on the HUD', !!(await page3.$('[data-testid="convoy-hud-simulated"]')) && !!(await page3.$('[data-testid="convoy-hud-emulated"]')));
+		ok("escort: the HUD says 'HOLDING on <road> (<ordered by>)' — an officer's approved hold", textMatches(hold, COPY.holdingTilak) && /\(officer Duty Officer R\. Mehta\)/i.test(hold), hold);
+		const hudTags = await page3.evaluate(() => ['convoy-hud-simulated', 'convoy-hud-emulated'].map((id) => document.querySelector(`[data-testid="${id}"]`)?.textContent?.replace(/\s+/g, ' ').trim() ?? null));
+		ok('escort: SIMULATED FEED and EMULATED GPS provenance on the HUD', hudTags[0] != null && hudTags[1] != null && textMatches(hudTags[0], COPY.simulatedFeed) && textMatches(hudTags[1], COPY.emulatedGps), JSON.stringify(hudTags));
 		await page3.screenshot({ path: path.join(ARTIFACTS, 'ops-wall-cockpit-proposal.png') });
 		// APPROVE (a double click): ONE POST; the HUD then names the officer.
-		const apBtn = await page3.$(`${propSel} button:has([data-testid="convoy-hud-proposal-approve"])`);
+		// A third click lands AFTER the brain accepted the answer but BEFORE the
+		// escorts poll closes the proposal (the fixture holds that read for
+		// 2.5 s): an accepted answer is final, never sent again (the window a
+		// loaded host used to hit by chance — 2 POSTs).
+		world.escortPollLagMs = 2500;
+		const apAnswered = page3.waitForResponse((r) => /\/escort\/approvals\/apr-smoke-1$/.test(new URL(r.url()).pathname), { timeout: 10000 }).catch(() => null);
+		const apBtn = await page3.$(SEL.btnIn(propSel, 'convoy-hud-proposal-approve'));
 		await apBtn?.click({ count: 2 });
+		await apAnswered;
 		await apBtn?.click().catch(() => undefined);
 		const approvedShown = await waitFor(page3, (s) => document.querySelector(s)?.dataset.status === 'approved', outSel, 10000);
 		const approvedText = await page3.$eval(outSel, (e) => e.textContent.replace(/\s+/g, ' ').trim()).catch(() => '');
@@ -1457,47 +1739,53 @@ try {
 		const ap1 = postsTo(/\/escort\/approvals\/apr-smoke-1$/);
 		ok(
 			"escort: APPROVE sends ONE POST {decision, officer}; the HUD then reads 'approved by <officer>'",
-			approvedShown && ap1.length === 1 && JSON.stringify(ap1[0].body) === JSON.stringify({ decision: 'approve', officer: OFFICER }) && approvedText === `approved by ${OFFICER}`,
+			approvedShown && ap1.length === 1 && JSON.stringify(ap1[0].body) === JSON.stringify({ decision: 'approve', officer: OFFICER }) && textIs(approvedText, `approved by ${OFFICER}`),
 			`${ap1.length} POST · ${JSON.stringify(ap1[0]?.body)} · '${approvedText}'`,
 		);
 		// The next proposal (a hold) came from the deterministic rule (no model
-		// answered): labelled RULE PROPOSES, never AI; REJECT keeps the plan.
+		// answered): labelled 'Proposed by rule', never AI; REJECT keeps the plan.
 		openEscortProposal(escortProposal('apr-smoke-2', 'hold', { rule: true }));
 		await waitFor(page3, (s) => document.querySelector(s)?.dataset.approvalId === 'apr-smoke-2', propSel, 10000);
-		const ruleTag = await page3.$eval('[data-testid="convoy-hud-proposal-tag"]', (e) => e.textContent.trim()).catch(() => '');
-		const ruleLine = await page3.$eval('[data-testid="convoy-hud-proposal-decider"]', (e) => e.textContent.trim()).catch(() => '');
-		const ruleWhy = await page3.$eval('[data-testid="convoy-hud-proposal-why"]', (e) => e.textContent.trim()).catch(() => '');
+		const ruleTag = (await page3.$eval('[data-testid="convoy-hud-proposal-tag"]', (e) => e.textContent.trim()).catch(() => '')) || null;
+		const ruleLine = (await page3.$eval('[data-testid="convoy-hud-proposal-decider"]', (e) => e.textContent.trim()).catch(() => '')) || null;
+		const ruleWhy = (await page3.$eval('[data-testid="convoy-hud-proposal-why"]', (e) => e.textContent.trim()).catch(() => '')) || null;
 		ok(
-			"escort: a rule's proposal reads 'RULE PROPOSES · deterministic rule — no model' with why a model did not answer",
-			ruleTag === 'RULE PROPOSES' && ruleLine === 'deterministic rule — no model' && ruleWhy.startsWith('strategic tier unavailable'),
-			`${ruleTag} · ${ruleLine} · ${ruleWhy.slice(0, 60)}`,
+			"escort: a rule's proposal reads 'Proposed by rule · deterministic rule — no model' with why a model did not answer",
+			ruleTag === COPY.ruleTag && ruleLine === COPY.ruleDecider && typeof ruleWhy === 'string' && ruleWhy.startsWith('strategic tier unavailable'),
+			`${ruleTag ?? 'no tag'} · ${ruleLine ?? 'no decider line'} · ${ruleWhy == null ? 'no why line' : ruleWhy.slice(0, 60)}`,
 		);
 		await sleep(600);
-		const rjBtn = await page3.$(`${propSel} button:has([data-testid="convoy-hud-proposal-reject"])`);
+		const rjAnswered = page3.waitForResponse((r) => /\/escort\/approvals\/apr-smoke-2$/.test(new URL(r.url()).pathname), { timeout: 10000 }).catch(() => null);
+		const rjBtn = await page3.$(SEL.btnIn(propSel, 'convoy-hud-proposal-reject'));
 		await rjBtn?.click({ count: 2 });
+		await rjAnswered;
 		await rjBtn?.click().catch(() => undefined);
+		world.escortPollLagMs = 0;
 		const rejectedShown = await waitFor(page3, (s) => document.querySelector(s)?.dataset.status === 'rejected', outSel, 10000);
 		const rejectedText = await page3.$eval(outSel, (e) => e.textContent.replace(/\s+/g, ' ').trim()).catch(() => '');
 		await sleep(1200);
 		const ap2 = postsTo(/\/escort\/approvals\/apr-smoke-2$/);
 		ok(
 			"escort: REJECT sends ONE POST {decision, officer}; 'rejected by <officer> — current plan kept'",
-			rejectedShown && ap2.length === 1 && JSON.stringify(ap2[0].body) === JSON.stringify({ decision: 'reject', officer: OFFICER }) && rejectedText === `rejected by ${OFFICER} — current plan kept`,
+			rejectedShown && ap2.length === 1 && JSON.stringify(ap2[0].body) === JSON.stringify({ decision: 'reject', officer: OFFICER }) && textIs(rejectedText, `rejected by ${OFFICER} — current plan kept`),
 			`${ap2.length} POST · '${rejectedText}'`,
 		);
 		// A proposal nobody answers: the countdown turns urgent, then the brain
 		// expires it — the convoy holds its current approved plan.
 		const p3 = escortProposal('apr-smoke-3', 'plan_b', { ttlMs: 12_000 });
 		openEscortProposal(p3);
-		await waitFor(page3, (s) => document.querySelector(s)?.dataset.approvalId === 'apr-smoke-3', propSel, 10000);
+		// hardening (gate C: this wait failed once under load): the proposal's
+		// arrival AND its expiry are polled to a generous bound — the countdown
+		// runs on the page clock, the poll itself costs little.
+		await waitFor(page3, (s) => document.querySelector(s)?.dataset.approvalId === 'apr-smoke-3', propSel, 20000);
 		const urgent = await page3.$eval(`${propSel} [data-testid="convoy-hud-proposal-countdown"]`, (e) => e.classList.contains('urgent')).catch(() => false);
 		ok('escort: under 20 s the countdown turns urgent', urgent);
 		setTimeout(() => closeEscortProposal('apr-smoke-3', 'expired', 'system', ESCORT_TIMEOUT_REASON), Math.max(0, Date.parse(p3.expires_at) - Date.now()));
-		const expiredShown = await waitFor(page3, (s) => document.querySelector(s)?.dataset.status === 'expired', outSel, 20000);
+		const expiredShown = await waitFor(page3, (s) => document.querySelector(s)?.dataset.status === 'expired', outSel, 30000);
 		const expiredText = await page3.$eval(outSel, (e) => e.textContent.replace(/\s+/g, ' ').trim()).catch(() => '');
 		ok(
 			"escort: unanswered, it expires — 'expired — no officer response, current plan held' — and nothing was sent",
-			expiredShown && expiredText === 'expired — no officer response, current plan held' && postsTo(/\/escort\/approvals\/apr-smoke-3$/).length === 0,
+			expiredShown && textIs(expiredText, COPY.expiredHeld) && postsTo(/\/escort\/approvals\/apr-smoke-3$/).length === 0,
 			`'${expiredText}'`,
 		);
 		ok('escort: every answer went to /escort/approvals/{id} (never the older /escort/approve)', postsTo(/\/escort\/approve$/).length === 0);
@@ -1506,7 +1794,8 @@ try {
 		world.escort = { ...world.escort, status: 'completed', hold: null, pending_approval: null, pending_approvals: [], progress: 1, updated_at: new Date().toISOString() };
 		const ended = await waitFor(page3, () => document.querySelector('[data-template="convoy-hud"]')?.dataset.ended === 'completed', null, 10000);
 		ok('escort: the HUD follows the brain to COMPLETED', ended);
-		const clearBtn = await page3.$('button:has([data-testid="planner-clear"])');
+		await ensurePlanner(page3); // the Plan tab (CLEAR's home) stays open the way the operator left it
+		const clearBtn = await page3.$(SEL.btn('planner-clear'));
 		ok('escort: CLEAR is offered once the escort ended', !!clearBtn);
 		if (clearBtn) {
 			await clearBtn.click({ count: 2 });
@@ -1520,7 +1809,7 @@ try {
 		await page3.close();
 	}
 
-	// ── the planner ('/'): a labelled movement's TEST pill; a refused escort ──
+	// ── the planner (WORKSPACE): a labelled movement's TEST pill; a refused escort ──
 	world.escort = null;
 	for (const ev of world.events) if (ev.event_id === PM) ev.status = 'completed'; // the CLEAR closed it
 	world.events.push(
@@ -1532,21 +1821,22 @@ try {
 	world.audit[TPM] = [];
 	const page4 = await hermeticPage();
 	try {
-		await page4.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-		const pillSel = `.rail [data-event-id="${TPM}"] [data-testid="liverail-test"]`;
+		await page4.goto(`${ORIGIN}${WORKSPACE}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+		const pillSel = SEL.railMarker(TPM, 'liverail-test');
 		await waitFor(page4, (sel) => !!document.querySelector(sel), pillSel, 20000);
 		const pill = await page4
 			.$eval(pillSel, (e) => {
 				const r = e.getBoundingClientRect();
-				const row = e.closest('button').getBoundingClientRect();
+				const row = e.closest('[data-event-id]').getBoundingClientRect();
 				return { text: e.textContent.trim(), title: e.getAttribute('title') ?? '', shown: r.width > 0 && r.right <= row.right + 1 };
 			})
 			.catch(() => null);
-		ok('planner: a labelled (test / rehearsal) movement wears a TEST pill on the LiveRail', !!pill && pill.text === 'TEST' && pill.shown && pill.title.includes(PLAN_LABEL), JSON.stringify(pill));
-		const pills = await page4.$$eval('.rail [data-testid="liverail-test"]', (els) => els.length);
+		ok('planner: a labelled (test / rehearsal) movement wears a TEST pill on the LiveRail', !!pill && textMatches(pill.text, COPY.liverailTest) && pill.shown && pill.title.includes(PLAN_LABEL), JSON.stringify(pill));
+		const pills = await page4.$$eval(SEL.railMarkers('liverail-test'), (els) => els.length);
 		ok('planner: …and only that row (an unlabelled event wears none)', pills === 1, `${pills} TEST pill(s)`);
+		await ensurePlanner(page4); // the redesign's PlanPanel sits behind [data-rail=plan]; a no-op today
 		await page4.type('[data-testid="planner-label"]', PLAN_LABEL, { delay: 2 });
-		await page4.type('[data-testid="planner-officer"]', OFFICER, { delay: 2 });
+		await nameOfficer(page4, OFFICER, { prefer: ['planner-officer', 'duty-officer'], delay: 2 });
 		const planBtn = await buttonIn(page4, '.form', 'plan corridor');
 		await planBtn?.click();
 		const planned = await waitFor(page4, () => !!document.querySelector('[data-testid="planner-candidates"]'), null, 15000);
@@ -1568,6 +1858,59 @@ try {
 	} finally {
 		await page4.close();
 	}
+
+	// ── fixture world: the GETs the redesign adds answer from the world (SPEC §12.7) ──
+	// Read through the hermetic page, so they count in the hygiene checks below.
+	const added = await page.evaluate(async ([vehicle, unknown]) => {
+		const get = async (u) => {
+			const r = await fetch(u);
+			return { status: r.status, body: await r.json().catch(() => null) };
+		};
+		return {
+			history: await get('/api/v1/events?limit=200'),
+			dossier: await get(`/api/v1/city/entity/vehicle/${vehicle}?audit_limit=60`),
+			event: await get(`/api/v1/city/entity/event/${unknown.event}?audit_limit=60`),
+			unknown: await get(`/api/v1/city/entity/vehicle/${unknown.vehicle}?audit_limit=60`),
+			snapshot: await get('/api/v1/city/entities'),
+		};
+	}, [V(1), { vehicle: '5a1e0000-0000-4000-8000-0000000009ff', event: P }]);
+	const histRows = added.history.body?.events ?? [];
+	const histStatuses = new Set(histRows.map((e) => e.status));
+	const newestFirst = histRows.every((e, i) => i === 0 || Date.parse(histRows[i - 1].updated_at) >= Date.parse(e.updated_at));
+	ok(
+		'fixture world: GET /events?limit=200 answers the event history (open and closed, newest first)',
+		added.history.status === 200 && histRows.length === added.history.body.count && histRows.length <= 200 && ['planning', 'active', 'completed', 'cancelled'].every((st) => histStatuses.has(st)) && newestFirst,
+		`${histRows.length} events · ${[...histStatuses].join(',')}`,
+	);
+	const dz = added.dossier.body ?? {};
+	const rels = new Set((dz.related ?? []).map((r) => r.relation));
+	// the oracle's dossier shape: audit_sources names every feed source, {status, count}
+	const sources = dz.audit_sources ?? {};
+	const sourcesOk = Object.keys(sources).sort().join() === FEED_SOURCES.map(([n]) => n).sort().join() && Object.values(sources).every((s) => s.status === 'ok' && Number.isInteger(s.count)) && Object.values(sources).reduce((a, s) => a + s.count, 0) >= (dz.audit ?? []).length;
+	ok(
+		'fixture world: GET /city/entity/vehicle/{id}?audit_limit=60 answers a dossier (masked label, its sighting, camera, recommendations, pursuit, audit)',
+		added.dossier.status === 200 && dz.entity?.urn === `vehicle:${V(1)}` && dz.entity.label === 'GJ27EM•••1' && ['sighting', 'seen_by_camera', 'recommendation', 'pursuit'].every((r) => rels.has(r)) && (dz.audit ?? []).length > 0 && sourcesOk,
+		`${dz.entity?.urn ?? 'no entity'} · relations ${[...rels].join(',')} · ${(dz.audit ?? []).length} audit rows · audit_sources ${Object.entries(sources).map(([n, s]) => `${n}=${s.count}`).join(' ')}`,
+	);
+	ok('fixture world: an event dossier carries the event and its audit rows', added.event.status === 200 && added.event.body?.entity?.urn === `event:${P}` && (added.event.body.audit ?? []).length >= 3, `${added.event.body?.entity?.label ?? '—'} · ${(added.event.body?.audit ?? []).length} audit rows`);
+	ok("fixture world: an unknown entity answers the oracle's 404 body inside a 200 (no 404 on the wire)", added.unknown.status === 200 && !added.unknown.body?.entity && typeof added.unknown.body?.detail === 'string', JSON.stringify(added.unknown.body).slice(0, 100));
+	const snapEntities = added.snapshot.body?.entities ?? [];
+	const snapKinds = new Set(snapEntities.map((e) => e.kind));
+	// the raw mark rides only in props.plate, and in an event's props.title (city/entities.py event_entity: the label masked)
+	const labelLeak = JSON.stringify(snapEntities.map((e) => ({ ...e, props: { ...e.props, plate: undefined, title: e.kind === 'event' ? undefined : e.props?.title } }))).match(RAW_PLATE);
+	// the open events (planning, approved, active) as entities, as the oracle's snapshot carries them (_SQL_LIVE_EVENTS)
+	const openEvents = world.events.filter((e) => LIVE_EVENT_STATUSES.includes(e.status)).map((e) => `event:${e.event_id}`).sort();
+	const snapEvents = snapEntities.filter((e) => e.kind === 'event');
+	const eventsOk = openEvents.length > 0 && snapEvents.map((e) => e.urn).sort().join() === openEvents.join() && snapEvents.every((e) => e.label === wireMask(e.props.title) && LIVE_EVENT_STATUSES.includes(e.state));
+	// the oracle's snapshot shape: a feed for EVERY entity kind (test_city_router.py), the kinds the world has none of empty
+	const feeds = added.snapshot.body?.feeds ?? {};
+	const emptyKinds = ENTITY_KINDS.filter((k) => !snapKinds.has(k));
+	const feedsOk = Object.keys(feeds).sort().join() === [...ENTITY_KINDS].sort().join() && ENTITY_KINDS.every((k) => feeds[k].status === 'ok') && emptyKinds.every((k) => feeds[k].count === 0) && typeof added.snapshot.body?.took_ms === 'number';
+	ok(
+		"fixture world: /city/entities carries the open events, vehicles, cameras, sightings and recommendations as well as junctions — masked but for props.plate and an event's props.title (C6, as the oracle)",
+		['event', 'vehicle', 'camera', 'sighting', 'recommendation', 'junction'].every((k) => snapKinds.has(k) && feeds[k]?.status === 'ok' && feeds[k].count > 0) && feedsOk && eventsOk && !labelLeak,
+		`${snapEntities.length} entities · ${[...snapKinds].join(',')} · the ${snapEvents.length} open event(s) of the world's ${openEvents.length} (${snapEvents.map((e) => e.state).join(',')}), labels masked · feeds for ${Object.keys(feeds).length} kinds (${emptyKinds.join(',')} empty) · raw mark outside props.plate and an event's props.title: ${labelLeak ? wireMask(labelLeak[0]) : 'none'} · page dossier reads ${world.dossierReads.length} · history reads ${world.historyReads}`,
+	);
 
 	// ── hygiene ─────────────────────────────────────────────────────────────
 	const notFound = responses.filter((r) => r.status === 404).map((r) => r.url);

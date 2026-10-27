@@ -156,8 +156,9 @@ class ConvoyContext:
             "activated_at": None,
             "reason": None,
         },
-        "threat_level": "nominal",
-        "dossier_generated_at": None,
+        # No one has assessed a threat until a named officer records one
+        # (POST /movements/{id}/protocol): never a reassuring 'nominal'.
+        "threat_level": "not_assessed",
     })
 
     def to_dict(self) -> dict:

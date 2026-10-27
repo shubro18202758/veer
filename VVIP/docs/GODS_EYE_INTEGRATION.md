@@ -68,7 +68,7 @@ deck's own `/cesium/` path (vendored, no CDN).
   screen (`showCreditsOnScreen`), on a glass plate lifted into the region
   the host's panels leave clear — on City Command above its fusion rail,
   fully legible.
-- **The judge view (City Command on the photoreal city):** the live
+- **The command view (City Command on the photoreal city):** the live
   action framed obliquely at −42° (range capped at 4.4 km, so the camera
   stays at most ≈ 2.94 km up; measured 2.3–2.7 km on the merged tree, and
   −42.0° with the camera 2945 m up on the live stack) or, with
@@ -337,7 +337,7 @@ script)`, 10 choke junctions ranked, a 12-position trace — its 24 h
 window held these 6 reads and the 23:51 run's 6 — no fine anywhere;
 `TECHNICAL_DOCS.md` §13). The four hero screenshots on disk were
 recaptured on 2026-10-24 at 01:25–01:26 IST on the live stack in its
-clean, staged judging state — the three operator shots on the photoreal
+clean, staged demo state — the three operator shots on the photoreal
 3D city (`PHOTOREAL 3D · GOOGLE`): the city at rest with the flow network
 draped, the pursuit trace (its pins `STOLEN · NO FINE · APPROVED` and the
 pre-rule e-challan's `SUPERSEDED · STOLEN`) and the `/ops` wall; and the
@@ -363,7 +363,7 @@ carried onto the real roads by the network step, but its patrol-unit
 frames (an older tape format) were not, and the emulator refuses to
 re-animate such a run server-side (422 `route_not_on_current_network` —
 its recorded route is no longer a legal path). Replay a run recorded on
-the current network for the judges (`CC_REPLAY_RUN` in
+the current network for a demo (`CC_REPLAY_RUN` in
 `tests/city-command-smoke.mjs` names the one its smoke replays).
 
 ## 6. Honest gaps, stated
@@ -371,6 +371,10 @@ the current network for the judges (`CC_REPLAY_RUN` in
 - **All ANPR reads, camera sites and agency units are emulated** in this
   build; nothing writes `live_anpr` (that is the point of the split — the
   live adapter has a frozen contract to land in).
+- **No agency is connected.** A dispatch is a request a named officer
+  approves and the oracle records with its audit tail; there is no agency
+  CAD or radio integration, and the unit that moves on the map is the
+  emulated projection of that record.
 - **The traffic feed is synthetic.** signal-ingress runs edge-synthetic
   collectors (every row `data_quality: synthetic`); the flow and anomaly
   layers say SIM accordingly.

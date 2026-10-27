@@ -32,18 +32,15 @@ export const ORACLE_V1 = '/api/v1';
 export const BRAIN_API = '/api/convoy';
 
 /**
- * Event emulator. The PRIMARY path is the same-origin proxy prefix
- * EMULATOR_PROXY_PATH — the vite dev proxy in dev and src/hooks.server.ts in
- * the adapter-node build both forward `/api/emulator → 127.0.0.1:8090`, so
- * no browser ever needs the emulator's CORS allowlist (which covers only the
- * :5173 dev origin; the argus deck serves from :5273 and every absolute call
- * from there was CORS-blocked before falling back).
- *
- * EMULATOR_BASE (absolute loopback :8090) is a DEV-ONLY second rung, tried
- * only under the vite dev server when the proxy entry is missing. Production
- * never requests it.
+ * Event emulator: ONLY the same-origin proxy prefix EMULATOR_PROXY_PATH — the
+ * vite dev proxy in dev and src/hooks.server.ts in the adapter-node build
+ * both forward `/api/emulator` to the emulator port the SERVER was started
+ * with (a sandbox's for a dev deck). The browser never builds an absolute
+ * emulator URL: the old dev-only `http://localhost:8090` rung retried every
+ * proxy 404 (including the emulator's own "run N not found") against the
+ * LIVE emulator, and a body-less POST (stop run N) needs no CORS preflight
+ * (audit F-CONN-01). tests/no-live-port.unit.mjs pins this.
  */
-export const EMULATOR_BASE = 'http://localhost:8090';
 export const EMULATOR_PROXY_PATH = '/api/emulator';
 
 /** Poll cadences (ms). The audit poll is the 2 s ladder rung from the plan. */
@@ -179,7 +176,7 @@ export interface UrlGuardResult {
  *   - IPv6 loopback/unspecified/link-local/unique-local (::1, ::, fe80::/10,
  *     fc00::/7), and IPv4-mapped IPv6 loopbacks
  *
- * Fixed internal endpoints (EMULATOR_BASE etc.) do NOT flow through this guard
+ * Fixed internal endpoints (the same-origin proxy prefixes) do NOT flow through this guard
  * — they are constants defined above, never external input.
  */
 export function assertSafeExternalUrl(raw: string): UrlGuardResult {
@@ -432,4 +429,7 @@ export const CITY_WRITER_POST_PATHS = [
 	'/api/v1/signals/plans/apply',
 	'/api/v1/signals/restore',
 	'/api/v1/vehicles/', // + {plate}/earmark | {vehicle_id}/earmark/clear
+	'/api/convoy/movements/', // + {id}/escort/approvals/{approval_id} | /escort/approve | /clear (the brain's escort writers, C-J)
+	'/api/v1/osint/events/', // + {id}/promote (C-T; the generate path shares the /decision-support prefix below)
+	'/api/v1/decision-support/', // + {dss_id}/decision (C-U); …/{urn}/generate is COMPUTE (R2) — no smoke may POST either
 ] as const;

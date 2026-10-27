@@ -7,7 +7,7 @@ at `GET /api/v1/adaptive/module` render exactly what is written here.
 
 ## What the module is
 
-Active Movement Adaptation is Veer's live self-adjusting layer: every
+Active Movement Adaptation is Veer's self-adjusting layer: every
 active corridor event (convoy, procession, mass gathering, pursuit …) is
 continuously classified into a **situation band**, the band moves through
 **hysteresis** before anything changes, **protocol floors** bound every
@@ -123,7 +123,9 @@ Stage 6 extends the application points to **city scope**:
   key space (`traffic:emulated:latest:{segment}`): a LIVE event's band reads
   only the live plane, an EMULATED event prefers its scenario's rows, and
   every audit row says which (`inputs_origin`, `simulated_feed`) — emulated
-  traffic can never drive a real event's band.
+  traffic can never drive a real event's band. The live plane itself is
+  fed by signal-ingress's synthetic collectors today (every row
+  `data_quality: synthetic`), so `simulated_feed` is true on this build.
 * **Real roads under it.** The bands, the twin's shadow runs and the signal
   plans all run on the city network traced on real OpenStreetMap roads
   (49 segments, 34 junctions, 11 signal-programmed junctions;

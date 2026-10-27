@@ -1,26 +1,23 @@
 <script lang="ts">
 	/**
-	 * Root layout — reset + fonts + tokens ONLY. No chrome, no data
-	 * lifecycle: the shells own chrome via the (deck)/(public) group
-	 * layouts, and the retired legacy feed tree (components/stores/
-	 * simulation/data-service) was removed with the (legacy) routes in
-	 * the 2026-10-14 template restoration. The font request carries the
-	 * Devanagari and Gujarati faces the token stacks name, so हिंदी and
-	 * ગુજરાતી render in the deck's type, not a device fallback.
+	 * Root layout — reset, self-hosted fonts and tokens ONLY. No chrome, no
+	 * data lifecycle: the shells own chrome via the (deck)/(public) group
+	 * layouts.
+	 *
+	 * Fonts are self-hosted (src/lib/design/fonts.css → static/fonts/, SPEC
+	 * §3.1): the deck requests nothing from a font CDN, so it renders the
+	 * same on a venue network with no internet. The faces cover Latin,
+	 * Devanagari and Gujarati, so हिंदी and ગુજરાતી render in the deck's type.
+	 *
+	 * The two global rules below are the ONE active-state rule (SPEC §5.1):
+	 * `.is-pressed` for controls and `.is-selected` for data, available to
+	 * every surface; nothing else may paint an active state (style lint).
 	 */
+	import '$lib/design/fonts.css';
 	import '$lib/design/tokens.css';
 
 	let { children } = $props();
 </script>
-
-<svelte:head>
-	<link rel="preconnect" href="https://fonts.googleapis.com" />
-	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
-	<link
-		rel="stylesheet"
-		href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Outfit:wght@500;700;800&family=Noto+Sans:wght@400;600&family=Noto+Sans+Devanagari:wght@400;600&family=Noto+Sans+Gujarati:wght@400;600&display=swap"
-	/>
-</svelte:head>
 
 {@render children?.()}
 
@@ -33,10 +30,31 @@
 		font-family: var(--v-font-ui);
 		background: var(--v-canvas);
 		color: var(--v-ink-1);
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
 	}
 
 	:global(*) {
 		box-sizing: border-box;
+	}
+
+	:global(button, input, select, textarea) {
+		font-family: inherit;
+	}
+
+	:global(:focus-visible) {
+		outline-color: var(--v-focus);
+	}
+
+	:global(.is-pressed) {
+		background: var(--v-surface-4) !important;
+		color: var(--v-ink-1) !important;
+		box-shadow: inset 0 0 0 1px var(--v-line-1);
+	}
+
+	:global(.is-selected) {
+		background: var(--v-primary-veil) !important;
+		box-shadow: inset 2px 0 0 var(--v-primary-text);
 	}
 
 	:global(::-webkit-scrollbar) {
@@ -44,11 +62,15 @@
 	}
 
 	:global(::-webkit-scrollbar-track) {
-		background: var(--v-surface-sink);
+		background: transparent;
 	}
 
 	:global(::-webkit-scrollbar-thumb) {
-		background: var(--v-surface-3);
+		background: var(--v-minimal-active);
 		border-radius: 3px;
+	}
+
+	:global(::-webkit-scrollbar-thumb:hover) {
+		background: var(--v-ink-4);
 	}
 </style>

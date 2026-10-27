@@ -25,6 +25,17 @@
  *   AGENT_SMOKE_SHOTS=/tmp/claude-1000/veer-wp14     # screenshot directory
  *   PUPPETEER_FROM=…/package.json, CHROME_PATH=…     # tool resolution overrides
  *
+ * Final pins (UI-S7B): the chip's copy is MapProposals' 'Proposed on the
+ * map · …' (tests/lib/tolerant.mjs); the masked plate after 'fly to <plate>'
+ * and the raw plate's absence are pinned verbatim (SPEC §12.5). On a gate-ON
+ * deck the smoke signs in ONCE through tests/lib/operator-session.mjs (the
+ * shared operator-session path, gate A) and signs out on exit; the Explain
+ * step waits an explicit AGENT_EXPLAIN_BUDGET_MS (default 5 min) and reports
+ * SKIP — not PASS — when no answer arrived (gate D). The camera picks wait
+ * for the home view to land (the spots stop moving) and for the canvas's
+ * hover pick to name the camera at its spot before clicking, so a click never
+ * lands where a camera was a moment ago, nor before its billboard is pickable.
+ *
  * The deck must already be serving (adapter-node build/, gate OFF — a
  * preview, never the PIN-gated live deck). Requests the page makes are the
  * deck's own read polling, the chat stream and the directive acks (the brain
@@ -37,6 +48,9 @@ import { existsSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { textMatches } from './lib/queue.mjs';
+import { puppeteerCookies, signIn, signOut } from './lib/operator-session.mjs';
+import { COPY, settleSpots } from './lib/tolerant.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DECK = path.resolve(HERE, '..');
@@ -88,6 +102,10 @@ function ok(name, cond, detail = '') {
 		failures++;
 		console.error(`FAIL ${name}${detail ? ` — ${detail}` : ''}`);
 	}
+}
+/** A check the environment, not the page, did not allow: reported, never counted. */
+function skip(name, detail = '') {
+	console.log(`skip ${name}${detail ? ` — ${detail}` : ''}`);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -165,6 +183,17 @@ async function closeDossier(page) {
 	await sleep(250);
 }
 
+/** Jiggle the pointer over `spot` until the canvas's hover pick is `urn` (bounded); true when it was. */
+async function hoverUntil(page, spot, urn, timeoutMs) {
+	const deadline = Date.now() + timeoutMs;
+	for (let i = 0; Date.now() < deadline; i++) {
+		await page.mouse.move(spot.x + (i % 2), spot.y);
+		await sleep(250);
+		if ((await page.evaluate(() => window.__GODS_EYE__?.selection?.hover ?? null)) === urn) return true;
+	}
+	return false;
+}
+
 async function chipCount(page) {
 	return page.$$eval('[data-testid="agent-chip"]', (els) => els.length);
 }
@@ -175,8 +204,16 @@ const browser = await puppeteer.launch({
 	args: SWIFTSHADER_ARGS,
 	defaultViewport: { width: 1920, height: 1080 },
 });
+// The shared operator-session sign-in (gate A): on a gate-ON deck this smoke
+// signs in ONCE through tests/lib/operator-session.mjs (the PIN is read at
+// run time and never logged), the veer_operator cookie rides on the page
+// (set before the first navigation) and it signs out on exit. Gate off:
+// nothing to sign in to.
+const session = await signIn(ORIGIN, 'Agent-canvas smoke (automated check)');
+ok('operator gate', true, session.gate ? 'on — signed in' : 'off');
 try {
 	const page = await browser.newPage();
+	if (session.gate) await page.setCookie(...puppeteerCookies(session));
 	const acks = [];
 	page.on('request', (req) => {
 		if (req.url().endsWith('/api/convoy/chat/directives/ack') && req.method() === 'POST') {
@@ -211,7 +248,7 @@ try {
 		const meta = chip
 			? await page.$eval('[data-testid="agent-chip"]', (el) => ({ verb: el.dataset.verb, text: el.textContent ?? '' }))
 			: null;
-		ok('a streamed directive shows the AI-suggests chip', !!chip && /AI suggests/.test(meta?.text ?? ''), meta ? `${meta.verb}: ${meta.text.replace(/\s+/g, ' ').trim()}` : 'no chip');
+		ok('a streamed directive shows the AI-suggests chip', !!chip && textMatches(meta?.text ?? '', COPY.agentSuggests), meta ? `${meta.verb}: ${meta.text.replace(/\s+/g, ' ').trim()}` : 'no chip');
 		ok('the chip masks the plate', !!meta && !meta.text.includes(PLATE));
 		await closePalette(page); // the stream keeps running
 		const before = await snapshot(page);
@@ -295,14 +332,23 @@ try {
 		ok('the dossier offers Explain this', !!btn);
 		if (btn) {
 			await btn.click();
+			// An EXPLICIT, generous budget (gate D: the sandbox brain shares its
+			// models with the live stack and one busy model host can hold the
+			// answer for minutes): AGENT_EXPLAIN_BUDGET_MS, default 5 minutes,
+			// polled every 2 s — one wait, said in the log.
+			const explainBudget = Number(process.env.AGENT_EXPLAIN_BUDGET_MS ?? 300_000);
+			console.log(`  explain: waiting up to ${Math.round(explainBudget / 1000)} s for the streamed answer (AGENT_EXPLAIN_BUDGET_MS)`);
 			const answer = await waitFor(page, async () => {
 				const a = await page
 					.$eval('[data-testid="dossier-explain-answer"]', (el) => ({ status: el.dataset.status, text: el.textContent?.trim() ?? '' }))
 					.catch(() => null);
 				return a && a.status !== 'streaming' && a.text.length > 0 ? a : null;
-			}, STREAM_BUDGET_MS, 500);
-			ok("'Explain this' streams an answer", answer?.status === 'done' && answer.text.length > 20, answer ? `${answer.text.slice(0, 160)}…` : 'no answer');
-			ok('the answer is masked', !!answer && !answer.text.includes(PLATE));
+			}, explainBudget, 2000);
+			ok("'Explain this' streams an answer", answer?.status === 'done' && answer.text.length > 20, answer ? `${answer.text.slice(0, 160)}…` : `no answer within ${Math.round(explainBudget / 1000)} s (the shared models were busy — see the wait above)`);
+			// SKIP-with-reason when nothing arrived (gate D): the mask assertion
+			// has nothing to check and must not read as a pass.
+			if (!answer) skip('the answer is masked', 'no answer arrived within the explain budget — nothing to check');
+			else ok('the answer is masked', !answer.text.includes(PLATE));
 			await shot(page, 'explain');
 		}
 	}
@@ -315,10 +361,12 @@ try {
 		await page.evaluate(() => window.__GODS_EYE__.ready);
 		await waitFor(page, async () => ((await snapshot(page))?.registry?.status === 'ok' ? true : null), 60_000);
 		await sleep(4000);
+		// the home flight must have landed: a click lands where the camera IS, not where it was
+		const settled = await settleSpots(page, 'cam:EM-CAM');
 		// the city view, so every EM-CAM is on screen and none under a panel
 		const spots = await page.evaluate(() => window.__GODS_EYE__.locate('cam:'));
 		const emIds = [...new Set(spots.map((s) => s.id).filter((id) => id.includes('EM-CAM')))];
-		ok('locate(cam) reports EM-CAM cameras', emIds.length > 0, emIds.join(', '));
+		ok('locate(cam) reports EM-CAM cameras', emIds.length > 0, `${emIds.join(', ')}${settled ? ' (view settled)' : ' (the view never settled in 20 s)'}`);
 		let selectedAll = 0;
 		for (const id of emIds) {
 			await closeDossier(page); // the next spot is clear of the drawer
@@ -329,17 +377,24 @@ try {
 				ok(`camera ${id} clickable`, false, 'covered or off screen');
 				continue;
 			}
-			await page.mouse.click(spot.x, spot.y);
 			const urn = `camera:${id.slice('cam:'.length)}`;
+			// Hover until the canvas's own hover pick names THIS camera — its billboard
+			// is pickable there — before clicking (canvas-ux's pick check does the
+			// same for spines): on a loaded host a click can land before it is, and
+			// pick nothing or a pin beside it. A spot another marker really owns
+			// never hovers as the camera, and the click below then fails as before.
+			const hovered = await hoverUntil(page, spot, urn, 10_000);
+			await page.mouse.click(spot.x, spot.y);
 			const sel = await waitFor(page, async () => ((await snapshot(page))?.selection?.urn === urn ? true : null), 4000, 150);
 			if (sel) selectedAll++;
-			ok(`click on ${id} selects ${urn}`, !!sel, (await snapshot(page))?.selection?.urn ?? 'none');
+			ok(`click on ${id} selects ${urn}`, !!sel, `${(await snapshot(page))?.selection?.urn ?? 'none'}${hovered ? '' : ' (the hover never named the camera in 10 s)'}`);
 		}
 		ok('every EM-CAM click selected its camera', emIds.length > 0 && selectedAll === emIds.length, `${selectedAll}/${emIds.length}`);
 		ok('still on City Command', new URL(page.url()).pathname === '/gods-eye', page.url());
 		await shot(page, 'camera-pick');
 	}
 } finally {
+	await signOut(session);
 	await browser.close();
 }
 

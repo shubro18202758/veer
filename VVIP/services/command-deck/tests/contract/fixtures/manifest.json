@@ -8,6 +8,9 @@
 		"vehicle_sightings.contract.json": "GET /api/v1/vehicles/{id}/sightings — the 4 EM-CAM reads of GJ27EM9001 (frozen; the trace-ladder fallback)",
 		"vehicle_trace.contract.json": "GET /api/v1/vehicles/{id}/trace — the pre-WP-16 404 'no sightings' answer the trace ladder falls back from (frozen)"
 	},
+	"sandbox_fixtures": {
+		"events_history.sandbox.json": "GET /api/v1/events?limit=200 — the C-F event history (every status, newest first by updated_at), recorded read-only from the int3cl sandbox oracle (:8162) on 2026-10-24 for UI-S7A; registration marks masked with the oracle's own rule (GJ27EM•••1). Frozen: --record never writes it (it is not in RECORDED)."
+	},
 	"recorded_at": "2026-10-22T13:30:43.932Z",
 	"recorded_from": "http://127.0.0.1:8091",
 	"fixtures": {
@@ -95,6 +98,50 @@
 			"file": "adaptive_status.json",
 			"status": 200,
 			"origin": "live"
+		},
+		"/api/v1/events?limit=200": {
+			"file": "events_history.sandbox.json",
+			"status": 200,
+			"origin": "sandbox"
+		},
+		"osint:osint_event.entity.json": {
+			"file": "osint_event.entity.json",
+			"status": 200,
+			"origin": "osint-sandbox",
+			"route": "/api/v1/city/entities?kinds=osint_event",
+			"recorded_from": "http://127.0.0.1:8162",
+			"recorded_at": "2026-10-25T21:21:53.155Z",
+			"publishers": [
+				"news-a.example",
+				"news-b.example"
+			]
+		},
+		"osint:place.entity.json": {
+			"file": "place.entity.json",
+			"status": 200,
+			"origin": "osint-sandbox",
+			"route": "/api/v1/city/entities?kinds=place",
+			"recorded_from": "http://127.0.0.1:8162",
+			"recorded_at": "2026-10-25T21:21:53.164Z",
+			"publishers": []
+		},
+		"osint:osint.feeditem.json": {
+			"file": "osint.feeditem.json",
+			"status": 200,
+			"origin": "osint-sandbox",
+			"route": "/api/v1/city/feed?limit=400",
+			"recorded_from": "http://127.0.0.1:8162",
+			"recorded_at": "2026-10-25T21:21:53.197Z",
+			"publishers": []
+		},
+		"osint:dss.decisionsupport.json": {
+			"file": "dss.decisionsupport.json",
+			"status": 200,
+			"origin": "osint-sandbox",
+			"route": "/api/v1/decision-support/7c1076f0-385c-4dec-817d-78bda6b3d185",
+			"recorded_from": "http://127.0.0.1:8162",
+			"recorded_at": "2026-10-25T21:21:53.213Z",
+			"note": "GET of an existing proposal — never generated in a test"
 		}
 	}
 }

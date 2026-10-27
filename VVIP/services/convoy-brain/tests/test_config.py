@@ -19,7 +19,8 @@ class TestServiceUrlResolution:
         assert urls.model_host == "http://127.0.0.1:8083"
         assert urls.llama == "http://127.0.0.1:8084"
         assert urls.embedding == "http://127.0.0.1:8085"
-        assert urls.traffic_oracle == "http://localhost:8081"
+        # the oracle's own hand-run port, on IPv4 loopback (F-CONN-09)
+        assert urls.traffic_oracle == "http://127.0.0.1:8081"
         assert urls.source == "defaults"
 
     def test_repo_models_config_parses(self):

@@ -23,7 +23,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-from convoy_brain.config import CONFIDENCE_FLOOR
+from convoy_brain.config import CONFIDENCE_FLOOR, GEMMA_DISPLAY_NAME
 
 # ─── Strategic tier (model-host / decider) ────────────────────────
 
@@ -228,13 +228,15 @@ BUILD_INFO.info({
     "version": "0.2.0",
     "service": "convoy-brain",
     "strategic_model": "pplx-decider-v1-27b",
-    "tactical_model": "aditi-ps18-v7h-gemma4-12b",
+    "tactical_model": GEMMA_DISPLAY_NAME,
 })
 
 
 # ─── Helper Decorators ────────────────────────────────────────────
 
-TACTICAL_MODEL = "aditi-ps18-v7h"
+#: The tactical tier's label on every metric (the operator-facing name;
+#: the served alias stays internal — config.GEMMA_MODEL_ID).
+TACTICAL_MODEL = GEMMA_DISPLAY_NAME
 
 
 @asynccontextmanager

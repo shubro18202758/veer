@@ -18,9 +18,11 @@ on one GB10 edge box. One backbone schedules, predicts and releases road
 occupancy for corridor events (protected movements, processions, mass
 gatherings, races, ceremonials, stadium egress, flood evacuation, work
 zones), carries the stolen-vehicle chain (earmark → ANPR sightings →
-human-approved recommendation → pursuit → interception plan), dispatches
-five agencies (Jan Rakshak, police, traffic, 108 ambulance, fire) and puts
-all of it on one God's-eye picture. The VVIP convoy is the base case, not
+human-approved recommendation → pursuit → interception plan), records
+human-approved dispatch requests for five agencies (Jan Rakshak, police,
+traffic, 108 ambulance, fire — no agency CAD or radio integration; the
+units on the map are emulated) and puts all of it on one God's-eye
+picture. The VVIP convoy is the base case, not
 the boundary. Veer is built to **strengthen the state's ICCC / CCTV / ITMS
 programmes** — it is decision support for government officers, never a
 replacement for them.
@@ -135,11 +137,13 @@ generated protocol tables). The command-deck consumes them as they are.
   oracle and brain trust it only on a loopback connection. A differing body
   `officer` is kept as `claimed_officer`. `VVIP_REQUIRE_OFFICER=1` makes a
   named officer mandatory where it is not already (escort start / stop /
-  clear on the brain; signal-plan applies and watchlist writes on the
-  oracle); decisions, approvals and lifecycle transitions always need one.
+  clear on the brain; signal-plan apply / restore and earmark create /
+  clear on the oracle, 422 without one); `infra/compose.argus-override.yml`
+  passes it to both services, default 1. Decisions, approvals and
+  lifecycle transitions always need one.
 - Scripts that must approve something unattended record the honest label
-  `Scripted demo officer (showcase script)`; in the judged demo a signed-in
-  human approves on `/ops`.
+  `Scripted demo officer (showcase script)`; when an operator runs the demo,
+  a signed-in human approves on `/ops`.
 
 ## 5. The stack (argus, the live system)
 
@@ -153,9 +157,19 @@ generated protocol tables). The command-deck consumes them as they are.
 | Valkey | `vvip-argus-valkey` | 6380 |
 | NATS (JetStream) | `vvip-argus-nats` | 4223 (monitoring 8223) |
 | signal-ingress (Rust) | `vvip-argus-signal-ingress` | — (publishes to NATS) |
+| osint-ingress (Python; only with `VEER_OSINT=1`) | `vvip-argus-osint-ingress` | 8093 |
 | decider pplx-decider-v1-27b | systemd `veer-decider.service` | 8083 |
 | Gemma 4 12B (llama-server) | systemd `veer-llama.service` | 8084 |
 | embeddings (pplx-embed-v2-late + bge-m3) | systemd `veer-embed.service` | 8085 |
+
+The service images the argus stack builds run as non-root users
+(`infra/docker/Dockerfile.traffic-oracle.gb10` uid 10004,
+`Dockerfile.convoy-brain.gb10` 10005, `Dockerfile.command-deck` 10006,
+`Dockerfile.event-emulator` 10002, `Dockerfile.osint-ingress` 10003,
+`Dockerfile.signal-ingress` 10001); keep a new image non-root and pin its
+base image by digest, as the Python and bun images are (signal-ingress's
+`rust:alpine` / `alpine:3.21` tags are not pinned yet). The x86 `Dockerfile.traffic-oracle` /
+`Dockerfile.convoy-brain` still run as root.
 
 Ports, container names and the compose invocation come from
 `scripts/veer_env.sh` and `infra/compose.argus-override.yml` — scripts take
@@ -167,8 +181,12 @@ vite dev server keeps vite's own default port under `bun run dev`
 (`services/command-deck/vite.config.ts`).
 
 **Bring-up:** `bash scripts/veer_up.sh` (idempotent: preflight → model
-units → compose up → migrate → seed / OSM network step if needed →
-converge → readiness table, READY 11/11); `--status` is read-only;
+units → (`--build`: build the service images) → PostGIS alone, healthy →
+migrate → seed / OSM network step if needed → every service up → restart
+the network readers after a network step → converge → readiness table,
+READY 11/11, or 12/12 with `VEER_OSINT=1`); `--build` never rebuilds the
+PostGIS image (`--rebuild-postgis` opts in; it recreates the store
+container, the data stays on its volume); `--status` is read-only;
 `--install-units` links `infra/systemd/*` and enables `veer.target`, which
 brings the stack back after every reboot (`veer-up.service` +
 `veer-models.target`). Settings and secrets live in
@@ -267,14 +285,27 @@ visible.
   pre-movement answer for the movement's own decision docs too.
 - **Tactical tier:** Gemma 4 12B on :8084 drafts tool arguments against each
   tool's `inputSchema` (grammar-constrained, one repair round) and composes
-  the brain's human-facing text — dossiers, trilingual (EN/HI/GU)
-  advisories, `/chat` narration.
+  the `/chat` answer. Operator-facing name `gemma4-12b-veer`
+  (`config.GEMMA_DISPLAY_NAME`); the served llama-server alias stays
+  internal (`config.GEMMA_MODEL_ID`) — never show it to an operator.
+- **Grounding (`grounding.py`), enforced in code:** drafted segment ids
+  must come from the operator's message, the session context or a tool
+  result; `predict_eta` needs a tool-reported route length and speed
+  (softer inputs are labelled ASSUMED INPUTS); every sentence of the answer
+  is checked against the tool results — an unsupported road, figure, time,
+  vehicle position or unit ETA is removed with a visible note. The
+  brain's model-assessment routes (`/movements/{id}/protocol/assess`,
+  `/dossier`, `/threat-assessment`, `/analytics/reasoning`,
+  `/recommendations/reasoning`) answer **410** and write nothing; do not
+  re-add a model-made security verdict. The trilingual advisories on
+  `/comms` are written deterministically by the deck
+  (`src/lib/comms/advisory.ts`), not by a model.
 - **Floor:** deterministic heuristics (`llm/heuristics.py`). The fallback
   chain decider → Gemma → heuristics is total, and every drop is audited
   into the movement's `decisions_log`.
 - Turn limits (`orchestrator.py`): `MAX_TOOL_ROUNDS = 6`,
   `TOTAL_TURN_TIMEOUT_SEC = 120`; tool results truncated at 4096 bytes.
-- MCP surface on the brain: 28 tools (incl. the 6 canvas verbs),
+- MCP surface on the brain: 29 tools (incl. the 6 canvas verbs),
   4 resources, 3 prompts (`POST /mcp tools/list`).
 - Protocol floors (`protocol_params_gen.py`): advance closure Z+ 180 /
   Z 120 / Y 60 s (X and `none`: none); minimum lanes Z+ 6 / Z 4 / Y 2 / X 1.
@@ -330,10 +361,10 @@ Every user-visible string goes through the EN/HI/GU string packs
 
 - `bash scripts/verify_all.sh` — the acceptance ladder (every pytest
   suite, the deck's type/unit/UI tiers, cargo, generator `--verify` /
-  `--check` tiers, the submission-consistency oracle, the wave gates);
+  `--check` tiers, the docs-consistency oracle, the wave gates);
   the first failing tier aborts. Its header lists the tiers.
-- `node scripts/submission_consistency_check.mjs` (and `--selftest`) — the
-  docs/deck figures must equal the artifacts they cite.
+- `node scripts/submission_consistency_check.mjs` (and `--selftest`) — the docs-consistency oracle:
+  the docs' figures must equal the artifacts they cite.
 - Deck smokes in `services/command-deck/tests/` (design, screens, gods-eye,
   city-command, canvas-ux, ops-wall, citizen; `contract/run.mjs` and the
   `*.unit.mjs` files) — gated smokes sign in through
@@ -351,9 +382,8 @@ Every user-visible string goes through the EN/HI/GU string packs
 
 ## 12. Honesty rules
 
-- Never invent a figure. Every number in code comments, docs, the deck and
-  the submission comes from a command, an artifact or the code, and says
-  which; a figure that could not be re-measured is marked as history.
+- Never invent a figure. Every number in code comments, docs and the deck
+  comes from a command, an artifact or the code, and says which; a figure that could not be re-measured is marked as history.
 - Never present emulated or simulated data as a measurement, a model's
   output as a field observation, or a fallback answer as the AI's.
 - Say "not deployed", "unavailable" or "unknown" when that is the truth —
@@ -366,8 +396,10 @@ Every user-visible string goes through the EN/HI/GU string packs
 
 | Concern | Path |
 |---|---|
-| Oracle HTTP surface | `services/traffic-oracle/src/traffic_oracle/__main__.py` + package routers (`events/`, `city/`, `vehicles/`, `enforcement/`, `units/`, `signals/`, `adaptive/`, `spatial/`, `ops/`, `simulation/`) |
+| Oracle HTTP surface | `services/traffic-oracle/src/traffic_oracle/__main__.py` + package routers (`events/`, `city/`, `vehicles/`, `enforcement/`, `units/`, `signals/`, `adaptive/`, `spatial/`, `ops/`, `simulation/`, `osint/`, `decision_support/`) |
 | Brain HTTP + escort authority | `services/convoy-brain/src/convoy_brain/__main__.py`, `workflows/live_escort.py`, `config.py` |
+| Brain grounding validator | `services/convoy-brain/src/convoy_brain/grounding.py` |
+| OSINT (places, never persons) | `services/osint-common/`, `osint-ingress/` (README: ethics rails, held-out redaction recall), `osint-geo/`, `osint-analysis/` |
 | MCP server | `services/convoy-brain/src/convoy_brain/mcp/server.py` |
 | Emulator | `services/event-emulator/README.md` |
 | Ingress | `services/signal-ingress/README.md` |

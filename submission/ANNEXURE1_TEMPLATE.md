@@ -9,10 +9,11 @@
 - State/UT: Gujarat
 - Primary theme: Governance & Civic Technology
 - Secondary theme: Disaster Mitigation & Large Gatherings
-- Project: **VVIP Corridor Orchestration Platform — corridors managed to the
-  second, not frozen for half an hour** (public-facing citizen advisory +
-  108 green-corridor mode over the corridor intelligence engine)
-- Repository (public, MIT): ______________
+- Project: **Veer — Ahmedabad's city-scale corridor & enforcement operating
+  system** (VVIP movements, processions, mass gatherings and stolen-vehicle
+  pursuits on one human-supervised operating picture, with a public citizen
+  advisory and a 108 green-corridor mode)
+- Repository (public, MIT): https://github.com/shubro18202758/veer
 
 ## Members (up to 3; one Team Lead)
 
@@ -35,13 +36,18 @@ We certify that:
    third-party components are limited to permissively-licensed open-source
    libraries attributed in the repository.
 5. **AI tool usage (as disclosed on slide 7):** AI coding assistants were
-   used during prototype and enhancement development. All decision logic is
-   deterministic, team-reviewed code; the demo runs a clearly-labelled
-   scripted simulation; statistics come from cited government/press sources
-   or the falsifiable assumptions ledger in `IMPACT_REPORT.md`; no AI runs
-   unreviewed in the decision path.
-6. The demo video shows only the scripted simulation and synthetic seed
-   network; no real convoy, patient or movement data is included.
+   used during prototype and enhancement development. The decision tools
+   are deterministic, team-reviewed code (optimizer, classifier, simulator,
+   enforcement rules); the two-tier reasoning layer (a 27B decider and
+   Gemma 12B, run locally) only proposes, and is logged answer by answer;
+   no AI output acts unreviewed — every penalty, pursuit, dispatch and
+   escort route switch is decided by a named officer. Statistics come from
+   cited government/press sources, the falsifiable assumptions ledger in
+   `IMPACT_REPORT.md`, or the in-repo measurement artifacts.
+6. The demo video shows emulated events, camera reads and unit positions,
+   labelled EMULATED on screen, over the real Ahmedabad road network
+   (© OpenStreetMap contributors, ODbL 1.0); no real convoy, patient,
+   person or movement data is included.
 
 ## Attachments
 

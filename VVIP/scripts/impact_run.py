@@ -61,7 +61,7 @@ EFFECTIVE_APPROACH_KMH = 30.0           # assumption: urban peak congestion
 # Hold durations (minutes):
 BASELINE_HOLD_MIN = 25.0                # source: documented 15–45 min blanket holds
 BASELINE_HOLD_LOW, BASELINE_HOLD_HIGH = 15.0, 45.0   # sensitivity band
-PLATFORM_HOLD_MIN = 2.5                 # source: PROBLEM_STATEMENT (rolling 2–3 min)
+PLATFORM_HOLD_MIN = 2.5                 # source: platform design target (rolling 2–3 min)
 PLATFORM_HOLD_CONSERVATIVE = 3.0        # longer rolling hold = platform's worse case
 PLATFORM_HOLD_OPTIMISTIC = 2.0          # shorter rolling hold = platform's better case
 # Discharge factor: queue takes roughly half the hold again to clear:
@@ -341,7 +341,7 @@ the mechanism and this range, modelled.*
 |---|---|---|
 | Traffic density | {DENSITY_VEH_PER_KM_PER_LANE:.0f} veh/km/lane | repo simulator default (`scenario_sim.py`) |
 | Peak approach speed | {EFFECTIVE_APPROACH_KMH:.0f} km/h | **assumption** (urban peak) |
-| Baseline blanket hold | {BASELINE_HOLD_MIN:.0f} min (15–45) | documented practice (PROBLEM_STATEMENT citations) |
+| Baseline blanket hold | {BASELINE_HOLD_MIN:.0f} min (15–45) | documented practice (published 15–45 min blanket holds) |
 | Platform rolling hold | {PLATFORM_HOLD_MIN} min | platform design (60–180 s activation) |
 | Discharge factor | {DISCHARGE_FACTOR} | **assumption** (textbook oversaturation shape) |
 | Junctions frozen per movement | {n_junctions} | **assumption** (every junction of the network under test — see the scale note) |

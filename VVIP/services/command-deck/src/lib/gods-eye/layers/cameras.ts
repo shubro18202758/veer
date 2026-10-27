@@ -42,6 +42,9 @@ import type { GodsEyeLayer, GodsEyeLayerContext, GodsEyeLayerInstance } from '..
 import { cssColor } from '../theme';
 import { istStamp } from '../hud/format';
 import { clampedDot, drapeAudit, ground } from './draping';
+import { kindIcon } from '$lib/design/icons';
+import { chromeOf } from '../hud/map/view';
+import { markerBillboard, tagMarker, type MarkerMeta } from '../hud/map/symbols';
 
 export const CAMERAS_PICK_PREFIX = 'cam:';
 
@@ -121,6 +124,15 @@ function describe(c: CameraRecord): string {
 	} · last read ${last}${c.status ? ` · ${c.status}` : ''} · location + counts only (no frame data)`;
 }
 
+/** Chrome v2: the camera's pick text in plain words (no stacked status words). */
+function describeV2(c: CameraRecord): string {
+	const last = c.lastReadT != null ? `last read ${istStamp(c.lastReadT)} IST` : 'no read yet';
+	const reads = `${c.reads15m} read${c.reads15m === 1 ? '' : 's'} and ${c.hits15m} watchlist hit${c.hits15m === 1 ? '' : 's'} in 15 min`;
+	return `${c.label ? `${c.label}: ` : ''}camera ${c.cameraId} (${c.kind === 'anpr' ? 'ANPR' : 'CCTV'}${c.source === 'emulated' ? ', emulated' : ''})${
+		c.junctionId != null ? ` at junction ${c.junctionId}` : ''
+	}. ${reads}, ${last}${c.status ? ` (${c.status})` : ''}. Locations and counts only, no frames.`;
+}
+
 function createCamerasLayer(): GodsEyeLayerInstance {
 	let ctx: GodsEyeLayerContext | null = null;
 	let active = false;
@@ -141,12 +153,41 @@ function createCamerasLayer(): GodsEyeLayerInstance {
 			marks,
 			godsEye.camerasFeed.status,
 		]);
+		const v2 = chromeOf(ctx) === 'v2';
 		if (sig === lastSignature) return;
 		lastSignature = sig;
 
 		for (const id of entityIds) viewer.entities.removeById(id);
 		entityIds.length = 0;
 		hitCount = 0;
+
+		if (v2) {
+			// SPEC §5.3: a neutral disc with the camera glyph at the camera's
+			// own position; co-located cameras merge into one disc with a count
+			// chip (the canvas clusters them), so there is no fan-out here.
+			for (const c of cameras) {
+				if (c.hits15m > 0) hitCount++;
+				const meta: MarkerMeta = {
+					urn: `camera:${c.cameraId}`,
+					kind: 'camera',
+					glyph: kindIcon('camera'),
+					shape: 'disc',
+					cluster: true,
+					t: c.lastReadT,
+					label: [{ id: c.cameraId }],
+					labelWhen: 'hover',
+				};
+				const entity = viewer.entities.add({
+					id: `${CAMERAS_PICK_PREFIX}${c.cameraId}`,
+					position: ground(cesium, c.lon, c.lat),
+					billboard: markerBillboard(cesium, meta),
+					description: describeV2(c),
+				});
+				tagMarker(entity, meta);
+				entityIds.push(entity.id);
+			}
+			return;
+		}
 
 		const still = reducedMotion();
 		const at = fanOut(cameras, marks);
@@ -239,6 +280,8 @@ function createCamerasLayer(): GodsEyeLayerInstance {
 					withHits: hitCount,
 					reporting,
 					reads15m: reads,
+					// v2: the LayerTree row's provenance glyph (SPEC §5.3, §9.2) — the legacy stats stay as they were
+					...(chromeOf(ctx) === 'v2' ? { emulated: cams.filter((c) => c.source === 'emulated').length } : {}),
 					...(ctx && entityIds.length ? drapeAudit(ctx.viewer, entityIds) : {}),
 				},
 				via: godsEye.via('camera'),
@@ -257,5 +300,6 @@ export const camerasLayer: GodsEyeLayer = {
 	requiresKeyId: null,
 	pickPrefix: CAMERAS_PICK_PREFIX,
 	defaultOn: true,
+	group: 'enforcement',
 	create: createCamerasLayer,
 };

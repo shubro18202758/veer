@@ -98,6 +98,9 @@ services:
       dockerfile: ../../infra/docker/Dockerfile.traffic-oracle
     container_name: vvip-traffic-oracle
     environment:
+      # bridge network: the published port needs an all-interfaces bind inside the container (the oracle's own default is
+      # loopback since F-CONN-09; the argus override runs host-networked and sets HOST=127.0.0.1 itself)
+      HOST: "0.0.0.0"
       VVIP_DATABASE_URL: postgresql://corridor_admin:${POSTGIS_PASSWORD:-dev_changeme}@postgis:5432/corridor_db
       VVIP_VALKEY_URL: redis://valkey:6379
       VVIP_NATS_URL: nats://nats:4222
@@ -131,15 +134,13 @@ services:
       dockerfile: ../../infra/docker/Dockerfile.convoy-brain
     container_name: vvip-convoy-brain
     environment:
-      VVIP_DATABASE_URL: postgresql://corridor_admin:${POSTGIS_PASSWORD:-dev_changeme}@postgis:5432/corridor_db
       VVIP_VALKEY_URL: redis://valkey:6379
-      VVIP_NATS_URL: nats://nats:4222
       # Host model stack (models stream, C8/C10): fixed internal endpoints
       MODEL_HOST_URL: http://host.docker.internal:8083
       LLAMA_BASE_URL: http://host.docker.internal:8084
       EMBEDDING_SERVICE_URL: http://host.docker.internal:8085
-      # legacy (retired with ollama_bridge.py; kept for transition):
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # (OLLAMA_BASE_URL is gone: ollama_bridge.py was retired and nothing
+      # reads it; it resolved to a host the argus layout cannot reach)
       TRAFFIC_ORACLE_URL: http://traffic-oracle:8081
       PORT: "8080"
     ports:

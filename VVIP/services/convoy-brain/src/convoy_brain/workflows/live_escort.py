@@ -98,6 +98,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import structlog
@@ -805,8 +806,10 @@ class EventLifecycle:
         """The event's current status: ``{status, found, source}``. Never raises.
 
         The active board first (planning / approved / active); an event no
-        longer on it is looked up in the history (GET /api/v1/events?since=,
-        newest first). ``status`` None means it could not be read.
+        longer on it is read by id (GET /api/v1/events/{id} — F-CONN-13: the
+        old scan of the newest 200 history rows missed older events; 404 is
+        ``source: absent``). ``status`` None means it could not be read.
+        ``since`` is kept for callers and no longer needed.
         """
         out: dict = {"status": None, "found": False, "source": None}
         if not event_id:
@@ -818,16 +821,16 @@ class EventLifecycle:
             for event in resp.json().get("events") or []:
                 if isinstance(event, dict) and str(event.get("event_id")) == str(event_id):
                     return {"status": event.get("status"), "found": True, "source": "active"}
-            params: dict = {"limit": 200}
-            if since:
-                params["since"] = since
             resp = await client.get(
-                f"{self._base_url}/api/v1/events", params=params, timeout=self._timeout
+                f"{self._base_url}/api/v1/events/{quote(str(event_id), safe='')}",
+                timeout=self._timeout,
             )
+            if resp.status_code == 404:
+                return dict(out, source="absent")
             resp.raise_for_status()
-            for event in resp.json().get("events") or []:
-                if isinstance(event, dict) and str(event.get("event_id")) == str(event_id):
-                    return {"status": event.get("status"), "found": True, "source": "history"}
+            event = resp.json()
+            if isinstance(event, dict) and str(event.get("event_id")) == str(event_id):
+                return {"status": event.get("status"), "found": True, "source": "history"}
         except Exception as exc:
             logger.info("escort.event_status_unavailable", event_id=event_id, error=str(exc)[:200])
             return out

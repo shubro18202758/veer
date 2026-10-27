@@ -1,4 +1,4 @@
-"""Tactical-tier client — Gemma 4 12B (aditi-ps18-v7h) on llama-server.
+"""Tactical-tier client — Gemma 4 12B on llama-server (served alias: config.GEMMA_MODEL_ID).
 
 Speaks llama-server's OpenAI-compatible endpoint::
 

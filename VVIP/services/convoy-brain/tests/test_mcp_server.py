@@ -35,8 +35,9 @@ class TestToolSurface:
         names = [t["name"] for t in TOOL_DEFINITIONS]
         assert "simulate_twin" in names
         # 12 compute/read tools + get_active_corridor_events + 9 read-only
-        # city tools + 6 canvas verbs (wave 3, C-D2)
-        assert len(names) == 28
+        # city tools + city_decision_support (OS-BRAIN) + 6 canvas verbs
+        # (wave 3, C-D2)
+        assert len(names) == 29
         twin = next(t for t in TOOL_DEFINITIONS if t["name"] == "simulate_twin")
         assert twin["inputSchema"]["required"] == ["route_segment_ids"]
 
@@ -59,7 +60,7 @@ class TestJsonRpcDispatch:
             "jsonrpc": "2.0", "id": 1, "method": "tools/list",
         }))
         payload = json.loads(response)
-        assert len(payload["result"]["tools"]) == 28
+        assert len(payload["result"]["tools"]) == 29
 
     async def test_tools_call_dispatches(self):
         executor = FakeExecutor(routes={"get_live_traffic": {"segments": []}})

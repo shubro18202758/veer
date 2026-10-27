@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- SYNTHETIC REPLICA of the NDMA SACHET CAP RSS schema for Veer tests (identifiers and text are fictional). -->
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Gujarat: CAP Disaster Alert Feeds (synthetic)</title>
+    <link>https://sachet.ndma.gov.in/cap_public_website/rss/rss_gujarat.xml</link>
+    <copyright>public domain</copyright>
+    <item>
+      <title>Heavy rain likely at isolated places over Ahmedabad, Gandhinagar and Kheda in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1999000000000101</link>
+      <author>synthetic-control-room@example.org (Synthetic Issuer)</author>
+      <guid isPermaLink="false">1999000000000101</guid>
+      <pubDate>Tue, 20 Oct 2026 12:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Light rain likely at isolated places over Kachchh and Patan in next 3 hours.</title>
+      <description/>
+      <category>Met</category>
+      <link>https://sachet.ndma.gov.in/cap_public_website/FetchXMLFile?identifier=1999000000000102</link>
+      <author>synthetic-control-room@example.org (Synthetic Issuer)</author>
+      <guid isPermaLink="false">1999000000000102</guid>
+      <pubDate>Tue, 20 Oct 2026 12:10:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

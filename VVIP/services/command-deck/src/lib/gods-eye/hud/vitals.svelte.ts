@@ -11,6 +11,20 @@
  * Every rung keeps its own honest state ('ok' | 'not-deployed' | 'down' |
  * 'idle') and its last-good value; nothing here is derived client-side.
  * Reference-counted, in-flight guarded, paused while hidden.
+ *
+ * seed()/unseed(): the /design harnesses only (fictional values, like
+ * cityRegistry.seed): a seeded store stops its timers and its visibility
+ * listener, starts no poller, and drops any answer still in flight, so a
+ * harness's fixtures are never replaced by a backend's answer; unseed()
+ * drops the values and, if a page still holds the store, polls again (one
+ * listener, never a second).
+ *
+ * `shown` is what the mounted City vitals variant (the map-mode card or the
+ * Info tab, CityVitals.svelte — one at a time) publishes for the canvas
+ * test snapshot, window.__GODS_EYE__.vitals: the same shape either way.
+ * Variants attach()/detach(): `shown` is cleared only when the last one
+ * unmounts, and attach() returns how many are mounted (a page that mounts
+ * two at once breaks SPEC §12.1.2; the component warns in dev).
  */
 
 import { createPollGate } from '$lib/ops/client';
@@ -79,36 +93,92 @@ class CityVitals {
 	/** What the mounted CITY VITALS rail shows (null when no rail is mounted). */
 	shown = $state.raw<VitalsShown | null>(null);
 
+	/** True while a /design harness has seeded the rungs: no poller starts. */
+	seeded = $state(false);
+
 	private holders = 0;
 	private timers: ReturnType<typeof setInterval>[] = [];
 	private gate = createPollGate();
 	private onVisibility: (() => void) | null = null;
+	/** The mounted City vitals variants (one at a time on a page: SPEC §12.1.2). */
+	private variants = new Set<symbol>();
 
 	start() {
 		this.holders++;
-		if (this.timers.length) return;
-		this.pollAll();
-		this.timers.push(setInterval(() => void this.gate('ingest', () => this.pollIngest()), CADENCE.ingest));
-		this.timers.push(setInterval(() => void this.gate('brain', () => this.pollBrain()), CADENCE.brain));
-		this.timers.push(setInterval(() => void this.gate('retention', () => this.pollRetention()), CADENCE.retention));
-		this.timers.push(setInterval(() => void this.gate('emulator', () => this.pollEmulator()), CADENCE.emulator));
-		if (typeof document !== 'undefined') {
-			this.onVisibility = () => {
-				if (!document.hidden) this.pollAll();
-			};
-			document.addEventListener('visibilitychange', this.onVisibility);
-		}
+		this.begin();
 	}
 
 	stop() {
 		this.holders = Math.max(0, this.holders - 1);
 		if (this.holders > 0) return;
+		this.halt();
+	}
+
+	/** Timers and the visibility listener, once (never while seeded). */
+	private begin() {
+		if (this.timers.length || this.seeded) return;
+		this.pollAll();
+		this.timers.push(setInterval(() => void this.gate('ingest', () => this.pollIngest()), CADENCE.ingest));
+		this.timers.push(setInterval(() => void this.gate('brain', () => this.pollBrain()), CADENCE.brain));
+		this.timers.push(setInterval(() => void this.gate('retention', () => this.pollRetention()), CADENCE.retention));
+		this.timers.push(setInterval(() => void this.gate('emulator', () => this.pollEmulator()), CADENCE.emulator));
+		if (typeof document !== 'undefined' && !this.onVisibility) {
+			this.onVisibility = () => {
+				if (!document.hidden && !this.seeded) this.pollAll();
+			};
+			document.addEventListener('visibilitychange', this.onVisibility);
+		}
+	}
+
+	/** Stop the timers and drop the visibility listener (the holders stay counted). */
+	private halt() {
 		for (const t of this.timers) clearInterval(t);
 		this.timers = [];
 		if (this.onVisibility && typeof document !== 'undefined') {
 			document.removeEventListener('visibilitychange', this.onVisibility);
 		}
 		this.onVisibility = null;
+	}
+
+	/** A City vitals variant mounts; returns how many are mounted now (more than one is a page bug). */
+	attach(id: symbol): number {
+		this.variants.add(id);
+		return this.variants.size;
+	}
+
+	/** A City vitals variant unmounts; `shown` is cleared only when none is left. */
+	detach(id: symbol) {
+		this.variants.delete(id);
+		if (!this.variants.size) this.shown = null;
+	}
+
+	/**
+	 * Set the rungs from fictional values without polling — the /design
+	 * harnesses only. Rungs left out stay idle.
+	 */
+	seed(values: { ingest?: IngestHealth; brain?: BrainHealth; retention?: RetentionHealth; runs?: EmulatorRunRow[]; livingCity?: LivingCityStatus }) {
+		const at = Date.now();
+		const ok = <T>(v: T | undefined): Rung<T> => (v === undefined ? idle<T>() : { state: 'ok', value: v, updatedAt: at, note: null });
+		// no timer, no listener, and (pollX checks `seeded`) no answer still in flight replaces a fixture
+		this.halt();
+		this.seeded = true;
+		this.ingest = ok(values.ingest);
+		this.brain = ok(values.brain);
+		this.retention = ok(values.retention);
+		this.runs = ok(values.runs);
+		this.livingCity = ok(values.livingCity);
+	}
+
+	/** Drop seeded values (a harness unmounting): idle again; polls again if a page still holds the store. */
+	unseed() {
+		if (!this.seeded) return;
+		this.seeded = false;
+		this.ingest = idle();
+		this.brain = idle();
+		this.retention = idle();
+		this.runs = idle();
+		this.livingCity = idle();
+		if (this.holders > 0) this.begin();
 	}
 
 	private pollAll() {
@@ -134,26 +204,33 @@ class CityVitals {
 		}
 	}
 
+	// every answer is dropped when a harness seeded the store while it was in flight
+
 	private async pollIngest() {
 		const next = await this.run(this.ingest, async () => {
 			const v = await fetchIngestHealth(AbortSignal.timeout(6000));
 			if (!v) throw new Error('oracle /health carried no ingest block');
 			return v;
 		});
-		this.ingest = next;
+		if (!this.seeded) this.ingest = next;
 	}
 
 	private async pollBrain() {
-		this.brain = await this.run(this.brain, () => fetchBrainHealth(AbortSignal.timeout(6000)));
+		const next = await this.run(this.brain, () => fetchBrainHealth(AbortSignal.timeout(6000)));
+		if (!this.seeded) this.brain = next;
 	}
 
 	private async pollRetention() {
-		this.retention = await this.run(this.retention, () => fetchRetention(AbortSignal.timeout(6000)));
+		const next = await this.run(this.retention, () => fetchRetention(AbortSignal.timeout(6000)));
+		if (!this.seeded) this.retention = next;
 	}
 
 	private async pollEmulator() {
-		this.runs = await this.run(this.runs, () => fetchEmulatorRuns(6, AbortSignal.timeout(8000)));
-		this.livingCity = await this.run(this.livingCity, () => fetchLivingCity(AbortSignal.timeout(6000)));
+		const runs = await this.run(this.runs, () => fetchEmulatorRuns(6, AbortSignal.timeout(8000)));
+		if (this.seeded) return;
+		this.runs = runs;
+		const living = await this.run(this.livingCity, () => fetchLivingCity(AbortSignal.timeout(6000)));
+		if (!this.seeded) this.livingCity = living;
 	}
 }
 

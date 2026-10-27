@@ -11,7 +11,14 @@
 # PostGIS + pgRouting + pgvector extension stack the migrations require.
 # The migrations contain no PG17-specific syntax (Dockerfile.migtest
 # header documents the same verification).
-FROM pgvector/pgvector:pg16
+# The base is pinned by digest: the pgvector/pgvector:pg16 build every existing
+# veer-vvip-postgis:arm64 / vvip-argus-postgis:arm64 image on this host was
+# built from (its layers are that image's base). A floating tag would hand a
+# rebuild a newer base and recreate the store container. The two apt packages
+# below still resolve at build time (Debian/PGDG drop superseded versions, so
+# an exact pin would break the build); scripts/veer_up.sh --build never
+# rebuilds this image unless --rebuild-postgis is given.
+FROM pgvector/pgvector:pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-16-postgis-3 \

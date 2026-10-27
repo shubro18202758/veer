@@ -125,7 +125,7 @@ the mechanism and this range, modelled.*
 |---|---|---|
 | Traffic density | 30 veh/km/lane | repo simulator default (`scenario_sim.py`) |
 | Peak approach speed | 30 km/h | **assumption** (urban peak) |
-| Baseline blanket hold | 25 min (15–45) | documented practice (PROBLEM_STATEMENT citations) |
+| Baseline blanket hold | 25 min (15–45) | documented practice (published 15–45 min blanket holds) |
 | Platform rolling hold | 2.5 min | platform design (60–180 s activation) |
 | Discharge factor | 1.5 | **assumption** (textbook oversaturation shape) |
 | Junctions frozen per movement | 34 | **assumption** (every junction of the network under test — see the scale note) |

@@ -6,7 +6,9 @@
  *   node tests/contract/run.mjs --live [base]     # same core assertions, live GETs
  *   node tests/contract/run.mjs --record [base]   # re-record live fixtures (GET only)
  *
- * base defaults to http://127.0.0.1:8091 (the argus oracle). Every mode is
+ * base is the URL argument, else http://127.0.0.1:$ORACLE_PORT. There is NO
+ * default (F-CONN-09: it once defaulted to the live :8091): --live and
+ * --record refuse to start without one, before any request. Every mode is
  * READ-ONLY against the stack: replay never touches the network (writer
  * POSTs are answered by the in-process stub and their bodies inspected);
  * --live and --record refuse any non-GET.
@@ -32,6 +34,15 @@
  * back-off and the C6 'withheld' answer are driven by net.overrides, never
  * by whatever the oracle happened to answer at recording time.
  *
+ * The event history (GET /api/v1/events?limit=200, contract C-F) is frozen
+ * the same way (events_history.sandbox.json): recorded read-only from the
+ * int3cl SANDBOX oracle, its registration marks masked (C6), never written by
+ * --record. The redesign's timeline and table page it (UI-S7A, SPEC §12.7);
+ * section 15 replays it through today's board mapper.
+ *
+ * The esbuild bundle is written to a fresh directory under the OS temp dir
+ * (removed on exit), never into the checkout's tests/artifacts/.
+ *
  * CONTRACT_FIXTURES=<dir> points the runner (record and replay alike) at a
  * scratch copy of the fixtures — re-record into a copy, replay it, and the
  * committed fixtures are never touched.
@@ -41,9 +52,11 @@
  */
 
 import { createRequire } from 'node:module';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { osintHygiene, dssShapeProblems, recordBaseRefusal } from './osint-hygiene.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DECK = path.resolve(HERE, '..', '..');
@@ -52,7 +65,18 @@ const MANIFEST = path.join(FIXTURES, 'manifest.json');
 
 const argv = process.argv.slice(2);
 const MODE = argv.includes('--record') ? 'record' : argv.includes('--live') ? 'live' : 'replay';
-const BASE = (argv.find((a) => /^https?:\/\//.test(a)) ?? 'http://127.0.0.1:8091').replace(/\/$/, '');
+/** The oracle to read (--live / --record): the URL argument, else ORACLE_PORT on loopback — never a default. */
+export function contractBase(args, env) {
+	const url = args.find((a) => /^https?:\/\//.test(a));
+	if (url) return url.replace(/\/$/, '');
+	const port = (env.ORACLE_PORT ?? '').trim();
+	return /^\d{2,5}$/.test(port) ? `http://127.0.0.1:${port}` : null;
+}
+const BASE = contractBase(argv, process.env);
+if (MODE !== 'replay' && !BASE) {
+	console.error(`FAIL contract --${MODE}: no oracle given — pass its URL or set ORACLE_PORT (there is no default). Nothing was requested.`);
+	process.exit(2);
+}
 
 const PURSUIT = '4508d86d-566b-438f-8414-b3d67fd7e6e4';
 const VEHICLE = '1b94e9d2-7e11-4174-a735-7dd3be3189cf';
@@ -107,7 +131,7 @@ if (MODE === 'record') {
 		} catch {
 			body = { detail: text.slice(0, 200) };
 		}
-		if (file.endsWith('.contract.json')) throw new Error(`--record must never write a frozen fixture (${file})`);
+		if (file.endsWith('.contract.json') || file.endsWith('.sandbox.json')) throw new Error(`--record must never write a frozen fixture (${file})`);
 		writeFileSync(path.join(FIXTURES, file), `${JSON.stringify(body, null, '\t')}\n`);
 		fixtures[route] = { file, status: res.status, origin: 'live' };
 		console.log(`rec  ${res.status} ${route} → ${file}`);
@@ -123,7 +147,10 @@ if (MODE === 'record') {
 
 const require2 = createRequire(path.join(DECK, 'package.json'));
 const esbuild = require2('esbuild');
-const OUT = path.join(DECK, 'tests', 'artifacts', 'contract-bundle.mjs');
+// the bundle goes to a temp dir, never into the checkout (F-CONN-09)
+const OUT_DIR = mkdtempSync(path.join(os.tmpdir(), 'veer-contract-'));
+const OUT = path.join(OUT_DIR, 'contract-bundle.mjs');
+process.on('exit', () => rmSync(OUT_DIR, { recursive: true, force: true }));
 const ENTRY = `
 export * as data from './src/lib/gods-eye/data';
 export * as client from './src/lib/ops/client';
@@ -136,6 +163,7 @@ export * as usecases from './src/lib/ops/usecases';
 export * as opsStrings from './src/lib/i18n/strings.ops';
 export * as registryMod from './src/lib/gods-eye/entities/registry.svelte';
 export * as fusionFeedMod from './src/lib/gods-eye/hud/feed.svelte';
+export * as kinds from './src/lib/workspace/kinds';
 `;
 {
 	const result = await esbuild.build({
@@ -223,7 +251,7 @@ async function settle() {
 	}
 }
 
-const { data, client, opsStore, corridorFeed, unitsLayer, signalsLayer, cityApi, usecases, opsStrings, registryMod, fusionFeedMod } = await import(
+const { data, client, opsStore, corridorFeed, unitsLayer, signalsLayer, cityApi, usecases, opsStrings, registryMod, fusionFeedMod, kinds } = await import(
 	`${pathToFileURL(OUT).href}?t=${Date.now()}`
 );
 
@@ -556,7 +584,17 @@ function requested(pred) {
 	ok('interception plan loaded on auto-select (no click)', ops.interception?.eventId === PURSUIT && ops.interception.chokes.length > 0 && ops.interception.latestSighting?.plate === 'GJ27EM•••1');
 	ops.setDutyOfficer('Duty Officer A');
 	ok('a named officer sees the raw plate; clearing masks it again (C6)', ops.interception?.latestSighting?.plate === 'GJ27EM9001' && (ops.setDutyOfficer(''), ops.interception?.latestSighting?.plate === 'GJ27EM•••1'));
-	ok('audit for a live event goes via the 2 s poll rung (no WS ladder in production)', ops.audit.some((a) => a.text.includes('via the 2 s poll rung')));
+	ok('audit for a live event goes via the 2 s poll rung (no WS ladder in production)', ops.audit.some((a) => a.text === opsStore.AUDIT_CHANNEL_MSG.polled));
+	// F-18: the console's own channel rows are plain words — no raw event uuid, no transport jargon
+	{
+		const own = ops.audit.filter((a) => Object.values(opsStore.AUDIT_CHANNEL_MSG).includes(a.text));
+		const UUIDISH = /[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|\b[0-9a-f]{8}\b/i;
+		ok(
+			'the audit-channel rows carry no event uuid and no transport jargon (F-18)',
+			own.length > 0 && Object.values(opsStore.AUDIT_CHANNEL_MSG).every((t) => !UUIDISH.test(t) && !/ws-event|ws-convoy|ladder|rung|websocket/i.test(t)),
+			own.map((a) => a.text).join(' | '),
+		);
+	}
 	ok('no request to the absolute emulator URL', requested((r) => r.url.startsWith('http://localhost:8090')).length === 0);
 
 	// Same plan on the next poll → the object is kept (no overlay re-animation).
@@ -694,13 +732,13 @@ function requested(pred) {
 	await ops.pollBand();
 	await settle();
 	ok('…an oracle without the engine loop block: the reading is the read time; held since unchanged', Date.now() - ops.bandUpdated < 3000 && ops.bandCommittedAt === Date.parse(since));
-	ok('simulated_feed → the band source says SIMULATED FEED', ops.bandSimulated === true && /SIMULATED FEED/.test(ops.bandSource), ops.bandSource);
+	ok('simulated_feed → the band source says Simulated feed', ops.bandSimulated === true && /Simulated feed/.test(ops.bandSource), ops.bandSource);
 	net.overrides.set('/api/v1/adaptive/status', status({ band: 'GREEN', since, subjects: 1, simulated_feed: true, stale: true, stale_since: '2026-10-22T20:30:00.000Z' }));
 	await ops.pollCityBand();
 	await ops.pollBand();
 	await settle();
 	ok('a STALE city band is UNKNOWN (band null), never GREEN', ops.band === null && ops.bandStaleSince === Date.parse('2026-10-22T20:30:00.000Z'), String(ops.band));
-	ok("…its source reads 'UNKNOWN — engine poll failing since <IST>'", /^UNKNOWN — engine poll failing since \d{2}:\d{2} IST$/.test(ops.bandSource), ops.bandSource);
+	ok("…its source reads 'Unknown — engine poll failing since <IST>'", /^Unknown — engine poll failing since \d{2}:\d{2} IST$/.test(ops.bandSource), ops.bandSource);
 	// A stale doc without stale_since is dated by the first read that saw it
 	// stale (it began no later) — never by the moment the band was entered.
 	net.overrides.set('/api/v1/adaptive/status', status({ band: 'GREEN', since, subjects: 1, simulated_feed: true, stale: false, stale_since: null }));
@@ -1058,6 +1096,175 @@ function requested(pred) {
 	ok('…a fresh human approval is (even when older than the spent one)', basis() === '00000000-0000-4000-8000-00000000d0a2', basis());
 	ops.watchlist = saved.watchlist;
 	ops.approvedRecommendations = saved.approved;
+}
+
+// ─── 15. the event history (C-F GET /events?limit=200, UI-S7A) ─────────────
+
+{
+	// What the redesign's timeline and object table page (SPEC §12.7): every
+	// event, closed ones included, newest first — the same C-F rows the
+	// board's mapper reads, so today's client maps them.
+	const res = await fetch('/api/v1/events?limit=200');
+	const body = await res.json();
+	const rows = Array.isArray(body?.events) ? body.events : [];
+	ok('event history: GET /events?limit=200 → {events, count} (C-F), count = rows ≤ 200', res.status === 200 && rows.length > 0 && body.count === rows.length && rows.length <= 200, `${rows.length} events`);
+	ok('event history: newest first by updated_at', rows.every((r, i) => i === 0 || Date.parse(rows[i - 1].updated_at) >= Date.parse(r.updated_at)), `${rows[0]?.updated_at} … ${rows.at(-1)?.updated_at}`);
+	const statuses = new Set(rows.map((r) => r.status));
+	ok('event history: closed events too (completed, cancelled) — not the active board', statuses.has('completed') && statuses.has('cancelled'), [...statuses].join(','));
+	const mapped = rows.map((r) => client.mapEventRow(r, 'live-events-api'));
+	ok(
+		'event history: every row maps through the board mapper (id, raw status, state, labelled routes)',
+		mapped.every((e, i) => !!e && e.eventId === rows[i].event_id && e.status === rows[i].status && ['planned', 'active', 'completed', 'cancelled'].includes(e.state) && Array.isArray(e.routes) && e.routes.every((r) => typeof r.label === 'string')),
+		mapped.map((e) => e?.state).join(','),
+	);
+	ok('event history: a closed row keeps its state (completed → completed, cancelled → cancelled)', mapped.every((e, i) => !['completed', 'cancelled'].includes(rows[i].status) || e.state === rows[i].status));
+	const pursuit = mapped.find((e) => e?.eventKind === 'vehicle_pursuit');
+	ok("event history: the pursuit cites its vehicle and the officer-approved recommendation", pursuit?.metadata?.vehicleId === VEHICLE && /^e91d4591/.test(pursuit?.metadata?.recommendationId ?? ''), pursuit ? `${pursuit.name.slice(0, 40)}…` : 'no pursuit');
+	const emulator = rows.filter((r) => r.metadata?.source === 'event-emulator');
+	ok('event history: emulator runs read emulated (metadata.source), operator rows never', emulator.length > 0 && mapped.every((e, i) => e.emulated === (rows[i].metadata?.source === 'event-emulator')), `${emulator.length} emulated of ${rows.length}`);
+	const text = JSON.stringify(body);
+	ok('event history fixture: registration marks masked at any depth (C6)', !/\b[A-Z]{2}\s?\d{1,2}\s?[A-Z]{1,3}\s?\d{4}\b/.test(text) && text.includes('GJ27EM•••1'), 'the pursuit title prints GJ27EM•••1');
+	const keys = [];
+	const walk = (v) => {
+		if (Array.isArray(v)) v.forEach(walk);
+		else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) keys.push(k), walk(x);
+	};
+	walk(body);
+	const banned = keys.filter((k) => /^(person|author|handle|byline|reporter|poster|uploader|suspect|accused|victim|owner|driver_name|face|biometric|plate)$|^individual_/i.test(k));
+	ok('event history: no person, face or plate key at any depth', banned.length === 0, banned.join(',') || `${new Set(keys).size} distinct keys`);
+}
+
+// ─── 16. the OSINT and DSS fixtures (C-C + C-U, UI-S7B, plan R13) ─────────
+
+{
+	// Recorded from the int3cl SANDBOX ONLY (tests/contract/record-osint.mjs):
+	// int3cl is seeded from OS-2's synthetic capture, so every publisher /
+	// source-URL host / provenance.publishers entry at any depth is a
+	// `*.example` name or the public-domain SACHET sample host. A recording
+	// that fails that is discarded by the recorder, never edited by hand —
+	// the replay re-asserts it so a hand-edited fixture cannot sneak in.
+	// ONE rule set with the recorder (tests/contract/osint-hygiene.mjs):
+	// publisher-like strings at ANY depth (dotted or not), every URL / link
+	// host (with or without a scheme), person keys by SUBSTRING, raw marks.
+	const fixtures16 = [
+		['osint_event.entity.json', 'the osint_event CityEntity'],
+		['place.entity.json', 'the place CityEntity'],
+		['osint.feeditem.json', 'the osint FeedItem'],
+		['dss.decisionsupport.json', 'the C-U DecisionSupport'],
+	];
+	for (const [file, what] of fixtures16) {
+		const h = osintHygiene(fixture(file));
+		ok(`osint fixtures: ${what} — every publisher-like string at any depth is *.example or sachet.ndma.gov.in`, h.badPublishers.length === 0, h.badPublishers.length ? `non-synthetic: ${h.badPublishers.join(', ')}` : h.publishers.join(', ') || 'no publisher in the payload');
+		ok(`osint fixtures: ${what} — every URL / source-link host at any depth is *.example or sachet.ndma.gov.in`, h.badHosts.length === 0, h.badHosts.length ? `non-synthetic: ${h.badHosts.join(', ')}` : h.hosts.join(', ') || 'no host in the payload');
+		ok(`osint fixtures: ${what} carries no person key at any depth (FORBIDDEN_KEY_RE as a substring)`, h.personKeys.length === 0, h.personKeys.join(',') || 'clean');
+		ok(`osint fixtures: ${what} carries no raw registration mark in any string`, h.plates.length === 0, h.plates.join(',') || 'clean');
+	}
+	// the rules bite (each one refuses a planted breach; the fixtures stay untouched)
+	{
+		// a synthetic C-U-shaped payload of its own (never the fixture file, so a
+		// mutated fixture cannot break this self-test)
+		const base = {
+			situation: { summary: 'Road accident near a junction', toponym: 'SG Highway' },
+			provenance: { publishers: ['news-a.example'], sources: [{ publisher: 'news-b.example', url: null }] },
+			coa_set: [{ coa_id: 'coa_min', ethics: { touches_persons: false } }],
+		};
+		const plant = (fn) => {
+			const d = structuredClone(base);
+			fn(d);
+			return osintHygiene(d);
+		};
+		const caught = [
+			['a bare outlet name in provenance.publishers', plant((d) => (d.provenance.publishers = ['Times of India'])).badPublishers.length > 0],
+			['a publishers array deep in the payload', plant((d) => (d.situation.evidence = [{ provenance: { publishers: ['thehindu.com'] } }])).badPublishers.length > 0],
+			['a scheme-less source link', plant((d) => (d.provenance.sources[0].source_link = 'www.thehindu.com/news/article')).badHosts.length > 0],
+			['an https URL host in a summary', plant((d) => (d.situation.summary += ' https://www.thehindu.com/x')).badHosts.length > 0],
+			['an author_name key', plant((d) => (d.situation.author_name = 'A. Writer')).personKeys.length > 0],
+			['a raw mark (spaced, lower case)', plant((d) => (d.situation.summary += ' gj 27 em 9001')).plates.length > 0],
+			['touches_persons as a string', plant((d) => (d.coa_set[0].ethics.touches_persons = 'yes')).personKeys.length > 0],
+		];
+		const missed = caught.filter(([, c]) => !c).map(([n]) => n);
+		const exempt = plant((d) => (d.coa_set[0].ethics.touches_persons = false));
+		const clean = osintHygiene(base);
+		const forms = osintHygiene({ props: { surface_forms: ['odhav'], surfaced: 3 } });
+		ok('osint fixtures: the hygiene rules refuse every planted breach and keep the exact exemptions (touches_persons bool, surface_forms list, surfaced count)', missed.length === 0 && exempt.personKeys.length === 0 && forms.personKeys.length === 0 && clean.badPublishers.length + clean.badHosts.length + clean.personKeys.length + clean.plates.length === 0, missed.length ? `missed: ${missed.join(' | ')}` : `${caught.length} breaches refused`);
+	}
+
+	// the recorder's target guard (record-osint.mjs; F10): int3cl :8162 on
+	// 127.0.0.1 only; the live ports and int3c always refused
+	{
+		const refusedAlways = ['http://127.0.0.1:8091', 'http://127.0.0.1:5273', 'http://127.0.0.1:8161', 'http://127.0.0.1:8092', 'http://127.0.0.1:8090'];
+		const refused = [...refusedAlways, 'http://localhost:8162', 'http://10.0.0.5:8162', 'https://127.0.0.1:8162', 'http://127.0.0.1:9999', 'not a url'];
+		const accepted = recordBaseRefusal('http://127.0.0.1:8162') === null && recordBaseRefusal('http://127.0.0.1:8163', '8163') === null;
+		const leaks = refused.filter((b) => recordBaseRefusal(b) === null).concat(refusedAlways.filter((b) => recordBaseRefusal(b, new URL(b).port) === null));
+		ok('osint fixtures: the recorder refuses the live ports, int3c :8161 and any host but 127.0.0.1 (an override never unlocks a live or int3c port); int3cl :8162 accepted', accepted && leaks.length === 0, leaks.length ? `accepted: ${leaks.join(', ')}` : `${refused.length} bases refused`);
+	}
+
+	// C-C replay: source "osint" survives parseCityEntity; the verification
+	// state is parsed; the generic adapter's ObjectRow.source is 'osint'.
+	const entity = fixture('osint_event.entity.json');
+	const parsedEntity = cityApi.parseCityEntity(entity);
+	ok(
+		'osint fixtures: parseCityEntity keeps kind, source osint, the verification state and the credibility',
+		!!parsedEntity && parsedEntity.kind === 'osint_event' && parsedEntity.source === 'osint' && parsedEntity.verificationState === entity.verification_state && parsedEntity.credibility === entity.credibility && parsedEntity.urn === entity.urn,
+		parsedEntity ? `${parsedEntity.urn.slice(0, 44)}… source=${parsedEntity.source} verif=${parsedEntity.verificationState} cred=${parsedEntity.credibility}` : 'unparseable',
+	);
+	// a poisoned wire ("live") can never pass for a live row: an OSINT kind is always 'osint'
+	const poisoned = cityApi.parseCityEntity({ ...entity, source: 'live' });
+	ok('osint fixtures: an osint_event wire row reading source "live" still parses as osint (never live)', !!poisoned && poisoned.source === 'osint');
+	const placeParsed = cityApi.parseCityEntity(fixture('place.entity.json'));
+	ok('osint fixtures: the place entity parses (kind place, source osint)', !!placeParsed && placeParsed.kind === 'place' && placeParsed.source === 'osint', `${placeParsed?.urn ?? '—'}`);
+
+	const feedRow = fixture('osint.feeditem.json');
+	const parsedRow = cityApi.parseFeedRow(feedRow);
+	ok(
+		'osint fixtures: parseFeedRow keeps feedKind osint, the lane event and the verification state',
+		!!parsedRow && parsedRow.feedKind === 'osint' && parsedRow.kind === 'event' && parsedRow.source === 'osint' && parsedRow.verificationState === (feedRow.verification_state ?? feedRow.verificationState ?? null) && parsedRow.credibility === (feedRow.credibility ?? null),
+		parsedRow ? `${parsedRow.id} lane=${parsedRow.kind} feedKind=${parsedRow.feedKind} verif=${parsedRow.verificationState}` : 'unparseable',
+	);
+
+	// The workspace row: ObjectRow.source is 'osint' (the omnibar, the table
+	// and the inspector read the same provenance).
+	const row = kinds.rowOf(parsedEntity, {});
+	ok(
+		'osint fixtures: the workspace ObjectRow for the osint_event reads source osint with the verification + credibility',
+		row.source === 'osint' && row.verification === entity.verification_state && row.kind === 'osint_event' && row.urn === entity.urn,
+		`${row.urn.slice(0, 40)}… source=${row.source} verif=${row.verification}`,
+	);
+
+	// C-U replay: the recorded GET (never generated) holds the C-U shape
+	// (osint_common DecisionSupport: a known state = human_gate.state, a
+	// non-empty coa_set, ranked ⊆ coa ids, top first, the SIMULATED label)…
+	const dssRaw = fixture('dss.decisionsupport.json');
+	const shape = dssShapeProblems(dssRaw);
+	ok('osint fixtures: the recorded C-U DecisionSupport holds the C-U shape (state, human gate, coa_set, ranking, labels)', shape.length === 0, shape.join(' · ') || `state=${dssRaw.state} coas=${dssRaw.coa_set.length} ranked=${dssRaw.recommendation.ranked_coa_ids.join(',')}`);
+	// …and parseDecisionSupport keeps it: id, subject, state, every coa, the ranking.
+	const dss = client.parseDecisionSupport(dssRaw);
+	const coaIds = (dss?.coaSet ?? []).map((c) => c.coaId ?? c.id);
+	ok(
+		'osint fixtures: parseDecisionSupport keeps the recorded C-U (id, event subject, state, every coa, the ranking, the top pick)',
+		!!dss &&
+			dss.dssId === dssRaw.dss_id &&
+			dss.eventUrn === dssRaw.event_urn &&
+			dss.state === dssRaw.state &&
+			coaIds.length === dssRaw.coa_set.length &&
+			coaIds.every((id, i) => id === dssRaw.coa_set[i].coa_id) &&
+			dss.recommendation.rankedCoaIds.join() === dssRaw.recommendation.ranked_coa_ids.join() &&
+			dss.recommendation.topCoaId === dssRaw.recommendation.top_coa_id,
+		dss ? `dss ${dss.dssId.slice(0, 8)}… state=${dss.state} coas=${coaIds.join(',')} top=${dss.recommendation.topCoaId}` : 'unparseable',
+	);
+	{
+		const bad = [
+			['state nonsense', (d) => (d.state = 'nonsense')],
+			['coa_set empty', (d) => (d.coa_set = [])],
+			['a ranked id outside the coa set', (d) => d.recommendation.ranked_coa_ids.push('coa_ghost')],
+			['human_gate.state ≠ state', (d) => (d.human_gate.state = 'approved')],
+		].filter(([, fn]) => {
+			const d = structuredClone(dssRaw);
+			fn(d);
+			return dssShapeProblems(d).length === 0;
+		});
+		ok('osint fixtures: the C-U shape check refuses a nonsense state, an empty coa_set, a stray ranked id, a split human gate', bad.length === 0, bad.map(([n]) => n).join(' | ') || '4 refused');
+	}
 }
 
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'} contract (replay, fixtures recorded ${manifest.recorded_at} from ${manifest.recorded_from}) — ${failures} failure(s)`);

@@ -122,7 +122,9 @@ class TestC3Lockstep:
 
         assert "crime_incident" in EVENT_KINDS
         assert "vehicle_pursuit" in EVENT_KINDS
-        assert len(EVENT_KINDS) == 10
+        # 010's ten + 021's six OSINT reported-situation kinds (C3 lockstep;
+        # test_migration_021_grammar.py pins the 021 CHECK lists)
+        assert len(EVENT_KINDS) == 16
 
         sys.path.insert(0, str(REPO / "services" / "event-emulator" / "src"))
         from event_emulator.profiles import EVENT_KINDS as EMU_KINDS
