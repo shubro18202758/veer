@@ -1,0 +1,56 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "event-emulator",
+    "port_on_sandbox": 8962,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers)."
+  },
+  "request": "GET /health",
+  "status": 200,
+  "response": {
+    "status": "ok",
+    "degraded_reasons": [],
+    "library": 10,
+    "stack": {
+      "store": true,
+      "valkey": true,
+      "nats": true,
+      "twin": true
+    },
+    "probes": {
+      "store": {
+        "ok": true,
+        "ms": 2.0
+      },
+      "valkey": {
+        "ok": true,
+        "ms": 0.0
+      },
+      "nats": {
+        "ok": true,
+        "ms": 0.0
+      },
+      "twin": {
+        "ok": true,
+        "ms": 3.0
+      }
+    },
+    "runs": {
+      "running": []
+    },
+    "last_run": null,
+    "living_city": {
+      "enabled": false,
+      "status": "stopped",
+      "active_slots": 0,
+      "detail": null
+    },
+    "reaper": {
+      "interrupted": [],
+      "events_closed": [],
+      "errors": [],
+      "at": "2026-10-27T14:44:40.999858+00:00"
+    }
+  }
+}

@@ -1,0 +1,260 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "traffic-oracle",
+    "port_on_sandbox": 8162,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers).",
+    "trimmed": "segments: the first 3 of the 21 returned for this bounding box"
+  },
+  "request": "GET /api/v1/spatial/segments?min_lon=72.55&min_lat=23.0&max_lon=72.62&max_lat=23.05",
+  "status": 200,
+  "response": {
+    "segments": [
+      {
+        "segment_id": 1001,
+        "osm_way_id": 1304821341,
+        "road_name": "Ashram Road (South)",
+        "road_class": "primary",
+        "lanes": 4,
+        "speed_limit_kmh": 60,
+        "oneway": false,
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              72.5712798,
+              23.0225647
+            ],
+            [
+              72.5712406,
+              23.023454
+            ],
+            [
+              72.5712881,
+              23.023792
+            ],
+            [
+              72.5712985,
+              23.0244947
+            ],
+            [
+              72.5711369,
+              23.0267093
+            ]
+          ]
+        },
+        "geometry_basis": "osm",
+        "display_source": null
+      },
+      {
+        "segment_id": 1002,
+        "osm_way_id": 244327259,
+        "road_name": "Ashram Road (North)",
+        "road_class": "primary",
+        "lanes": 4,
+        "speed_limit_kmh": 60,
+        "oneway": false,
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              72.5711369,
+              23.0267093
+            ],
+            [
+              72.5709868,
+              23.0278713
+            ],
+            [
+              72.5704666,
+              23.0294325
+            ],
+            [
+              72.5705141,
+              23.030447
+            ],
+            [
+              72.5705839,
+              23.0308736
+            ],
+            [
+              72.5705851,
+              23.0312729
+            ],
+            [
+              72.5705192,
+              23.0316025
+            ],
+            [
+              72.5692091,
+              23.0346115
+            ],
+            [
+              72.5689292,
+              23.0353263
+            ],
+            [
+              72.5688408,
+              23.0356979
+            ],
+            [
+              72.5688158,
+              23.0366737
+            ],
+            [
+              72.5688789,
+              23.0374066
+            ],
+            [
+              72.5688191,
+              23.0374953
+            ],
+            [
+              72.5690907,
+              23.0393027
+            ],
+            [
+              72.5691983,
+              23.0402115
+            ],
+            [
+              72.5693605,
+              23.0402419
+            ]
+          ]
+        },
+        "geometry_basis": "osm",
+        "display_source": null
+      },
+      {
+        "segment_id": 1003,
+        "osm_way_id": 167448937,
+        "road_name": "CG Road (South)",
+        "road_class": "primary",
+        "lanes": 4,
+        "speed_limit_kmh": 50,
+        "oneway": false,
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [
+              72.5630916,
+              23.0111693
+            ],
+            [
+              72.5629669,
+              23.0111508
+            ],
+            [
+              72.5625376,
+              23.0114504
+            ],
+            [
+              72.5607841,
+              23.0129218
+            ],
+            [
+              72.559988,
+              23.0136704
+            ],
+            [
+              72.5591292,
+              23.0146502
+            ],
+            [
+              72.5585257,
+              23.0157349
+            ],
+            [
+              72.558294,
+              23.0162372
+            ],
+            [
+              72.5578943,
+              23.0175841
+            ],
+            [
+              72.5575492,
+              23.019259
+            ],
+            [
+              72.556581,
+              23.0216426
+            ],
+            [
+              72.5561674,
+              23.0224369
+            ],
+            [
+              72.556101,
+              23.0224881
+            ],
+            [
+              72.5561359,
+              23.0225602
+            ],
+            [
+              72.555995,
+              23.0235607
+            ],
+            [
+              72.555976,
+              23.0238733
+            ],
+            [
+              72.5560544,
+              23.0246044
+            ],
+            [
+              72.5561604,
+              23.0249923
+            ],
+            [
+              72.5562956,
+              23.0253104
+            ],
+            [
+              72.5576862,
+              23.0281019
+            ],
+            [
+              72.5588837,
+              23.0301812
+            ],
+            [
+              72.5591551,
+              23.0307071
+            ],
+            [
+              72.5599636,
+              23.0325229
+            ],
+            [
+              72.5601483,
+              23.0330041
+            ],
+            [
+              72.5603294,
+              23.0335955
+            ],
+            [
+              72.5606499,
+              23.0348509
+            ],
+            [
+              72.5607597,
+              23.0354561
+            ],
+            [
+              72.5610863,
+              23.0365119
+            ]
+          ]
+        },
+        "geometry_basis": "osm",
+        "display_source": null
+      }
+    ]
+  }
+}

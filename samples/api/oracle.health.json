@@ -1,0 +1,185 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "traffic-oracle",
+    "port_on_sandbox": 8162,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers)."
+  },
+  "request": "GET /health",
+  "status": 200,
+  "response": {
+    "status": "ok",
+    "service": "traffic-oracle",
+    "ingest": {
+      "enabled": true,
+      "connected": true,
+      "subscribed": true,
+      "nats_url": "nats://127.0.0.1:4262",
+      "subjects": {
+        "corridor.traffic.live": {
+          "messages": 111052,
+          "msgs_per_min": 61,
+          "last_msg_age_sec": 0.1,
+          "last_msg_t": "2026-10-27T14:44:52.991Z",
+          "rows": 1299310,
+          "errors": 0,
+          "replays": 0
+        },
+        "corridor.traffic.emulated": {
+          "messages": 0,
+          "msgs_per_min": 0,
+          "last_msg_age_sec": null,
+          "last_msg_t": null,
+          "rows": 0,
+          "errors": 0,
+          "replays": 0
+        },
+        "corridor.traffic.anomaly": {
+          "messages": 9901,
+          "msgs_per_min": 3,
+          "last_msg_age_sec": 6.5,
+          "last_msg_t": "2026-10-27T14:44:46.541Z",
+          "rows": 10419,
+          "errors": 0,
+          "replays": 0
+        },
+        "corridor.units.emulated": {
+          "messages": 0,
+          "msgs_per_min": 0,
+          "last_msg_age_sec": null,
+          "last_msg_t": null,
+          "rows": 0,
+          "errors": 0,
+          "replays": 0
+        }
+      },
+      "msgs_per_min": 64,
+      "last_msg_age_sec": 0.1,
+      "emulated_last_msg_age_sec": null,
+      "rows_written_5m": 3608,
+      "cache_keys": 49,
+      "rows_written_total": 1299287,
+      "pending_rows": 23,
+      "rows_dropped": {},
+      "flush_errors": 0,
+      "last_flush_error": null,
+      "cache_errors": 0,
+      "callback_errors": 0,
+      "anomalies": {
+        "rows_written_total": 10419,
+        "pending_rows": 0,
+        "counters": {
+          "duplicate": 5556
+        }
+      },
+      "units": {
+        "written_total": 0,
+        "dropped": {}
+      },
+      "nats": {
+        "disconnects": 0,
+        "reconnects": 0,
+        "connect_errors": 0,
+        "slow_consumer_errors": 0,
+        "last_error": null
+      },
+      "partitions": {
+        "ran_at": "2026-10-27T14:01:30Z",
+        "created": [],
+        "rows_moved_from_default": 0,
+        "dropped": [],
+        "default_rows_purged": 0,
+        "anomaly_rows_purged": 0,
+        "anomaly_backlog": false,
+        "rollup_hour": "2026-10-27T13:00:00Z",
+        "rollup_rows": 0,
+        "synthetic_rollup": {
+          "table_present": true,
+          "rollup_rows": 49,
+          "catchup_hours": 0,
+          "catchup_rows": 0,
+          "catchup_pending_hours": 0,
+          "rows_purged": 0,
+          "calibration_input": false
+        },
+        "skipped_locked": false,
+        "errors": []
+      },
+      "uptime_sec": 109352.2
+    },
+    "forecast_history": {
+      "running": true,
+      "foundation_active": true,
+      "backfilled": true,
+      "interval_sec": 60.0,
+      "refreshes": 1822,
+      "bins_loaded": 354980,
+      "last_refresh_age_sec": 40.5,
+      "last_refresh_rows_quality": {
+        "real": 0,
+        "synthetic": 10719
+      },
+      "simulated_feed": true,
+      "errors": 0,
+      "last_error": null,
+      "window": {
+        "segments": 49,
+        "segments_ready": 49,
+        "min_steps": 12,
+        "max_steps": 96,
+        "bin_sec": 300,
+        "newest_bin_opened_sec_ago": 293.1,
+        "version": 354980
+      }
+    },
+    "forecaster": {
+      "out_of_support_log": {
+        "window_sec": 600.0,
+        "emitted": 0,
+        "suppressed": 0,
+        "tracked": 0
+      }
+    },
+    "twin_calibration": {
+      "calibrated": false,
+      "reason": "no field observations — simulated feed only",
+      "data_quality": "synthetic",
+      "scheduler": {
+        "running": true,
+        "interval_sec": 3600.0,
+        "min_field_hours": 24,
+        "window_days": 7,
+        "primed": true,
+        "prime_status": "waiting_for_field_data",
+        "prime_ms": 144.7,
+        "reloaded_calibrated": false,
+        "checks": 31,
+        "runs": 0,
+        "last_check_at": "2026-10-27T14:22:24+00:00",
+        "last_run_at": null,
+        "last_status": "waiting_for_field_data",
+        "last_error": null,
+        "coverage": {
+          "field_hours": 0,
+          "first_hour": null,
+          "last_hour": null,
+          "has_real": false,
+          "has_synthetic": true,
+          "feed_quality": "synthetic",
+          "reason": "no field observations — simulated feed only"
+        },
+        "next_check_in_sec": 2251.8
+      }
+    },
+    "situation_engine": {
+      "running": true,
+      "last_tick_age_sec": 2.0,
+      "ticks": 21817,
+      "subjects_active": 1,
+      "subjects_observed": 1,
+      "subjects_skipped": 0,
+      "last_error": null
+    }
+  }
+}

@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 1042" width="1480" height="1042" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" role="img" aria-label="Veer V3 — the shell (every operator page) — low-fidelity wireframe">
+  <title>Veer V3 — the shell (every operator page) — low-fidelity wireframe</title>
+  <defs>
+    <pattern id="hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="14" height="14" fill="#EFEFEF"/>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#E0E0E0" stroke-width="5"/>
+    </pattern>
+  </defs>
+  <rect width="1480" height="1042" fill="#FFFFFF"/>
+  <text x="20" y="32" font-size="21" font-weight="700" fill="#262626">Veer V3 — the shell (every operator page)</text>
+  <text x="20" y="56" font-size="13" fill="#5E5E5E">Low-fidelity wireframe of the shipped V3 layout at 1440 px wide (the 1366-class sizes apply below 1500 px: rail 76, top bar 60, gutter 24).</text>
+  <!-- frame -->
+  <rect x="20" y="78" width="1440" height="900" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.5"/>
+  <!-- AppRail: 88 px at &gt;= 1500 px wide, 76 px below; icon + label, never icon-only -->
+  <rect x="20" y="78" width="76" height="900" rx="0" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <rect x="36" y="90" width="44" height="44" rx="10" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="58" y="117" font-size="15" font-weight="700" text-anchor="middle" fill="#5E5E5E">V</text>
+  <rect x="28" y="148" width="60" height="56" rx="10" fill="#DCDCDC" stroke="#989898" stroke-width="1.6"/>
+  <circle cx="58.0" cy="168" r="8" fill="#CFCFCF" stroke="#8E8E8E"/>
+  <text x="58.0" y="194" font-size="10.5" font-weight="700" text-anchor="middle" fill="#262626">Home</text>
+  <rect x="28" y="212" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="232" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="258" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Map</text>
+  <rect x="28" y="276" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="296" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="322" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Decide</text>
+  <circle cx="72.0" cy="287" r="7" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <text x="72.0" y="291" font-size="9" font-weight="700" text-anchor="middle" fill="#262626">n</text>
+  <rect x="28" y="340" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="360" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="386" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Plan</text>
+  <rect x="28" y="404" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="424" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="450" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Assistant</text>
+  <rect x="28" y="468" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="488" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="514" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Advisories</text>
+  <line x1="34" y1="894" x2="82" y2="894" stroke="#B5B5B5" stroke-width="1.2"/>
+  <rect x="28" y="906" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <circle cx="58.0" cy="926" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="952" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Analyst</text>
+  <!-- TopBar: 68 px at &gt;= 1500 px, 60 px below; title | search (centred, the prominent element) | menu, bell, officer -->
+  <rect x="96" y="78" width="1364" height="60" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="120" y="115" font-size="16" font-weight="700" text-anchor="start" fill="#262626">Screen title</text>
+  <rect x="438" y="88" width="680" height="40" rx="20" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2"/>
+  <circle cx="460" cy="108" r="7" fill="#DCDCDC" stroke="#989898"/>
+  <text x="478" y="113" font-size="12.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Search a place, road, event or vehicle mark</text>
+  <rect x="1058" y="97" width="48" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1082.0" y="111.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">Ctrl K</text>
+  <rect x="1136" y="92" width="96" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1184.0" y="111.96000000000001" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">Menu · EN</text>
+  <circle cx="1260" cy="108" r="12" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <rect x="1286" y="88" width="150" height="40" rx="20" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <circle cx="1308" cy="108" r="11" fill="#DCDCDC" stroke="#989898"/>
+  <text x="1326" y="105" font-size="11.5" font-weight="650" text-anchor="start" fill="#262626">Duty officer</text>
+  <text x="1326" y="119" font-size="10" font-weight="400" text-anchor="start" fill="#5E5E5E">pill · plates hidden</text>
+  <!-- LiveBand: 36 px, only while something is live -->
+  <rect x="96" y="138" width="1364" height="36" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="310" y="161" font-size="12" font-weight="400" text-anchor="start" fill="#5E5E5E">LiveBand (36 px) — only while something is live: a movement, a pursuit, a decision with a deadline. Home and Map show it themselves.</text>
+  <!-- OpsBand: the Analyst pages only -->
+  <rect x="96" y="174" width="1364" height="44" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <rect x="120" y="184" width="92" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="166.0" y="199.95999999999998" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">Workspace</text>
+  <rect x="220" y="184" width="116" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="278.0" y="199.95999999999998" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">Situation wall</text>
+  <rect x="344" y="184" width="82" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="385.0" y="199.95999999999998" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">City map</text>
+  <rect x="434" y="184" width="86" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="477.0" y="199.95999999999998" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">Assistant</text>
+  <text x="538" y="201" font-size="12" font-weight="400" text-anchor="start" fill="#5E5E5E">OpsBand — Analyst pages only: the Analyst views, then band tag · Inbox · Data · Policies · More · ? (shortcuts)</text>
+  <!-- the screen -->
+  <rect x="96" y="218" width="1364" height="760" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="120" y="250" font-size="15" font-weight="650" text-anchor="start" fill="#262626">Screen (main) — one job per screen, at most one primary button</text>
+  <rect x="120" y="270" width="560" height="250" rx="8" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="136" y="296" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Page content</text>
+  <rect x="136" y="314" width="380" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="136" y="325" width="380" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="136" y="336" width="236" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="136" y="440" width="200" height="52" rx="26" fill="#276EF1" stroke="#276EF1"/>
+  <text x="236.0" y="470.68" font-size="13" font-weight="650" text-anchor="middle" fill="#FFFFFF">Primary action</text>
+  <rect x="348" y="446" width="120" height="40" rx="20" fill="#FFFFFF" stroke="#8E8E8E" stroke-width="1.2"/>
+  <text x="408.0" y="470.68" font-size="13" font-weight="600" text-anchor="middle" fill="#262626">Secondary</text>
+  <text x="120" y="544" font-size="14" font-weight="650" text-anchor="start" fill="#262626">What the shell guarantees</text>
+  <circle cx="130" cy="572" r="10" fill="#4A4A4A"/>
+  <text x="130" y="576" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">1</text>
+  <text x="150" y="576" font-size="12.5" font-weight="400" text-anchor="start" fill="#262626">Rail, in the order of the officer's jobs: Home · Map · Decide · Plan · Assistant · Advisories; Analyst separated at the bottom (visible to every officer).</text>
+  <circle cx="130" cy="606" r="10" fill="#4A4A4A"/>
+  <text x="130" y="610" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">2</text>
+  <text x="150" y="610" font-size="12.5" font-weight="400" text-anchor="start" fill="#262626">Decide carries the only badge: the decisions waiting (its count is also spoken in words for screen readers).</text>
+  <circle cx="130" cy="640" r="10" fill="#4A4A4A"/>
+  <text x="130" y="644" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">3</text>
+  <text x="150" y="644" font-size="12.5" font-weight="400" text-anchor="start" fill="#262626">Title of the screen: one line, it truncates; the search and every control keep their pixels.</text>
+  <circle cx="130" cy="674" r="10" fill="#4A4A4A"/>
+  <text x="130" y="678" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">4</text>
+  <text x="150" y="678" font-size="12.5" font-weight="400" text-anchor="start" fill="#262626">Search, the prominent element: opens the page's omnibar (Ctrl K, Cmd K or /) — places, roads, events, vehicle marks.</text>
+  <circle cx="130" cy="708" r="10" fill="#4A4A4A"/>
+  <text x="130" y="712" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">5</text>
+  <text x="150" y="712" font-size="12.5" font-weight="400" text-anchor="start" fill="#262626">Menu: this screen's status line, language (EN · HI · GU), exercise data, data status, map style; shows a flask while on exercise data.</text>
+  <circle cx="130" cy="742" r="10" fill="#4A4A4A"/>
+  <text x="130" y="746" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">6</text>
+  <text x="150" y="746" font-size="12.5" font-weight="400" text-anchor="start" fill="#262626">Alerts bell: the last 50 alerts, read state per browser; soft chime on by default (never for emulated items unless exercise data is declared).</text>
+  <circle cx="130" cy="776" r="10" fill="#4A4A4A"/>
+  <text x="130" y="780" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">7</text>
+  <text x="150" y="780" font-size="12.5" font-weight="400" text-anchor="start" fill="#262626">Officer pill: "Name the duty officer · Plates hidden" until an officer is named; with the operator gate on, the signed-in officer and sign-out.</text>
+  <circle cx="130" cy="810" r="10" fill="#4A4A4A"/>
+  <text x="130" y="814" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">8</text>
+  <text x="150" y="814" font-size="12.5" font-weight="400" text-anchor="start" fill="#262626">Keys: G then H / M / D / P / A / V moves between screens; Esc closes, then clears, never navigates. No single key approves, unmasks, dispatches or publishes.</text>
+  <circle cx="92" cy="152" r="10" fill="#4A4A4A"/>
+  <text x="92" y="156" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">1</text>
+  <circle cx="84.0" cy="280" r="10" fill="#4A4A4A"/>
+  <text x="84.0" y="284" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">2</text>
+  <circle cx="270" cy="108" r="10" fill="#4A4A4A"/>
+  <text x="270" y="112" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">3</text>
+  <circle cx="462" cy="86" r="10" fill="#4A4A4A"/>
+  <text x="462" y="90" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">4</text>
+  <circle cx="1136" cy="88" r="10" fill="#4A4A4A"/>
+  <text x="1136" y="92" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">5</text>
+  <circle cx="1260" cy="130" r="10" fill="#4A4A4A"/>
+  <text x="1260" y="134" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">6</text>
+  <circle cx="1428" cy="130" r="10" fill="#4A4A4A"/>
+  <text x="1428" y="134" font-size="11" font-weight="700" text-anchor="middle" fill="#FFFFFF">7</text>
+  <text x="720" y="296" font-size="12" font-weight="400" text-anchor="start" fill="#5E5E5E">Rail 88 px / 76 px · top bar 68 px / 60 px · gutter 32 px / 24 px</text>
+  <text x="720" y="316" font-size="12" font-weight="400" text-anchor="start" fill="#5E5E5E">(at &gt;= 1500 px wide / below)</text>
+  <!-- skip link: the first focus stop, drawn at the top left only while focused -->
+  <rect x="720" y="344" width="190" height="28" rx="14" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="815" y="363" font-size="11.5" font-weight="600" text-anchor="middle" fill="#262626">Skip to main content</text>
+  <text x="922" y="363" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">the first focus stop; shown at the top left only on focus</text>
+  <!-- legend -->
+  <rect x="20" y="993" width="14" height="14" rx="3" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <text x="42" y="1004" font-size="12" fill="#5E5E5E">layout region</text>
+  <rect x="140" y="993" width="14" height="14" rx="3" fill="#FFFFFF" stroke="#8A8A8A" stroke-dasharray="4 3"/>
+  <text x="162" y="1004" font-size="12" fill="#5E5E5E">shown only when needed, or closed by default</text>
+  <rect x="450" y="993" width="14" height="14" rx="3" fill="url(#hatch)" stroke="#9A9A9A"/>
+  <text x="472" y="1004" font-size="12" fill="#5E5E5E">map or picture</text>
+  <rect x="590" y="993" width="14" height="14" rx="7" fill="#276EF1"/>
+  <text x="612" y="1004" font-size="12" fill="#5E5E5E">the one primary action of the screen (the only colour used)</text>
+  <text x="20" y="1026" font-size="12" fill="#5E5E5E">Rail and top bar sit at the same pixels on every operator page, V3 screens and Analyst pages alike (pinned by tests/v3-shell-smoke.mjs at 1920 and 1366, EN, HI and GU).</text>
+</svg>

@@ -105,7 +105,7 @@ These rules are enforced in the database schema, the server code and the interfa
 | **AI proposes, a named officer decides** | The AI, the rules engine and decision support only create PENDING proposals. Approve controls exist only in Decide and in the Analyst workspace and situation wall — never on the map, in the assistant, on object pages or on public pages. | Server refuses an unnamed decision (409 or 422); the assistant's tool rail cannot approve, decide, dispatch or earmark |
 | **No answer means the plan holds** | A live-escort proposal (route switch, Plan B, hold, new closures) expires after 90 seconds by default (configurable 15–600 s); the convoy keeps its current approved plan — it neither stops nor switches. | convoy-brain escort workflow (`VVIP_ESCORT_APPROVAL_TIMEOUT_SEC`) |
 | **No fine on a theft victim** | Camera reads of a reported-stolen vehicle are evidence only. Approving an e-challan on it is refused (HTTP 409). Only an approved sighting can authorise a pursuit, and one approval authorises one pursuit. | Oracle enforcement rules and pursuit validator (migration 017) |
-| **Lawful basis and capped retention** | A watchlist entry needs an enumerated lawful basis (MV Act 1988 s.177/s.183/s.207, BNSS 2023 s.94, or a stolen-vehicle FIR) and a server-computed retention capped at 90 days. | Schema CHECK constraints; read-path reaper |
+| **Lawful basis and capped retention** | A watchlist entry needs an enumerated lawful basis (MV Act 1988 s.177/s.183/s.207, BNSS 2023 s.94, or a stolen-vehicle FIR) and a server-computed retention capped at 90 days. | The oracle validates the basis code (the column is NOT NULL); the 90-day cap is a schema CHECK; a read-path reaper |
 | **Honest labels** | Every source says what it is: **EMULATED**, **SIMULATED**, **UNVERIFIED-OSINT**, **NEWS-REPORTED**, **OFFICIAL-VERIFIED**. A visual effect is never presented as a sensor feed or a real photo. | Row-level provenance fields, interface tags, the "thermal-style view (visual filter, no thermal sensor)" label |
 | **OSINT is about places and situations, never persons** | Names and ages are redacted at parse; news and social URLs are never stored or shown (the outlet's domain and a hash only). | osint-ingress redactor, osint-common ethics checks, oracle ingest guard (`pii_unredacted`) |
 | **Strengthen, never undermine, the authorities** | Veer is framed as the control room's tool. The security veto and every operational authority stay human. | Product copy and design rules |
@@ -758,7 +758,7 @@ The real stack then plans, classifies, escalates and decides on its own.
   `VEER_SESSION_SECRET`, valid 12 hours; sign-out revokes it server-side. Failed PINs are throttled (8 per 5 minutes
   per client), comparisons are constant-time, and officer names refuse control and bidirectional characters.
 - **Default deny.** Without a session every proxied API call is refused (403), except the public road geometry,
-  three liveness probes and the 108 driver's ambulance request.
+  two liveness probes and the 108 driver's ambulance request.
 - **Attribution.** The deck forwards the signed-in officer as the actor of every write and strips any client-supplied
   copy. Services also require a named officer for earmarks, signal applies and restores, and escort start, stop and
   clear (otherwise 422).

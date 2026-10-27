@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 1642" width="1480" height="1642" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" role="img" aria-label="Veer V3 — Citizen advisory (/citizen, public) — low-fidelity wireframe">
+  <title>Veer V3 — Citizen advisory (/citizen, public) — low-fidelity wireframe</title>
+  <defs>
+    <pattern id="hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="14" height="14" fill="#EFEFEF"/>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#E0E0E0" stroke-width="5"/>
+    </pattern>
+  </defs>
+  <rect width="1480" height="1642" fill="#FFFFFF"/>
+  <text x="20" y="32" font-size="21" font-weight="700" fill="#262626">Veer V3 — Citizen advisory (/citizen, public)</text>
+  <text x="20" y="56" font-size="13" fill="#5E5E5E">Low-fidelity wireframe of the shipped public page at 1440 px wide: one column of 592 px, day theme, no sign-in.</text>
+  <!-- frame -->
+  <rect x="20" y="78" width="1440" height="1500" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.5"/>
+  <!-- PublicShell header (day theme): lockup, the two views, a status chip, the language switch -->
+  <rect x="20" y="78" width="1440" height="72" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <rect x="50" y="100" width="100" height="28" rx="6" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="100" y="119" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">V veer (lockup)</text>
+  <text x="258.0" y="119" font-size="13" font-weight="700" text-anchor="middle" fill="#262626">Citizen — your road</text>
+  <line x1="174" y1="144" x2="342" y2="144" stroke="#4A4A4A" stroke-width="1.2"/>
+  <text x="438.0" y="119" font-size="13" font-weight="500" text-anchor="middle" fill="#262626">Driver — the window</text>
+  <rect x="1014" y="100" width="206" height="28" rx="14" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1117.0" y="117.78" font-size="10.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">status chip (e.g. no holds announced)</text>
+  <rect x="1234" y="94" width="200" height="40" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1334" y="119" font-size="11.5" font-weight="600" text-anchor="middle" fill="#262626">English · Hindi · Gujarati</text>
+  <text x="444.0" y="178" font-size="12" font-weight="650" text-anchor="start" fill="#5E5E5E">Corridor alerts · Ahmedabad</text>
+  <rect x="926.0" y="160" width="110" height="26" rx="13" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="981.0" y="176.78" font-size="10.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">Live / Emulated</text>
+  <text x="444.0" y="218" font-size="30" font-weight="700" text-anchor="start" fill="#262626">Your road, next 2 hours</text>
+  <text x="444.0" y="240" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Advisories last checked · hh:mm</text>
+  <rect x="444.0" y="262" width="592" height="64" rx="16" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <circle cx="472.0" cy="294" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="490.0" y="300" font-size="12.5" font-weight="600" text-anchor="start" fill="#262626">Posture strip — one plain sentence (e.g. "No corridor holds announced right now.")</text>
+  <rect x="444.0" y="338" width="592" height="36" rx="10" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="458.0" y="361" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">Notices when needed: stale feed · preview · "SIMULATED FEED · EMULATED" rows present</text>
+  <!-- hold cards (or the empty state) -->
+  <rect x="444.0" y="390" width="592" height="316" rx="16" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <rect x="444.0" y="390" width="592" height="140" rx="16" fill="url(#hatch)" stroke="#9A9A9A" stroke-width="1.2"/>
+  <text x="740.0" y="456" font-size="12" font-weight="600" text-anchor="middle" fill="#7A7A7A">day-graded map of the stretch</text>
+  <text x="740.0" y="474" font-size="10.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">solid line = live · dashed line (and a dashed card) = emulated, fixture or unverified</text>
+  <text x="462.0" y="560" font-size="15" font-weight="700" text-anchor="start" fill="#262626">Hold card — event kind</text>
+  <rect x="840.0" y="544" width="180" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A" stroke-dasharray="4 3"/>
+  <text x="930.0" y="559.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">SIMULATED FEED · EMULATED</text>
+  <rect x="462.0" y="578" width="556" height="32" rx="8" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="474.0" y="599" font-size="11.5" font-weight="400" text-anchor="start" fill="#262626">Road name · approximately N min hold · hh:mm</text>
+  <rect x="462.0" y="618" width="556" height="32" rx="8" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="474.0" y="639" font-size="11.5" font-weight="400" text-anchor="start" fill="#262626">Road name · approximately N min hold · hh:mm</text>
+  <text x="462.0" y="682" font-size="11.5" font-weight="600" text-anchor="start" fill="#262626">Alternate: road name</text>
+  <text x="1060.0" y="420" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">With no events: an all-clear scene</text>
+  <text x="1060.0" y="436" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">and "No corridor events in the next 2 hours."</text>
+  <rect x="444.0" y="722" width="592" height="44" rx="12" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="462.0" y="749" font-size="12.5" font-weight="650" text-anchor="start" fill="#262626">Today — the phases of each event (opens)</text>
+  <text x="1018.0" y="749" font-size="13" font-weight="400" text-anchor="end" fill="#262626">↓</text>
+  <rect x="444.0" y="778" width="592" height="70" rx="12" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="462.0" y="804" font-size="12" font-weight="650" text-anchor="start" fill="#262626">Later — plans beyond the 2-hour horizon, each with its IST date</text>
+  <text x="462.0" y="824" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">(a protected movement's route stays off this page until it is inside the horizon)</text>
+  <rect x="444.0" y="862" width="592" height="240" rx="16" fill="url(#hatch)" stroke="#9A9A9A" stroke-width="1.2"/>
+  <text x="740.0" y="986" font-size="12" font-weight="600" text-anchor="middle" fill="#7A7A7A">city map card (day grade, keyless)</text>
+  <rect x="444.0" y="1118" width="592" height="52" rx="12" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="462.0" y="1150" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Why roads hold (opens)</text>
+  <text x="1018.0" y="1150" font-size="13" font-weight="400" text-anchor="end" fill="#262626">↓</text>
+  <rect x="444.0" y="1184" width="592" height="170" rx="8" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="456.0" y="1204" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Get alerts on your phone</text>
+  <text x="456.0" y="1222.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">phone number · language · "Preview" — nothing is sent from this build</text>
+  <rect x="460.0" y="1250" width="300" height="40" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <rect x="770.0" y="1250" width="120" height="40" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <rect x="460.0" y="1302" width="160" height="40" rx="20" fill="#FFFFFF" stroke="#8E8E8E" stroke-width="1.2"/>
+  <text x="540.0" y="1326.5" font-size="12.5" font-weight="600" text-anchor="middle" fill="#262626">Preview</text>
+  <rect x="444.0" y="1368" width="592" height="100" rx="8" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="456.0" y="1388" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Driving an emergency vehicle?</text>
+  <text x="456.0" y="1406.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">one plain line; a link to the 108 driver view</text>
+  <rect x="460.0" y="1418" width="230" height="40" rx="20" fill="#FFFFFF" stroke="#8E8E8E" stroke-width="1.2"/>
+  <text x="575.0" y="1442.5" font-size="12.5" font-weight="600" text-anchor="middle" fill="#262626">Driver — the window →</text>
+  <line x1="444.0" y1="1490" x2="1036.0" y2="1490" stroke="#C8C8C8" stroke-width="1.2"/>
+  <text x="444.0" y="1514" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">Footer: map and photo credits · the marks of the agencies and data sources with one ownership line</text>
+  <text x="60" y="218" font-size="13" font-weight="700" text-anchor="start" fill="#262626">Never on this page</text>
+  <text x="60" y="240.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">a registration mark</text>
+  <text x="60" y="256.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">a pursuit or any operator-only event kind</text>
+  <text x="60" y="273.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">an OSINT report (fails closed)</text>
+  <text x="60" y="290.1" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">location, camera or microphone access</text>
+  <text x="60" y="306.8" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">(disabled for the whole site by policy)</text>
+  <text x="60" y="323.5" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">operator code, an operator API or a map key</text>
+  <text x="60" y="340.2" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">the alert red or the decision orange</text>
+  <text x="60" y="438" font-size="13" font-weight="700" text-anchor="start" fill="#262626">Always</text>
+  <text x="60" y="460.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">strict content-security policy</text>
+  <text x="60" y="476.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">day theme; type floors: posture &gt;= 22 px,</text>
+  <text x="60" y="493.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">chips &gt;= 16 px, controls &gt;= 44 px</text>
+  <text x="60" y="510.1" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">EN · HI · GU through the veer_lang cookie</text>
+  <text x="60" y="526.8" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">emulated rows badged, never LIVE</text>
+  <text x="60" y="543.5" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">reduced motion honoured</text>
+  <!-- legend -->
+  <rect x="20" y="1593" width="14" height="14" rx="3" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <text x="42" y="1604" font-size="12" fill="#5E5E5E">layout region</text>
+  <rect x="140" y="1593" width="14" height="14" rx="3" fill="#FFFFFF" stroke="#8A8A8A" stroke-dasharray="4 3"/>
+  <text x="162" y="1604" font-size="12" fill="#5E5E5E">shown only when needed, or closed by default</text>
+  <rect x="450" y="1593" width="14" height="14" rx="3" fill="url(#hatch)" stroke="#9A9A9A"/>
+  <text x="472" y="1604" font-size="12" fill="#5E5E5E">map or picture</text>
+  <rect x="590" y="1593" width="14" height="14" rx="7" fill="#276EF1"/>
+  <text x="612" y="1604" font-size="12" fill="#5E5E5E">the one primary action of the screen (the only colour used)</text>
+  <text x="20" y="1626" font-size="12" fill="#5E5E5E">Fed only by the deck's own public projection (GET /api/public/events): public event kinds, signage road names and hold lengths with their provenance.</text>
+</svg>

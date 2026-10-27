@@ -1,0 +1,214 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "event-emulator",
+    "port_on_sandbox": 8962,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers).",
+    "trimmed": "runs: the newest 2 of 6; spec.runner.host replaced by \"(redacted)\"",
+    "notes": "Each run is EMULATED: the emulator injects causes only; every outcome was the stack responding to them."
+  },
+  "request": "GET /api/v1/emulator/runs?include_tape=false",
+  "status": 200,
+  "response": {
+    "runs": [
+      {
+        "run_id": 24,
+        "spec_hash": "cb6b4c0c70b056f0095df8440b857efd",
+        "spec": {
+          "mode": "use_case",
+          "twin": {
+            "causes": 1,
+            "result": "delivered",
+            "summary": {
+              "seed": 20261105,
+              "calibrated": false,
+              "replications": 8,
+              "forecast_coupling": "foundation",
+              "mean_recovery_sec": 5.05,
+              "max_queue_length_m": 41.0,
+              "mean_ambulance_delay_sec": 39.3,
+              "mean_convoy_transit_time_sec": 628.7,
+              "mean_total_disruption_vehicle_hours": 72.8
+            },
+            "http_status": 200,
+            "library_miss": true,
+            "delivery_level": "twin_route_only",
+            "scenario_id_sent": null
+          },
+          "runner": {
+            "pid": 1,
+            "boot": "20fcdd885d9140b5af77711cfdade451",
+            "host": "(redacted)",
+            "port": 8962
+          },
+          "delivery": {
+            "late": 0,
+            "failed": 0,
+            "frames": 408,
+            "skipped": 0,
+            "progress": {
+              "late": 0,
+              "frame": 358,
+              "total": 358,
+              "failed": 0,
+              "skipped": 0,
+              "delivered": 358
+            },
+            "delivered": 408
+          },
+          "event_id": "4c74cbb2-b52c-5d8b-93e1-c05cc3c497a7",
+          "progress": {
+            "late": 0,
+            "frame": 358,
+            "total": 358,
+            "failed": 0,
+            "skipped": 0,
+            "delivered": 358
+          },
+          "is_replay": true,
+          "clock_scale": 120.0,
+          "use_case_id": "watchlist_anpr_sweep",
+          "deliver_nats": true,
+          "deliver_twin": true,
+          "event_status": "completed",
+          "final_status": "completed",
+          "heartbeat_at": "2026-10-23T16:39:34.262534+00:00",
+          "event_activation": {
+            "late": false,
+            "error": null,
+            "active": true,
+            "attempts": 1
+          },
+          "replay_of_run_id": 23,
+          "frame_log_dropped": 108,
+          "scenario_precondition": [
+            {
+              "plate": "GJ27EM9001",
+              "result": "delivered",
+              "earmark": "already_active",
+              "fir_ref": "FIR 4401/2026, Kalupur PS",
+              "lawful_basis": "stolen_vehicle_fir",
+              "earmark_reason": "STOLEN VEHICLE reported — FIR 4401/2026, Kalupur PS; God's Eye Morning flagship"
+            }
+          ]
+        },
+        "seed": 20261105,
+        "t0_anchor": "2026-10-23T16:39:14.221390+00:00",
+        "clock_scale": 120.0,
+        "status": "completed",
+        "created_at": "2026-10-23T16:39:14.221742+00:00",
+        "ended_at": "2026-10-23T16:39:36.736416+00:00",
+        "ledger_status": "completed",
+        "progress": {
+          "late": 0,
+          "frame": 358,
+          "total": 358,
+          "failed": 0,
+          "skipped": 0,
+          "delivered": 358
+        }
+      },
+      {
+        "run_id": 23,
+        "spec_hash": "8298e6cb4b5006bbc9743a6516e1bd1e",
+        "spec": {
+          "mode": "use_case",
+          "seed": null,
+          "twin": {
+            "causes": 1,
+            "result": "delivered",
+            "summary": {
+              "seed": 20261105,
+              "calibrated": false,
+              "replications": 8,
+              "forecast_coupling": "foundation",
+              "mean_recovery_sec": 1.3,
+              "max_queue_length_m": 1.7,
+              "mean_ambulance_delay_sec": 39.3,
+              "mean_convoy_transit_time_sec": 628.7,
+              "mean_total_disruption_vehicle_hours": 58.27
+            },
+            "http_status": 200,
+            "library_miss": true,
+            "delivery_level": "twin_route_only",
+            "scenario_id_sent": null
+          },
+          "runner": {
+            "pid": 1,
+            "boot": "20fcdd885d9140b5af77711cfdade451",
+            "host": "(redacted)",
+            "port": 8962
+          },
+          "delivery": {
+            "late": 0,
+            "failed": 0,
+            "frames": 408,
+            "skipped": 0,
+            "progress": {
+              "late": 0,
+              "frame": 358,
+              "total": 358,
+              "failed": 0,
+              "skipped": 0,
+              "delivered": 358
+            },
+            "delivered": 408
+          },
+          "event_id": "4c74cbb2-b52c-5d8b-93e1-c05cc3c497a7",
+          "progress": {
+            "late": 0,
+            "frame": 358,
+            "total": 358,
+            "failed": 0,
+            "skipped": 0,
+            "delivered": 358
+          },
+          "tick_sec": 60.0,
+          "is_replay": false,
+          "t0_anchor": "2026-10-23T16:38:23.011570Z",
+          "clock_scale": 120.0,
+          "use_case_id": "watchlist_anpr_sweep",
+          "deliver_nats": true,
+          "deliver_twin": true,
+          "event_status": "completed",
+          "final_status": "completed",
+          "heartbeat_at": "2026-10-23T16:38:43.097525+00:00",
+          "event_activation": {
+            "late": false,
+            "error": null,
+            "active": true,
+            "attempts": 1
+          },
+          "replay_of_run_id": null,
+          "frame_log_dropped": 108,
+          "scenario_precondition": [
+            {
+              "plate": "GJ27EM9001",
+              "result": "delivered",
+              "earmark": "already_active",
+              "fir_ref": "FIR 4401/2026, Kalupur PS",
+              "lawful_basis": "stolen_vehicle_fir",
+              "earmark_reason": "STOLEN VEHICLE reported — FIR 4401/2026, Kalupur PS; God's Eye Morning flagship"
+            }
+          ]
+        },
+        "seed": 20261105,
+        "t0_anchor": "2026-10-23T16:38:23.011570+00:00",
+        "clock_scale": 120.0,
+        "status": "completed",
+        "created_at": "2026-10-23T16:38:23.012174+00:00",
+        "ended_at": "2026-10-23T16:38:45.542401+00:00",
+        "ledger_status": "completed",
+        "progress": {
+          "late": 0,
+          "frame": 358,
+          "total": 358,
+          "failed": 0,
+          "skipped": 0,
+          "delivered": 358
+        }
+      }
+    ]
+  }
+}

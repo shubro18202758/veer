@@ -1,0 +1,156 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "event-emulator",
+    "port_on_sandbox": 8962,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers)."
+  },
+  "request": "GET /api/v1/emulator/use-cases",
+  "status": 200,
+  "response": [
+    {
+      "id": "vvip_convoy_base",
+      "name": "VVIP Convoy — Base Case (Z+ state-capital run)",
+      "category": "baseline",
+      "vvip_class": "Z+",
+      "route_segment_ids": [
+        1026,
+        1025,
+        1024,
+        1048,
+        1028,
+        1027,
+        1043
+      ],
+      "horizon_min": 45,
+      "seed": 20261102
+    },
+    {
+      "id": "rath_yatra_ahmedabad",
+      "name": "Jagannath Rath Yatra — Old-City Procession",
+      "category": "event",
+      "vvip_class": "X",
+      "route_segment_ids": [
+        1012,
+        1049,
+        1013
+      ],
+      "horizon_min": 60,
+      "seed": 20250627
+    },
+    {
+      "id": "rath_yatra_monsoon_ambulance",
+      "name": "Rath Yatra Morning, Monsoon Burst, One Siren",
+      "category": "multi_event",
+      "vvip_class": "X",
+      "route_segment_ids": [
+        1005,
+        1015,
+        1001,
+        1006
+      ],
+      "horizon_min": 60,
+      "seed": 202506271
+    },
+    {
+      "id": "kumbh_scale_gathering",
+      "name": "Kumbh-Class Mass Gathering — Perimeter Zone",
+      "category": "event",
+      "vvip_class": "X",
+      "route_segment_ids": [
+        1001,
+        1006,
+        1009
+      ],
+      "horizon_min": 60,
+      "seed": 20250129
+    },
+    {
+      "id": "riverfront_marathon",
+      "name": "City Marathon — Sabarmati Riverfront Race Corridor",
+      "category": "event",
+      "vvip_class": "X",
+      "route_segment_ids": [
+        1007,
+        1015,
+        1001,
+        1006
+      ],
+      "horizon_min": 60,
+      "seed": 20241124
+    },
+    {
+      "id": "national_day_parade",
+      "name": "Republic Day / Independence Day — Ceremonial Parade Corridor",
+      "category": "event",
+      "vvip_class": "Z",
+      "route_segment_ids": [
+        1029,
+        1028,
+        1048,
+        1024,
+        1025
+      ],
+      "horizon_min": 60,
+      "seed": 20270126
+    },
+    {
+      "id": "motera_stadium_egress",
+      "name": "Stadium Egress — Narendra Modi Stadium Match Night",
+      "category": "event",
+      "vvip_class": "X",
+      "route_segment_ids": [
+        1032,
+        1041,
+        1009,
+        1002,
+        1001
+      ],
+      "horizon_min": 60,
+      "seed": 20260308
+    },
+    {
+      "id": "flood_evacuation_corridor",
+      "name": "Monsoon Flood — Evacuation and Relief Corridor",
+      "category": "weather",
+      "vvip_class": "X",
+      "route_segment_ids": [
+        1040,
+        1021,
+        1022,
+        1008
+      ],
+      "horizon_min": 60,
+      "seed": 20240827
+    },
+    {
+      "id": "metro_work_zone",
+      "name": "Planned Infrastructure Work Zone — Metro/Bullet-Train Works",
+      "category": "ops",
+      "vvip_class": "X",
+      "route_segment_ids": [
+        1031,
+        1014,
+        1049,
+        1038
+      ],
+      "horizon_min": 60,
+      "seed": 20250814
+    },
+    {
+      "id": "watchlist_anpr_sweep",
+      "name": "Stolen-Vehicle ANPR Sweep — Old-City Belt (Emulated)",
+      "category": "enforcement",
+      "vvip_class": "X",
+      "route_segment_ids": [
+        1015,
+        1012,
+        1049,
+        1013
+      ],
+      "horizon_min": 45,
+      "seed": 20261105
+    }
+  ]
+}

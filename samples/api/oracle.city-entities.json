@@ -1,0 +1,399 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "traffic-oracle",
+    "port_on_sandbox": 8162,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers).",
+    "trimmed": "entities: one of each kind (event 1, vehicle 1, sighting 8, camera 28, junction 34, recommendation 10, anomaly 28; 110 in all); link lists longer than 6 cut to 6",
+    "notes": "Labels arrive masked (GJ27EM•••1); props.plate carries the full EMULATED exercise mark - the deck masks every mark it draws until a duty officer is named. GJ27EM9001 is the emulated stolen vehicle of the exercise (demo FIR 4401/2026), not a real registration. The one event is the pursuit the 2026-10-18 showcase script opened (see oracle.events-active.json): it was opened through the API, not by the emulator, so it carries no emulator label and reads source live; it is rehearsal data of the exercise."
+  },
+  "request": "GET /api/v1/city/entities",
+  "status": 200,
+  "response": {
+    "as_of": "2026-10-27T14:44:53.095Z",
+    "entities": [
+      {
+        "urn": "event:4508d86d-566b-438f-8414-b3d67fd7e6e4",
+        "kind": "event",
+        "id": "4508d86d-566b-438f-8414-b3d67fd7e6e4",
+        "label": "PURSUIT — stolen GJ27EM•••1 (FIR 4401/2026, Kalupur PS)",
+        "lon": 72.586996,
+        "lat": 23.024353,
+        "state": "planning",
+        "band": "GREEN",
+        "source": "live",
+        "verification_state": null,
+        "credibility": null,
+        "t": "2026-10-27T14:44:51.077Z",
+        "age_sec": 2.0,
+        "links": [
+          "vehicle:1b94e9d2-7e11-4174-a735-7dd3be3189cf",
+          "recommendation:e91d4591-390a-4c55-bcb0-ffd10c769c20",
+          "segment:1012",
+          "segment:1015",
+          "segment:1005",
+          "segment:1013"
+        ],
+        "props": {
+          "event_kind": "vehicle_pursuit",
+          "title": "PURSUIT — stolen GJ27EM9001 (FIR 4401/2026, Kalupur PS)",
+          "status": "planning",
+          "protection_class": "none",
+          "crowd_class": "LOW",
+          "route_spines": [
+            {
+              "label": "old-city sweep belt",
+              "segment_ids": [
+                1012,
+                1015,
+                1005,
+                1013
+              ],
+              "variant": null
+            }
+          ],
+          "route_history": [],
+          "movement_id": null,
+          "planned_start": null,
+          "planned_end": null,
+          "actual_start": null,
+          "actual_end": null,
+          "position_basis": "spine_point_nearest_centroid",
+          "band_t": "2026-10-27T14:44:51.077Z",
+          "band_code": "none:HEAVY:CLEAR:LOW",
+          "metadata": {
+            "vehicle_id": "1b94e9d2-7e11-4174-a735-7dd3be3189cf",
+            "recommendation_id": "e91d4591-390a-4c55-bcb0-ffd10c769c20",
+            "fir": "FIR 4401/2026, Kalupur PS",
+            "opened_by": "Duty Officer R. Mehta (God's Eye Morning)"
+          }
+        }
+      },
+      {
+        "urn": "vehicle:1b94e9d2-7e11-4174-a735-7dd3be3189cf",
+        "kind": "vehicle",
+        "id": "1b94e9d2-7e11-4174-a735-7dd3be3189cf",
+        "label": "GJ27EM•••1",
+        "lon": 72.599157,
+        "lat": 23.021345,
+        "state": "flagged",
+        "band": null,
+        "source": "emulated",
+        "verification_state": null,
+        "credibility": null,
+        "t": "2026-10-23T16:38:39.257Z",
+        "age_sec": 338773.8,
+        "links": [
+          "sighting:d8fb6c41-8412-58da-b289-e9950c523d79",
+          "sighting:1995ccc5-06f0-54f2-aa09-eb81bd5cd28e",
+          "sighting:208dc215-58c7-58a8-8768-969e0cae586e",
+          "sighting:fefecb6a-b1b1-5f82-bcc3-6a029b2a6ecf",
+          "sighting:f8e1cc49-2906-5064-840f-bc0a993c6e79",
+          "sighting:6a86c678-b2ab-5cdd-8f50-587f735794a1"
+        ],
+        "props": {
+          "plate": "GJ27EM9001",
+          "plate_masked": "GJ27EM•••1",
+          "vehicle_class": "car",
+          "earmark_state": "flagged",
+          "lawful_basis": "stolen_vehicle_fir",
+          "earmark_reason": "STOLEN VEHICLE reported — demo FIR 4401/2026, Kalupur PS; God's Eye Morning flagship",
+          "retention_until": "2026-11-17T14:57:19.065Z",
+          "last_sighting_id": "d8fb6c41-8412-58da-b289-e9950c523d79",
+          "last_camera_id": "EM-CAM-03",
+          "last_speed_kmh": 95.0,
+          "last_heading": 39.599998474121094,
+          "matched_plate_hit": "stolen_vehicle"
+        }
+      },
+      {
+        "urn": "sighting:d8fb6c41-8412-58da-b289-e9950c523d79",
+        "kind": "sighting",
+        "id": "d8fb6c41-8412-58da-b289-e9950c523d79",
+        "label": "EM-CAM-03 · GJ27EM•••1",
+        "lon": 72.599157,
+        "lat": 23.021345,
+        "state": "stolen_vehicle",
+        "band": null,
+        "source": "emulated",
+        "verification_state": null,
+        "credibility": null,
+        "t": "2026-10-23T16:38:39.257Z",
+        "age_sec": 338773.8,
+        "links": [
+          "vehicle:1b94e9d2-7e11-4174-a735-7dd3be3189cf",
+          "camera:EM-CAM-03"
+        ],
+        "props": {
+          "plate": "GJ27EM9001",
+          "plate_masked": "GJ27EM•••1",
+          "camera_id": "EM-CAM-03",
+          "vehicle_id": "1b94e9d2-7e11-4174-a735-7dd3be3189cf",
+          "speed_kmh": 95.0,
+          "heading": 39.599998474121094,
+          "vehicle_class": "car",
+          "matched_plate_hit": "stolen_vehicle",
+          "run_id": 23,
+          "read_source": "emulated_anpr",
+          "hop": 1
+        }
+      },
+      {
+        "urn": "camera:EM-BR-ELLIS-E",
+        "kind": "camera",
+        "id": "EM-BR-ELLIS-E",
+        "label": "Swami Vivekananda (Ellis) Bridge: east head, westbound",
+        "lon": 72.576779,
+        "lat": 23.02222,
+        "state": "active",
+        "band": null,
+        "source": "emulated",
+        "verification_state": null,
+        "credibility": null,
+        "t": null,
+        "age_sec": null,
+        "links": [
+          "segment:1039"
+        ],
+        "props": {
+          "camera_kind": "anpr",
+          "camera_source": "emulated",
+          "registered": true,
+          "junction_id": null,
+          "segment_id": 1039,
+          "heading_deg": 274.0,
+          "reads_15m": 0,
+          "hits_15m": 0,
+          "last_read_t": null
+        }
+      },
+      {
+        "urn": "junction:1",
+        "kind": "junction",
+        "id": "1",
+        "label": "Nehru Bridge - Ashram Road Junction",
+        "lon": 72.571137,
+        "lat": 23.026709,
+        "state": "planned_green",
+        "band": null,
+        "source": "live",
+        "verification_state": null,
+        "credibility": null,
+        "t": "2026-10-23T16:22:37.569Z",
+        "age_sec": 339735.5,
+        "links": [],
+        "props": {
+          "junction_type": "intersection",
+          "signal_control": true,
+          "name": "Nehru Bridge - Ashram Road Junction",
+          "name_gu": "નહેરુ બ્રિજ - આશ્રમ રોડ જંક્શન",
+          "program_source": "osm_assumed",
+          "cycle_sec": 110,
+          "offset_sec": 17,
+          "green_ratio": 0.8364,
+          "active_phase": {
+            "index": 1,
+            "movements": [
+              "cross"
+            ],
+            "green_sec": 42,
+            "lost": false,
+            "sec_into_cycle": 76,
+            "remaining_sec": 16,
+            "movement_states": {
+              "through": "red",
+              "cross": "green"
+            }
+          },
+          "phase_basis": "program_clock",
+          "phase_status": "planned (signal program)",
+          "live_phase": false,
+          "program_updated_at": "2026-10-23T16:22:37.569Z"
+        }
+      },
+      {
+        "urn": "recommendation:c753c5c7-33d9-4a03-9658-1e2677d7e08f",
+        "kind": "recommendation",
+        "id": "c753c5c7-33d9-4a03-9658-1e2677d7e08f",
+        "label": "R_STOLEN_SIGHTING · PENDING · GJ27EM•••1 · e-challan withheld",
+        "lon": 72.599157,
+        "lat": 23.021345,
+        "state": "pending",
+        "band": null,
+        "source": "emulated",
+        "verification_state": null,
+        "credibility": null,
+        "t": "2026-10-23T16:38:39.259Z",
+        "age_sec": 338773.8,
+        "links": [
+          "vehicle:1b94e9d2-7e11-4174-a735-7dd3be3189cf",
+          "sighting:d8fb6c41-8412-58da-b289-e9950c523d79",
+          "camera:EM-CAM-03",
+          "segment:1049"
+        ],
+        "props": {
+          "rule_id": "R_STOLEN_SIGHTING",
+          "status": "pending",
+          "recommendation": "stolen vehicle (demo FIR 4401/2026) sighted at EM-CAM-03 — e-challan withheld, vehicle reported stolen",
+          "decided_by": null,
+          "decided_at": null,
+          "created_at": "2026-10-23T16:38:39.259Z",
+          "vehicle_id": "1b94e9d2-7e11-4174-a735-7dd3be3189cf",
+          "sighting_id": "d8fb6c41-8412-58da-b289-e9950c523d79",
+          "camera_id": "EM-CAM-03",
+          "plate": "GJ27EM9001",
+          "plate_masked": "GJ27EM•••1",
+          "evidence": {
+            "speed_kmh": 95.0,
+            "road_name": "Sarangpur Road (Kalupur–Astodia)",
+            "segment_id": 1049,
+            "t": "2026-10-23T16:38:39.257228+00:00",
+            "fir_ref": "4401/2026"
+          },
+          "human_decision_required": true,
+          "rule_kind": "evidence",
+          "vehicle_reported_stolen": true,
+          "challan_withheld": true,
+          "withheld_text": "e-challan withheld — vehicle reported stolen",
+          "withheld_rules": [
+            "R_SPD_SEGMENT",
+            "R_CLOSED_CORRIDOR_ENTRY"
+          ],
+          "approvable": true
+        }
+      },
+      {
+        "urn": "anomaly:36205",
+        "kind": "anomaly",
+        "id": "36205",
+        "label": "speed_jump · medium",
+        "lon": 72.508599,
+        "lat": 23.121397,
+        "state": "medium",
+        "band": null,
+        "source": "emulated",
+        "verification_state": null,
+        "credibility": null,
+        "t": "2026-10-27T14:44:29.333Z",
+        "age_sec": 23.8,
+        "links": [
+          "segment:1046"
+        ],
+        "props": {
+          "anomaly_type": "speed_jump",
+          "severity": "medium",
+          "segment_id": 1046,
+          "road_name": "SP Ring Road (Northwest)",
+          "count_15m": 7,
+          "flagged_at": "2026-10-27T14:44:51.085Z",
+          "anomaly_flags": [
+            "speed_jump"
+          ],
+          "data_quality": "synthetic",
+          "feed_source": "Crowdsource"
+        }
+      }
+    ],
+    "feeds": {
+      "event": {
+        "count": 1,
+        "newest_t": "2026-10-27T14:44:51.077Z",
+        "age_sec": 2.0,
+        "unlocated": 0,
+        "status": "ok"
+      },
+      "vehicle": {
+        "count": 1,
+        "newest_t": "2026-10-23T16:38:39.257Z",
+        "age_sec": 338773.8,
+        "unlocated": 0,
+        "status": "ok"
+      },
+      "sighting": {
+        "count": 8,
+        "newest_t": "2026-10-23T16:38:39.257Z",
+        "age_sec": 338773.8,
+        "unlocated": 0,
+        "status": "ok"
+      },
+      "camera": {
+        "count": 28,
+        "newest_t": "2026-10-23T16:38:39.257Z",
+        "age_sec": 338773.8,
+        "unlocated": 0,
+        "status": "ok",
+        "registry": "corridor.cameras"
+      },
+      "junction": {
+        "count": 34,
+        "newest_t": "2026-10-23T16:22:37.569Z",
+        "age_sec": 339735.5,
+        "unlocated": 0,
+        "status": "ok"
+      },
+      "unit": {
+        "count": 0,
+        "newest_t": null,
+        "age_sec": null,
+        "unlocated": 0,
+        "status": "ok",
+        "sources": {
+          "emulated_dispatch_projection": 0,
+          "emulated_patrol": 0
+        },
+        "patrol_feed": {
+          "status": "ok",
+          "keys": 0,
+          "rejected": 0,
+          "truncated": false
+        },
+        "conflicts": []
+      },
+      "convoy": {
+        "count": 0,
+        "newest_t": null,
+        "age_sec": null,
+        "unlocated": 0,
+        "status": "ok"
+      },
+      "dispatch": {
+        "count": 0,
+        "newest_t": null,
+        "age_sec": null,
+        "unlocated": 0,
+        "status": "ok"
+      },
+      "recommendation": {
+        "count": 10,
+        "newest_t": "2026-10-23T16:38:39.259Z",
+        "age_sec": 338773.8,
+        "unlocated": 0,
+        "status": "ok"
+      },
+      "anomaly": {
+        "count": 28,
+        "newest_t": "2026-10-27T14:44:29.333Z",
+        "age_sec": 23.8,
+        "unlocated": 0,
+        "status": "ok"
+      },
+      "osint_event": {
+        "count": 0,
+        "newest_t": null,
+        "age_sec": null,
+        "unlocated": 0,
+        "status": "ok",
+        "held_social": 0
+      },
+      "place": {
+        "count": 0,
+        "newest_t": null,
+        "age_sec": null,
+        "unlocated": 0,
+        "status": "ok"
+      }
+    },
+    "took_ms": 101.9
+  }
+}

@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 1342" width="1480" height="1342" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" role="img" aria-label="Veer V3 — 108 green corridor, driver view (/driver, public) — low-fidelity wireframe">
+  <title>Veer V3 — 108 green corridor, driver view (/driver, public) — low-fidelity wireframe</title>
+  <defs>
+    <pattern id="hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="14" height="14" fill="#EFEFEF"/>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#E0E0E0" stroke-width="5"/>
+    </pattern>
+  </defs>
+  <rect width="1480" height="1342" fill="#FFFFFF"/>
+  <text x="20" y="32" font-size="21" font-weight="700" fill="#262626">Veer V3 — 108 green corridor, driver view (/driver, public)</text>
+  <text x="20" y="56" font-size="13" fill="#5E5E5E">Low-fidelity wireframe of the shipped public page at 1440 px wide: one column of 592 px, day theme, Gujarati first, no sign-in.</text>
+  <!-- frame -->
+  <rect x="20" y="78" width="1440" height="1200" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.5"/>
+  <!-- PublicShell header (day theme): lockup, the two views, a status chip, the language switch -->
+  <rect x="20" y="78" width="1440" height="72" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <rect x="50" y="100" width="100" height="28" rx="6" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="100" y="119" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">V veer (lockup)</text>
+  <text x="258.0" y="119" font-size="13" font-weight="500" text-anchor="middle" fill="#262626">Citizen — your road</text>
+  <text x="438.0" y="119" font-size="13" font-weight="700" text-anchor="middle" fill="#262626">Driver — the window</text>
+  <line x1="358" y1="144" x2="518" y2="144" stroke="#4A4A4A" stroke-width="1.2"/>
+  <rect x="1014" y="100" width="206" height="28" rx="14" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1117.0" y="117.78" font-size="10.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">status chip (e.g. no holds announced)</text>
+  <rect x="1234" y="94" width="200" height="40" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1334" y="119" font-size="11.5" font-weight="600" text-anchor="middle" fill="#262626">English · Hindi · Gujarati</text>
+  <rect x="444.0" y="174" width="592" height="160" rx="20" fill="#CFCFCF" stroke="#8E8E8E" stroke-width="1.2"/>
+  <text x="740.0" y="214" font-size="13" font-weight="650" text-anchor="middle" fill="#262626">Since your request</text>
+  <text x="740.0" y="270" font-size="40" font-weight="700" text-anchor="middle" fill="#262626">— : —</text>
+  <text x="740.0" y="306" font-size="10.5" font-weight="400" text-anchor="middle" fill="#262626">a clock that counts from the moment THIS request was sent — never "the golden hour" itself</text>
+  <rect x="640.0" y="354" width="200" height="120" rx="12" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="740.0" y="410" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">ambulance shot</text>
+  <text x="740.0" y="426" font-size="10.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">+ agency mark</text>
+  <text x="444.0" y="514" font-size="26" font-weight="700" text-anchor="start" fill="#262626">Green corridor — 108 driver</text>
+  <circle cx="484.0" cy="560" r="20" fill="#DCDCDC" stroke="#7A7A7A" stroke-width="1.5"/>
+  <text x="484.0" y="565" font-size="13" font-weight="700" text-anchor="middle" fill="#262626">1</text>
+  <text x="484.0" y="598" font-size="10.5" font-weight="600" text-anchor="middle" fill="#262626">Request</text>
+  <line x1="506.0" y1="560" x2="632.0" y2="560" stroke="#B0B0B0" stroke-width="1.2"/>
+  <circle cx="654.0" cy="560" r="20" fill="#FFFFFF" stroke="#7A7A7A" stroke-width="1.5"/>
+  <text x="654.0" y="565" font-size="13" font-weight="700" text-anchor="middle" fill="#262626">2</text>
+  <text x="654.0" y="598" font-size="10.5" font-weight="600" text-anchor="middle" fill="#262626">Awaiting the duty officer</text>
+  <line x1="676.0" y1="560" x2="802.0" y2="560" stroke="#B0B0B0" stroke-width="1.2"/>
+  <circle cx="824.0" cy="560" r="20" fill="#FFFFFF" stroke="#7A7A7A" stroke-width="1.5"/>
+  <text x="824.0" y="565" font-size="13" font-weight="700" text-anchor="middle" fill="#262626">3</text>
+  <text x="824.0" y="598" font-size="10.5" font-weight="600" text-anchor="middle" fill="#262626">Approved by a named officer</text>
+  <line x1="846.0" y1="560" x2="972.0" y2="560" stroke="#B0B0B0" stroke-width="1.2"/>
+  <circle cx="994.0" cy="560" r="20" fill="#FFFFFF" stroke="#7A7A7A" stroke-width="1.5"/>
+  <text x="994.0" y="565" font-size="13" font-weight="700" text-anchor="middle" fill="#262626">4</text>
+  <text x="994.0" y="598" font-size="10.5" font-weight="600" text-anchor="middle" fill="#262626">Window open · countdown</text>
+  <rect x="444.0" y="618" width="592" height="44" rx="10" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="458.0" y="637" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">Scripted fallback note — with no live public event up, a labelled walk-through</text>
+  <text x="458.0" y="653" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">of the steps that sends nothing ("all figures are demo scale")</text>
+  <rect x="444.0" y="678" width="592" height="356" rx="20" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="464.0" y="712" font-size="13" font-weight="650" text-anchor="start" fill="#262626">You are here — pick the stretch</text>
+  <rect x="464.0" y="724" width="552" height="52" rx="10" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2"/>
+  <text x="480.0" y="756" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">list of real corridors (an emulated event is never offered)</text>
+  <text x="464.0" y="804" font-size="13" font-weight="650" text-anchor="start" fill="#262626">108 unit number</text>
+  <rect x="464.0" y="814" width="240" height="44" rx="10" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2"/>
+  <text x="464.0" y="884" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Urgency</text>
+  <rect x="464.0" y="894" width="96" height="44" rx="22" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="512.0" y="920.32" font-size="12" font-weight="600" text-anchor="middle" fill="#5E5E5E">Cardiac</text>
+  <rect x="570.0" y="894" width="100" height="44" rx="22" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="620.0" y="920.32" font-size="12" font-weight="600" text-anchor="middle" fill="#5E5E5E">Accident</text>
+  <rect x="680.0" y="894" width="86" height="44" rx="22" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="723.0" y="920.32" font-size="12" font-weight="600" text-anchor="middle" fill="#5E5E5E">Stroke</text>
+  <rect x="776.0" y="894" width="142" height="44" rx="22" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="847.0" y="920.32" font-size="12" font-weight="600" text-anchor="middle" fill="#5E5E5E">Other emergency</text>
+  <rect x="464.0" y="952" width="552" height="60" rx="30" fill="#276EF1" stroke="#276EF1"/>
+  <text x="740.0" y="987.76" font-size="16" font-weight="650" text-anchor="middle" fill="#FFFFFF">Request a corridor window</text>
+  <text x="444.0" y="1056" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">Helper: pick your stretch first, then request.</text>
+  <rect x="444.0" y="1074" width="592" height="92" rx="14" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="460.0" y="1100" font-size="12.5" font-weight="650" text-anchor="start" fill="#262626">State cards after a request</text>
+  <text x="460.0" y="1120.0" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">evaluating → awaiting the duty officer (approved only on the operator console, by a named officer)</text>
+  <text x="460.0" y="1135.9" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">→ the open window with a live countdown; "New request" starts again</text>
+  <text x="444.0" y="1198" font-size="12" font-weight="600" text-anchor="start" fill="#262626">Control room — follow 108 control's instructions on your usual channel</text>
+  <line x1="444.0" y1="1222" x2="1036.0" y2="1222" stroke="#C8C8C8" stroke-width="1.2"/>
+  <text x="444.0" y="1244" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">Footer: credits and the ownership line of the marks</text>
+  <text x="60" y="218" font-size="13" font-weight="700" text-anchor="start" fill="#262626">Never on this page</text>
+  <text x="60" y="240.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">an approve control</text>
+  <text x="60" y="256.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">location collection (no geolocation call)</text>
+  <text x="60" y="273.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">a registration mark</text>
+  <text x="60" y="290.1" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">an emulated corridor to request</text>
+  <text x="60" y="378" font-size="13" font-weight="700" text-anchor="start" fill="#262626">Always</text>
+  <text x="60" y="400.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Gujarati first; EN · HI · GU</text>
+  <text x="60" y="416.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">large targets: chips &gt;= 16 px type,</text>
+  <text x="60" y="433.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">controls &gt;= 44 px, the request</text>
+  <text x="60" y="450.1" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">button &gt;= 56 px</text>
+  <text x="60" y="466.8" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">day theme, strict CSP</text>
+  <!-- legend -->
+  <rect x="20" y="1293" width="14" height="14" rx="3" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <text x="42" y="1304" font-size="12" fill="#5E5E5E">layout region</text>
+  <rect x="140" y="1293" width="14" height="14" rx="3" fill="#FFFFFF" stroke="#8A8A8A" stroke-dasharray="4 3"/>
+  <text x="162" y="1304" font-size="12" fill="#5E5E5E">shown only when needed, or closed by default</text>
+  <rect x="450" y="1293" width="14" height="14" rx="3" fill="url(#hatch)" stroke="#9A9A9A"/>
+  <text x="472" y="1304" font-size="12" fill="#5E5E5E">map or picture</text>
+  <rect x="590" y="1293" width="14" height="14" rx="7" fill="#276EF1"/>
+  <text x="612" y="1304" font-size="12" fill="#5E5E5E">the one primary action of the screen (the only colour used)</text>
+  <text x="20" y="1326" font-size="12" fill="#5E5E5E">The request is anonymous and ambulance-only, capped per client; the page follows its own request through the public projection GET /api/public/dispatches/{id}.</text>
+</svg>

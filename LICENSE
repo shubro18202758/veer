@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 VVIP Convoy Orchestration Platform contributors
+Copyright (c) 2026 Sayandeep Haldar (github.com/shubro18202758) and the Veer contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,15 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Third-party material in this repository keeps its own licence:
+- Road network data: © OpenStreetMap contributors, Open Database License (ODbL) 1.0
+  (VVIP/services/corridor-store/seed/NOTICE.md).
+- Reference photographs: Wikimedia Commons works under CC0, public domain, CC BY or CC BY-SA, each credited
+  (VVIP/services/command-deck/static/photos/NOTICE.md).
+- Agency and data-source marks belong to their owners and are not licensed under MIT
+  (VVIP/services/command-deck/static/logos/NOTICE.md).
+- Libraries and fonts carry their own licences (e.g. CesiumJS, Apache-2.0, installed at build time;
+  Blueprint icon paths, Apache-2.0; Inter, JetBrains Mono and Noto Sans, SIL OFL 1.1 — see the files beside them).

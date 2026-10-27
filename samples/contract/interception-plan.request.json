@@ -1,0 +1,15 @@
+{
+  "_pair": "The request half of a contract fixture pair: the manifest entry of VVIP/services/command-deck/tests/contract/fixtures/manifest.json that maps this request to its recorded response (interception-plan.response.json, a verbatim copy of interception_plan.json).",
+  "method": "GET",
+  "path": "/api/v1/events/4508d86d-566b-438f-8414-b3d67fd7e6e4/interception-plan?max_cost_sec=600",
+  "manifest_entry": {
+    "/api/v1/events/4508d86d-566b-438f-8414-b3d67fd7e6e4/interception-plan?max_cost_sec=600": {
+      "file": "interception_plan.json",
+      "status": 200,
+      "origin": "live"
+    }
+  },
+  "manifest_recorded_at": "2026-10-22T13:30:43.932Z",
+  "manifest_recorded_from": "http://127.0.0.1:8091",
+  "replayed_by": "node tests/contract/run.mjs (from VVIP/services/command-deck; no network)"
+}

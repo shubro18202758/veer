@@ -1,0 +1,31 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "traffic-oracle",
+    "port_on_sandbox": 8162,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers).",
+    "notes": "provenance \"emulated\" and quality_mix.real 0: every observation is from the simulated feed."
+  },
+  "request": "GET /api/v1/corridor/summary",
+  "status": 200,
+  "response": {
+    "total_segments": 49,
+    "avg_speed_kmh": 39.5,
+    "avg_congestion_idx": 0.424,
+    "congested_segments": 0,
+    "critical_segments": 0,
+    "status": "amber",
+    "provenance": "emulated",
+    "emulated_segments": 49,
+    "data_age_sec": 2.3,
+    "newest_observation_t": "2026-10-27T14:44:50.889Z",
+    "window_sec": 600,
+    "quality_mix": {
+      "real": 0,
+      "synthetic": 7122,
+      "anomalous_excluded": 57
+    },
+    "as_of": "2026-10-27T14:44:53.216Z"
+  }
+}

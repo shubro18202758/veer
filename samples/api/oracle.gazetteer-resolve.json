@@ -1,0 +1,27 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "traffic-oracle",
+    "port_on_sandbox": 8162,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers)."
+  },
+  "request": "GET /api/v1/osint/gazetteer/resolve?q=Lal%20Darwaja",
+  "status": 200,
+  "response": {
+    "q": "Lal Darwaja",
+    "candidates": [
+      {
+        "gaz_id": 3,
+        "canonical_name": "Lal Darwaja",
+        "feature_type": "junction",
+        "lon": 72.5812597,
+        "lat": 23.0264156,
+        "segment_id": null,
+        "junction_id": 3,
+        "confidence": 0.988,
+        "method": "gazetteer_exact"
+      }
+    ]
+  }
+}

@@ -1089,7 +1089,8 @@ bash scripts/veer_env.sh --set VEER_CESIUM_ION_TOKEN - # optional: photorealisti
 **3. Bring the stack up**
 ```bash
 bash scripts/veer_up.sh            # model units → PostGIS alone → migrate 001–025 → seed the
-                                   # real-road network → every service up → converge → READY 11/11
+                                   # real-road network → every service up → converge → READY
+                                   # (12/12 with VEER_OSINT=1, 11/11 without)
 bash scripts/veer_up.sh --status   # read-only readiness table (postgis … embeddings)
 bash scripts/veer_up.sh --build    # rebuild the service images first (PostGIS image NOT rebuilt;
                                    # --rebuild-postgis opts in and recreates the store container,
@@ -1111,12 +1112,12 @@ the model units + `veer-up.service`) — verified by real reboots on
 **4. Open the deck — `http://127.0.0.1:5273`** in a browser on the box,
 then **sign in** with your name and the duty PIN. `/` is **Home**,
 `/analyst` the Convoy Command workspace with `/ops` the situation wall and
-`/gods-eye` the 3D city beneath it (once the V3 build is deployed — the live
-stack still serves the earlier deck until then); `/citizen` and `/driver` are
-public and need no sign-in. Every approval
+`/gods-eye` the 3D city beneath it (the V3 build, live since 2026-10-27);
+`/citizen` and `/driver` are public and need no sign-in. Every approval
 you make — a stolen-vehicle sighting, a dispatch, an escort route switch
 — is recorded under your name. For deck development outside Docker:
-`cd services/command-deck && bun install && bun run dev`.
+`cd services/command-deck && bun install && ORACLE_PORT=8091 BRAIN_PORT=8092 EMULATOR_PORT=8090 bun run dev`
+(the dev server refuses to start without the three backend ports; see `docs/ENVIRONMENT.md` in the public repository).
 
 **5. Before a demo (the operator tools)**
 
@@ -1126,7 +1127,7 @@ node scripts/journeys.mjs                           # J1–J7 through the deck; 
                                                     # deck unless --live (the team's go-ahead)
 bash scripts/demo_reset.sh --apply --officer '<name>' --cancel-debris
                                                     # the starting state — it stops at PENDING:
-                                                    # a signed-in human approves on /ops
+                                                    # a signed-in human approves in Decide (or on /ops)
 ```
 On release day the live writes run in this order, each with the team's
 go-ahead: the live smokes → `showcase_run.sh` → `repetition_gate.sh` →

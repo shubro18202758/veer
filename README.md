@@ -16,8 +16,9 @@
   <a href="#capabilities-at-a-glance">Capabilities</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#honest-status">Honest status</a> ·
-  <a href="#run-it">Run it</a> ·
-  <a href="PRODUCT.md"><strong>Full product description</strong></a>
+  <a href="#setup">Setup</a> ·
+  <a href="#environment-variables">Environment</a> ·
+  <a href="#documentation">Docs</a>
 </p>
 
 ---
@@ -34,8 +35,11 @@ platform services, an OSINT pipeline and three local model hosts. Every penalty,
 switch waits for **a named duty officer**; if nobody answers a time-boxed proposal, the current plan holds.
 Everything the system emulates or simulates says so on screen.
 
-> **Going deeper:** [`PRODUCT.md`](PRODUCT.md) is the complete product description — every screen, every
-> capability, the architecture, the data model and the honest status, for non-technical and technical readers.
+> **Documentation:** [`PRODUCT.md`](PRODUCT.md) (the product, every screen and capability) ·
+> [`TECHNICAL_DESIGN.md`](TECHNICAL_DESIGN.md) (the technical design, 29 architecture, sequence, state and data-model
+> diagrams) · [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) (every environment variable) ·
+> [`docs/SAMPLE_DATA_AND_TESTS.md`](docs/SAMPLE_DATA_AND_TESTS.md) and [`samples/`](samples/) (sample data and test
+> cases) · [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) (design notes and wireframes) · [`LICENSE`](LICENSE) (MIT).
 
 ---
 
@@ -48,9 +52,11 @@ Everything the system emulates or simulates says so on screen.
 5. [Architecture](#architecture)
 6. [Measured, verified, modelled](#measured-verified-modelled)
 7. [Honest status](#honest-status)
-8. [Run it](#run-it)
-9. [What is in this repository](#what-is-in-this-repository)
-10. [Licence and attributions](#licence-and-attributions)
+8. [Setup](#setup) — prerequisites, install, bring-up, verify
+9. [Environment variables](#environment-variables)
+10. [Documentation](#documentation)
+11. [What is in this repository](#what-is-in-this-repository)
+12. [Licence and attributions](#licence-and-attributions)
 
 ---
 
@@ -366,26 +372,54 @@ one command (`scripts/veer_up.sh`) and the stack starts itself at boot through s
 
 ---
 
-## Run it
+## Setup
+
+### Prerequisites
+
+| Requirement | For the full stack | For the console and services only |
+|---|---|---|
+| Hardware | An NVIDIA GB10-class edge server (121 GiB unified memory; the model stack is ~63 GiB resident) | Any x86-64 / arm64 machine with 16 GB RAM |
+| OS | Ubuntu 22.04+ with systemd user units | Linux or macOS with Docker |
+| Docker | Docker Engine with the Compose v2 plugin | same |
+| Toolchain (only to develop outside Docker) | Python 3.12, Rust (stable), Bun 1.x, Node 18+ | same |
+| Model weights | The 27B decider snapshot, Gemma 4 12B (GGUF) with `llama-server`, bge-m3 — supplied by the operator, never committed (see [`VVIP/models-config/`](VVIP/models-config/)) | not needed: the brain falls back to its heuristic tier and says so |
+| Optional | A Cesium ion access token (photoreal 3D and satellite imagery for signed-in operators) and internet access for live OSINT | the map runs keyless on OpenStreetMap; OSINT can run offline |
+
+### Install and bring up
 
 ```bash
+# 1. get the code
 git clone https://github.com/shubro18202758/veer.git
 cd veer/VVIP
-bash scripts/veer_up.sh --install-units                 # host env (~/.config/veer/veer.env, mode 600) + systemd units
-bash scripts/veer_env.sh --set VEER_OPERATOR_PIN -      # the duty PIN, typed on stdin (never on a command line)
-bash scripts/veer_env.sh --set VEER_SESSION_SECRET -    # signs operator sessions
-bash scripts/veer_env.sh --set VEER_CESIUM_ION_TOKEN -  # optional: photoreal 3D for signed-in operators
-bash scripts/veer_env.sh --set VEER_OSINT 1             # optional: OSINT event intelligence (OSINT_MODE offline for no internet)
-bash scripts/veer_up.sh --build                         # images → PostGIS → migrations → real-road seed → services → READY
-bash scripts/veer_up.sh --status                        # one row per component; READY 12/12 with OSINT on
+
+# 2. the host environment file (~/.config/veer/veer.env, mode 600) and the systemd user units
+bash scripts/veer_up.sh --install-units
+
+# 3. secrets — each typed on stdin (never on a command line, never committed)
+bash scripts/veer_env.sh --set VEER_OPERATOR_PIN -      # the duty PIN officers sign in with
+bash scripts/veer_env.sh --set VEER_SESSION_SECRET -    # 64 hex characters; signs operator sessions
+bash scripts/veer_env.sh --set POSTGIS_PASSWORD -       # the database password, before the first bring-up
+bash scripts/veer_env.sh --set VEER_CESIUM_ION_TOKEN -  # optional: photoreal 3D + satellite imagery
+
+# 4. optional switches
+bash scripts/veer_env.sh --set VEER_OSINT 1             # OSINT event intelligence (OSINT_MODE=offline without internet)
+
+# 5. build and start: images → PostGIS → migrations 001–025 → real-road seed → services → converge
+bash scripts/veer_up.sh --build
+
+# 6. verify
+bash scripts/veer_up.sh --status                        # one row per component: READY 12/12 with OSINT (11/11 without)
 ```
 
-Open **`http://127.0.0.1:5273`** in a browser on the box and sign in with your name and the duty PIN. The stack
-starts itself at boot (`veer.target`).
+Open **`http://127.0.0.1:5273`** in a browser on the box and sign in with your name and the duty PIN. From then on
+the stack **starts itself at boot** (`veer.target`). The public pages `/citizen` and `/driver` need no sign-in.
 
-**Supplied by the operator, never committed:** the model weights for the local model hosts (see
-[`VVIP/models-config/`](VVIP/models-config/)), the duty PIN and session secret, and the Cesium ion token — without a
-token the map runs keyless on OpenStreetMap imagery.
+**Developing the console outside Docker:**
+`cd VVIP/services/command-deck && bun install && ORACLE_PORT=8091 BRAIN_PORT=8092 EMULATOR_PORT=8090 bun run dev`
+(the dev server refuses to start without the three backend ports).
+
+**Running the tests:** see [`docs/SAMPLE_DATA_AND_TESTS.md`](docs/SAMPLE_DATA_AND_TESTS.md) — every suite with its
+command, plus `bash VVIP/scripts/verify_all.sh` for the offline gate.
 
 **Before a demonstration:** `bash VVIP/scripts/demo_reset.sh --apply --officer '<duty officer>' --cancel-debris`
 cancels test debris through the audited lifecycle and stages a fresh EMULATED stolen-vehicle sighting that waits
@@ -394,11 +428,58 @@ stale after about 25 minutes.
 
 ---
 
+## Environment variables
+
+All host configuration lives in **`~/.config/veer/veer.env`** (mode 600, plain `KEY=VALUE`, never committed),
+written by `scripts/veer_up.sh --install-units` and edited with `scripts/veer_env.sh --set KEY VALUE` (or
+`--set KEY -` to type a secret on stdin). `veer_up.sh` passes it to Docker Compose and the systemd units. The
+variables you are most likely to set:
+
+| Variable | Secret | Default | What it does |
+|---|:---:|---|---|
+| `VEER_OPERATOR_PIN` | ✓ | unset (gate off) | The duty PIN for the operator sign-in. With it unset the console is open — never expose the deck beyond loopback that way |
+| `VEER_SESSION_SECRET` | ✓ | random per start | Signs operator session cookies; set it so sign-ins survive restarts |
+| `POSTGIS_PASSWORD` | ✓ | a development default | The `corridor_admin` database password (the database binds loopback only) |
+| `VEER_CESIUM_ION_TOKEN` | ✓ | unset | Cesium ion token: Google Photorealistic 3D Tiles and Bing satellite imagery for signed-in operators; unset → keyless OpenStreetMap |
+| `VEER_OSINT` | | `0` | `1` runs the OSINT pipeline (`osint-ingress`) and its surfaces |
+| `OSINT_MODE` | | `live` | `offline` serves recorded samples — for venues without internet |
+| `VVIP_REQUIRE_OFFICER` | | `1` | Officer actions without a named officer are refused (422) |
+| `VVIP_ESCORT_APPROVAL_TIMEOUT_SEC` | | `90` | How long an escort proposal waits for an officer before it expires and the plan holds (15–600) |
+| `VEER_DEMO` | | `0` | `1` switches the emulated living city and the signal-plan writer on (refused unless the public feed labels emulated rows) |
+| `VEER_DESIGN_HARNESS` | | `0` | `1` serves the `/design` developer harness in a production build |
+| `VEER_ROOT`, `VEER_RUN_DIR`, `VEER_LOG_DIR`, `VEER_VENV_DIR` | | detected | Where the checkout, runtime state, logs and Python environments live |
+| `DECIDER_SNAPSHOT_PATH`, `LLAMA_SERVER_BIN`, `GEMMA_GGUF`, `BGE_M3_PATH`, `VEER_MODELS_CONFIG` | | detected | Model weights, the `llama-server` binary and the model-stack configuration |
+| `POSTGIS_HOST_PORT` | | `56434` | The loopback port of the corridor store |
+
+The complete reference — every variable each service reads, its default, whether it is required or secret, the
+ports and binds, the safety switches and a minimal working `veer.env` with placeholders — is
+[`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
+
+---
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [`PRODUCT.md`](PRODUCT.md) | The product: what Veer is, who it serves, every screen and capability, the honest status |
+| [`TECHNICAL_DESIGN.md`](TECHNICAL_DESIGN.md) | The technical design: system context, deployment, components, the data model (ER diagrams), key flows (sequence diagrams), state machines, security and privacy, reliability, the AI design, performance, testing and the design decisions (ADRs) |
+| [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md) | Every environment variable, grouped, with defaults and secrets marked |
+| [`docs/SAMPLE_DATA_AND_TESTS.md`](docs/SAMPLE_DATA_AND_TESTS.md) · [`samples/`](samples/) | The datasets the system ships, curated sample files and API responses, every test suite and how to run it, and representative test cases |
+| [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) · [`docs/wireframes/`](docs/wireframes/) | Design intent, the shell, colour and type systems, imagery, accessibility and honest-label rules, wireframes and design prototypes |
+| [`VVIP/TECHNICAL_DOCS.md`](VVIP/TECHNICAL_DOCS.md) | The platform's full technical record: contracts, gates and the dated acceptance runs |
+| [`VVIP/docs/USE_CASES.md`](VVIP/docs/USE_CASES.md) · [`VVIP/IMPACT_REPORT.md`](VVIP/IMPACT_REPORT.md) | The use-case library with sources; the impact model and its assumptions ledger |
+| [`LICENSE`](LICENSE) | MIT for the code; third-party data, photographs and marks keep their own licences |
+
+---
+
 ## What is in this repository
 
 | Path | What it is |
 |---|---|
 | [`PRODUCT.md`](PRODUCT.md) | **The product description** — what Veer is, every screen and capability in depth, the architecture and the honest status |
+| [`TECHNICAL_DESIGN.md`](TECHNICAL_DESIGN.md) | **The technical design document** with architecture, data-model, sequence and state diagrams |
+| [`docs/`](docs/) | The environment reference, sample data and test cases, design notes and wireframes; dated planning records under `docs/history/` |
+| [`samples/`](samples/) | Curated sample data and API responses |
 | [`VVIP/`](VVIP/) | **The platform** — the services (`services/`), infrastructure (compose, systemd units), bring-up and acceptance scripts (`scripts/`), tests, docs and the live evidence in [`VVIP/showcase/`](VVIP/showcase/) |
 | [`VVIP/docs/screenshots/`](VVIP/docs/screenshots/) | The screenshots in this README |
 | [`VVIP/README.md`](VVIP/README.md) · [`VVIP/TECHNICAL_DOCS.md`](VVIP/TECHNICAL_DOCS.md) | The platform's quick start and evidence; architecture, contracts, gates and the acceptance records |
@@ -412,7 +493,7 @@ stale after about 25 minutes.
 
 ## Licence and attributions
 
-Code: MIT — see [`LICENSE`](LICENSE). Road network: © OpenStreetMap contributors, ODbL 1.0 — see
+Code: MIT, © 2026 Sayandeep Haldar and the Veer contributors — see [`LICENSE`](LICENSE). Road network: © OpenStreetMap contributors, ODbL 1.0 — see
 [`VVIP/services/corridor-store/seed/NOTICE.md`](VVIP/services/corridor-store/seed/NOTICE.md). The 3D city uses Google
 Photorealistic 3D Tiles, Cesium World Terrain and Bing imagery through Cesium ion, credited on the canvas — see
 [`VVIP/services/command-deck/src/lib/gods-eye/NOTICE.md`](VVIP/services/command-deck/src/lib/gods-eye/NOTICE.md).

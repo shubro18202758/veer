@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 1042" width="1480" height="1042" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" role="img" aria-label="Veer V3 — Decide (/decide, /decide/&lt;unit&gt;) — low-fidelity wireframe">
+  <title>Veer V3 — Decide (/decide, /decide/&lt;unit&gt;) — low-fidelity wireframe</title>
+  <defs>
+    <pattern id="hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="14" height="14" fill="#EFEFEF"/>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#E0E0E0" stroke-width="5"/>
+    </pattern>
+  </defs>
+  <rect width="1480" height="1042" fill="#FFFFFF"/>
+  <text x="20" y="32" font-size="21" font-weight="700" fill="#262626">Veer V3 — Decide (/decide, /decide/&lt;unit&gt;)</text>
+  <text x="20" y="56" font-size="13" fill="#5E5E5E">Low-fidelity wireframe of the shipped V3 layout at 1440 px wide (the 1366-class sizes apply below 1500 px: rail 76, top bar 60, gutter 24).</text>
+  <!-- frame -->
+  <rect x="20" y="78" width="1440" height="900" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.5"/>
+  <!-- AppRail: 88 px at &gt;= 1500 px wide, 76 px below; icon + label, never icon-only -->
+  <rect x="20" y="78" width="76" height="900" rx="0" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <rect x="36" y="90" width="44" height="44" rx="10" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="58" y="117" font-size="15" font-weight="700" text-anchor="middle" fill="#5E5E5E">V</text>
+  <rect x="28" y="148" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="168" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="194" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Home</text>
+  <rect x="28" y="212" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="232" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="258" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Map</text>
+  <rect x="28" y="276" width="60" height="56" rx="10" fill="#DCDCDC" stroke="#989898" stroke-width="1.6"/>
+  <circle cx="58.0" cy="296" r="8" fill="#CFCFCF" stroke="#8E8E8E"/>
+  <text x="58.0" y="322" font-size="10.5" font-weight="700" text-anchor="middle" fill="#262626">Decide</text>
+  <circle cx="72.0" cy="287" r="7" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <text x="72.0" y="291" font-size="9" font-weight="700" text-anchor="middle" fill="#262626">n</text>
+  <rect x="28" y="340" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="360" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="386" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Plan</text>
+  <rect x="28" y="404" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="424" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="450" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Assistant</text>
+  <rect x="28" y="468" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="488" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="514" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Advisories</text>
+  <line x1="34" y1="894" x2="82" y2="894" stroke="#B5B5B5" stroke-width="1.2"/>
+  <rect x="28" y="906" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <circle cx="58.0" cy="926" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="952" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Analyst</text>
+  <!-- TopBar: 68 px at &gt;= 1500 px, 60 px below; title | search (centred, the prominent element) | menu, bell, officer -->
+  <rect x="96" y="78" width="1364" height="60" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="120" y="115" font-size="16" font-weight="700" text-anchor="start" fill="#262626">Decide</text>
+  <rect x="438" y="88" width="680" height="40" rx="20" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2"/>
+  <circle cx="460" cy="108" r="7" fill="#DCDCDC" stroke="#989898"/>
+  <text x="478" y="113" font-size="12.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Search a place, road, event or vehicle mark</text>
+  <rect x="1058" y="97" width="48" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1082.0" y="111.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">Ctrl K</text>
+  <rect x="1136" y="92" width="96" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1184.0" y="111.96000000000001" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">Menu · EN</text>
+  <circle cx="1260" cy="108" r="12" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <rect x="1286" y="88" width="150" height="40" rx="20" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <circle cx="1308" cy="108" r="11" fill="#DCDCDC" stroke="#989898"/>
+  <text x="1326" y="105" font-size="11.5" font-weight="650" text-anchor="start" fill="#262626">Duty officer</text>
+  <text x="1326" y="119" font-size="10" font-weight="400" text-anchor="start" fill="#5E5E5E">pill · plates hidden</text>
+  <!-- queue: 92 px, art only below 1500 px -->
+  <rect x="96" y="138" width="92" height="840" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="142" y="158" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">Queue</text>
+  <rect x="110" y="170" width="64" height="64" rx="12" fill="#DCDCDC" stroke="#989898" stroke-width="1.8"/>
+  <rect x="110" y="246" width="64" height="64" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <rect x="110" y="322" width="64" height="64" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <rect x="110" y="398" width="64" height="64" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <text x="142" y="488" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">J / K</text>
+  <text x="142" y="504" font-size="10" font-weight="400" text-anchor="middle" fill="#5E5E5E">next / prev</text>
+  <!-- map of the place -->
+  <rect x="188" y="138" width="1272" height="840" rx="0" fill="url(#hatch)" stroke="#9A9A9A" stroke-width="1.2"/>
+  <text x="548" y="758" font-size="14" font-weight="600" text-anchor="middle" fill="#7A7A7A">the real map of the decision's place</text>
+  <text x="548" y="778" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">(satellite with the key, night map without it); the subject</text>
+  <text x="548" y="794" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">is framed in the part the sheet leaves clear</text>
+  <polyline points="338,458 418,450 518,508 608,438 608,618 748,548" fill="none" stroke="#7A7A7A" stroke-width="2.5" stroke-dasharray="5 4"/>
+  <circle cx="338" cy="458" r="6" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <circle cx="418" cy="450" r="6" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <circle cx="518" cy="508" r="6" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <circle cx="608" cy="438" r="6" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <circle cx="608" cy="618" r="6" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <circle cx="748" cy="548" r="6" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <circle cx="748" cy="548" r="14" fill="#DCDCDC" stroke="#989898"/>
+  <rect x="202" y="152" width="380" height="26" rx="13" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="392.0" y="168.95999999999998" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">what the map shows, e.g. lawful reads of one vehicle</text>
+  <rect x="202" y="942" width="330" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="367.0" y="957.96" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">legend: camera reads · decision waits · credit</text>
+  <!-- the decision sheet: 470 px below 1500 px (540 px above), floating 14 px from the edges -->
+  <rect x="976" y="152" width="470" height="812" rx="18" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <rect x="976" y="152" width="470" height="96" rx="18" fill="url(#hatch)" stroke="#9A9A9A" stroke-width="1.2"/>
+  <text x="1211.0" y="200.0" font-size="13" font-weight="600" text-anchor="middle" fill="#8A8A8A">key art / scene</text>
+  <rect x="996" y="262" width="56" height="56" rx="12" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="1066" y="276" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">Kind line</text>
+  <text x="1066" y="298" font-size="18" font-weight="700" text-anchor="start" fill="#262626">Decision title</text>
+  <rect x="1212" y="280" width="120" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1272.0" y="295.78" font-size="10.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">masked plate chip</text>
+  <circle cx="1402" cy="292" r="28" fill="#FFFFFF" stroke="#7A7A7A" stroke-width="3" stroke-dasharray="6 4"/>
+  <text x="1402" y="296" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">m:ss</text>
+  <text x="1402" y="336" font-size="9.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">countdown ring</text>
+  <text x="1402" y="348" font-size="9.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">(time-boxed only)</text>
+  <rect x="1066" y="314" width="170" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1151.0" y="328.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">Reported stolen · demo FIR</text>
+  <rect x="1242" y="314" width="92" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1288.0" y="328.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">Rules engine</text>
+  <rect x="1066" y="342" width="104" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1118.0" y="356.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">waiting 49 min</text>
+  <rect x="1176" y="342" width="76" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A" stroke-dasharray="4 3"/>
+  <text x="1214.0" y="356.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">Emulated</text>
+  <text x="996" y="390" font-size="12.5" font-weight="600" text-anchor="start" fill="#262626">Why — one plain sentence</text>
+  <rect x="996" y="402" width="430" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="996" y="414" width="267" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="996" y="438" width="430" height="70" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <rect x="1006" y="446" width="110" height="54" rx="8" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="1061" y="478" font-size="10" font-weight="400" text-anchor="middle" fill="#5E5E5E">vehicle shot</text>
+  <text x="1128" y="464" font-size="11.5" font-weight="650" text-anchor="start" fill="#262626">Class · registration mark masked</text>
+  <text x="1128" y="482" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">until a duty officer is named; vehicles only</text>
+  <rect x="996" y="520" width="430" height="150" rx="8" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1008" y="540" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Per-kind body</text>
+  <text x="1008" y="558.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Stolen vehicle: stepper 1 Authorise → 2 Open the pursuit; the reads</text>
+  <text x="1008" y="574.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">as a timeline (camera · road · speed · time); "Evidence only."</text>
+  <text x="1008" y="591.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Decision support: the quoted report (redaction chips), option cards</text>
+  <text x="1008" y="608.1" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">(recommended preselected, keys 1–4), the blocked option, "Why this one".</text>
+  <text x="1008" y="624.8" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Escort: the sentence, 3 facts, "If no one answers, the plan is kept".</text>
+  <rect x="996" y="682" width="430" height="92" rx="8" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1008" y="702" font-size="13" font-weight="650" text-anchor="start" fill="#262626">What changes if you approve / reject</text>
+  <text x="1008" y="720.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">object · from → to · "changes" / "next"; "Unchanged: …"</text>
+  <text x="1008" y="736.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">generated from the same writer that sends the decision</text>
+  <rect x="996" y="784" width="430" height="34" rx="8" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="1008" y="806" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">A server refusal prints here, verbatim — never as a toast</text>
+  <!-- sticky action bar: officer gate, then the buttons -->
+  <line x1="976" y1="864" x2="1446" y2="864" stroke="#C0C0C0" stroke-width="1.2"/>
+  <circle cx="1008" cy="886" r="10" fill="#DCDCDC" stroke="#989898"/>
+  <text x="1026" y="890" font-size="11.5" font-weight="600" text-anchor="start" fill="#262626">"Who is deciding?" — or "Signed in as &lt;officer&gt;"</text>
+  <text x="1426" y="890" font-size="10" font-weight="400" text-anchor="end" fill="#5E5E5E">Recorded in the audit trail</text>
+  <rect x="996" y="908" width="140" height="44" rx="22" fill="#FFFFFF" stroke="#8E8E8E" stroke-width="1.2"/>
+  <text x="1066.0" y="934.14" font-size="11.5" font-weight="600" text-anchor="middle" fill="#262626">Dismiss all… / Reject</text>
+  <rect x="1148" y="908" width="278" height="44" rx="22" fill="#276EF1" stroke="#276EF1"/>
+  <text x="1287.0" y="934.68" font-size="13" font-weight="650" text-anchor="middle" fill="#FFFFFF">Authorise pursuit (the one primary)</text>
+  <text x="208" y="914" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">After deciding: the sheet collapses to its outcome (verb, officer, time) with "Next decision →"; the queue tile turns green.</text>
+  <text x="208" y="930" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Enter only focuses the primary button; R opens the reason field; buttons stay visible but disabled until an officer is named.</text>
+  <!-- legend -->
+  <rect x="20" y="993" width="14" height="14" rx="3" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <text x="42" y="1004" font-size="12" fill="#5E5E5E">layout region</text>
+  <rect x="140" y="993" width="14" height="14" rx="3" fill="#FFFFFF" stroke="#8A8A8A" stroke-dasharray="4 3"/>
+  <text x="162" y="1004" font-size="12" fill="#5E5E5E">shown only when needed, or closed by default</text>
+  <rect x="450" y="993" width="14" height="14" rx="3" fill="url(#hatch)" stroke="#9A9A9A"/>
+  <text x="472" y="1004" font-size="12" fill="#5E5E5E">map or picture</text>
+  <rect x="590" y="993" width="14" height="14" rx="7" fill="#276EF1"/>
+  <text x="612" y="1004" font-size="12" fill="#5E5E5E">the one primary action of the screen (the only colour used)</text>
+  <text x="20" y="1026" font-size="12" fill="#5E5E5E">One decision at a time, soonest deadline first. At &gt;= 1500 px the queue is a 340 px list (title, plate chip, waiting time) with the "Decided on this console" tally, and the sheet is 540 px.</text>
+</svg>

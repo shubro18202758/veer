@@ -1,0 +1,29 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "convoy-brain",
+    "port_on_sandbox": 8262,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers)."
+  },
+  "request": "GET /health",
+  "status": 200,
+  "response": {
+    "status": "ok",
+    "strategic_tier": {
+      "model": "pplx-decider-v1-27b",
+      "model_host": "connected",
+      "load_error": null,
+      "degraded": false,
+      "degraded_reason": null,
+      "p95_decide_latency_ms": 2919.056,
+      "novelty_latch": "armed",
+      "tier0_cache": "enabled",
+      "memory_record": "disabled"
+    },
+    "tactical_tier": {
+      "model": "gemma4-12b-veer",
+      "llama_server": "connected"
+    }
+  }
+}

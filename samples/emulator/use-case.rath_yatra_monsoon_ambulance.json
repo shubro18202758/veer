@@ -1,0 +1,200 @@
+{
+  "id": "rath_yatra_monsoon_ambulance",
+  "scenarioConfig": {
+    "scenario_id": "rath_yatra_monsoon_ambulance",
+    "name": "Rath Yatra Morning, Monsoon Burst, One Siren",
+    "description": "FLAGSHIP multi-event showcase. 09:20 on the real 148th Rath Yatra morning of 27 Jun 2025 (procession stepped off 07:00 from Jamalpur): three chariots crawl Gandhi Road and Relief Road with lakhs on the street, a monsoon burst at 18 mm/h waterlogs the Nehru Bridge approach, bazaar crowds stand behind Swami Vivekananda Road barricades — and a 108 ambulance carrying a cardiac patient requests a green corridor across the river: Relief Road -> Nehru Bridge -> Ashram Road south -> Riverfront West (1005->1015->1001->1006). The engine's answer: closure_policy = signal_hold at 45 s advance — 'regulated, not stopped' — threading a medical convoy between a public festival and the weather.",
+    "category": "multi_event",
+    "route_segment_ids": [
+      1005,
+      1015,
+      1001,
+      1006
+    ],
+    "departure_time": "2025-06-27T09:20:00+05:30",
+    "vvip_class": "X",
+    "closure_policy": {
+      "advance_closure_sec": 45,
+      "closure_type": "signal_hold"
+    },
+    "horizon_min": 60,
+    "n_replications": 12,
+    "seed": 202506271,
+    "convoy_speed_kmh": 42.0,
+    "weather": {
+      "monsoon": true,
+      "rain_intensity_mm_h": 18.0
+    },
+    "event_overrides": {
+      "market": 2.0,
+      "ambulance": 1.0
+    },
+    "forced_events": [
+      {
+        "type": "rally_spillover",
+        "segment_id": 1012,
+        "start_sec": 0.0,
+        "duration_sec": 3600.0,
+        "severity": 0.95,
+        "extra_demand_veh_h": 950.0,
+        "label": "three chariots + lakhs on Gandhi Road — yatra in its third hour"
+      },
+      {
+        "type": "rally_spillover",
+        "segment_id": 1005,
+        "start_sec": 1200.0,
+        "duration_sec": 2400.0,
+        "severity": 0.9,
+        "extra_demand_veh_h": 850.0,
+        "label": "chariot crawl turns onto Relief Road — bazaar belt regulated, not stopped"
+      },
+      {
+        "type": "waterlogging",
+        "segment_id": 1015,
+        "start_sec": 600.0,
+        "duration_sec": 1800.0,
+        "severity": 0.7,
+        "label": "monsoon burst at 18 mm/h waterlogs the Nehru Bridge approach (scheduled waterlogging)"
+      },
+      {
+        "type": "market_spillover",
+        "segment_id": 1013,
+        "start_sec": 0.0,
+        "duration_sec": 3600.0,
+        "severity": 0.75,
+        "label": "Swami Vivekananda Road bazaar crowd behind barricades"
+      },
+      {
+        "type": "emergency_vehicle",
+        "segment_id": 1005,
+        "start_sec": 600.0,
+        "duration_sec": 300.0,
+        "severity": 0.9,
+        "label": "108 cardiac green-corridor window — Relief Road stretch"
+      },
+      {
+        "type": "emergency_vehicle",
+        "segment_id": 1015,
+        "start_sec": 700.0,
+        "duration_sec": 300.0,
+        "severity": 0.9,
+        "label": "108 cardiac green-corridor window — Nehru Bridge crossing"
+      },
+      {
+        "type": "emergency_vehicle",
+        "segment_id": 1006,
+        "start_sec": 800.0,
+        "duration_sec": 300.0,
+        "severity": 0.9,
+        "label": "108 cardiac green-corridor window — Riverfront West"
+      },
+      {
+        "type": "emergency_vehicle",
+        "segment_id": 1001,
+        "start_sec": 900.0,
+        "duration_sec": 300.0,
+        "severity": 0.9,
+        "label": "108 cardiac green-corridor window — Ashram South handover"
+      }
+    ],
+    "expected_features": [
+      "multi_event_composition",
+      "public_procession",
+      "monsoon_burst",
+      "green_corridor_request",
+      "signal_hold_regulated_passage"
+    ],
+    "event_kind": "procession",
+    "crowd_class": "EXTREME",
+    "duration_class": "hours",
+    "unit_tracks": {
+      "note": "Recorded agency-unit positions the City Command REPLAY animates (agency_unit frames, a frame every 20 s of tape time). EMULATED units only (EM ids): two Jan Rakshak beats on the yatra roads (Gandhi Road + Relief Road) and the 108 ambulance's green-corridor run, Relief Road -> Nehru Bridge across the river to Income Tax Circle (J2), timed to the emergency_vehicle windows (1005 from 600 s, 1015 from 700 s); the 1006 / 1001 windows hold the cross traffic at J2 as it clears. Its last frame, at J2, is stationary and reports 'arrived' (the C-A spelling of on_scene): the green corridor ends there, and the hospital leg beyond J2 is not recorded. Geometry: the run's segment paths from the store (COALESCE(display_geom, geom)) when it has them, else route_geometry — the same segments as seeded (sample_corridor.sql).",
+      "units": [
+        {
+          "unit_id": "JR-EM-21",
+          "agency": "jan_rakshak",
+          "label": "Jan Rakshak JR-EM-21 · yatra beat (EMULATED)",
+          "status": "patrol",
+          "mode": "patrol",
+          "segment_ids": [
+            1012,
+            1005
+          ],
+          "speed_kmh": 12.0,
+          "offset": 0.0
+        },
+        {
+          "unit_id": "JR-EM-22",
+          "agency": "jan_rakshak",
+          "label": "Jan Rakshak JR-EM-22 · yatra beat (EMULATED)",
+          "status": "patrol",
+          "mode": "patrol",
+          "segment_ids": [
+            1012,
+            1005
+          ],
+          "speed_kmh": 12.0,
+          "offset": 0.5
+        },
+        {
+          "unit_id": "AMB-EM-108",
+          "agency": "ambulance",
+          "label": "108 ambulance AMB-EM-108 · green-corridor run (EMULATED)",
+          "status": "en_route",
+          "arrival_status": "arrived",
+          "mode": "run",
+          "segment_ids": [
+            1005,
+            1015
+          ],
+          "speed_kmh": 24.0,
+          "start_sec": 600.0
+        }
+      ],
+      "route_geometry": {
+        "1005": [
+          [
+            72.5798,
+            23.0254
+          ],
+          [
+            72.585,
+            23.02
+          ],
+          [
+            72.59,
+            23.018
+          ]
+        ],
+        "1012": [
+          [
+            72.5798,
+            23.0254
+          ],
+          [
+            72.581,
+            23.028
+          ],
+          [
+            72.583,
+            23.031
+          ]
+        ],
+        "1015": [
+          [
+            72.5714,
+            23.0225
+          ],
+          [
+            72.575,
+            23.025
+          ],
+          [
+            72.5798,
+            23.0254
+          ]
+        ]
+      }
+    }
+  }
+}

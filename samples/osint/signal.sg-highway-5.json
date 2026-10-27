@@ -1,0 +1,45 @@
+{
+  "_fixture": {
+    "label": "SYNTHETIC OSINT SIGNAL - a replica written by the project; fictional publisher; no real person",
+    "generated_from": "VVIP/services/osint-common/src/osint_common/testing.py: sg_highway_signals()[4] (the canonical signal fixtures are Python constructors; this is that object serialised with model_dump_json on 2026-10-27)",
+    "redaction": "already redacted at parse, exactly as a connector emits it: the driver's name reads [PERSON] and pii_redactions counts it",
+    "license_fields": "license and redistributable describe the source class this replica imitates (a news-aggregator item); the text itself is written by the project"
+  },
+  "signal": {
+    "signal_id": "a35f43ca99420ba4833a5ed659d51dbc0492a005",
+    "source": "google_news_rss",
+    "source_id": "synthetic:sg-highway-5",
+    "source_tier": "aggregator",
+    "publisher": "news-b.example",
+    "url": "https://news-b.example/city/sg-highway-report-5",
+    "title": "Driver beaten by mob after SG Highway crash near Karnavati Club",
+    "text": "Driver beaten by mob after SG Highway crash near Karnavati Club. Locals surrounded the car near Karnavati Club after the crash and the driver, identified as [PERSON], was beaten by the mob before police arrived.",
+    "language": "en",
+    "published_at": "2026-10-20T13:50:00Z",
+    "fetched_at": "2026-10-20T15:00:00Z",
+    "valid_until": null,
+    "fetch_mode": "cached-sample",
+    "pii_redactions": 1,
+    "raw_geo_hint": {
+      "place_names": [],
+      "admin_codes": [],
+      "points": [],
+      "polygon_url": null,
+      "bbox_hit": null,
+      "confidence": 0.0
+    },
+    "category_hint": [
+      "publisher:news-b.example",
+      "domain:news-b.example"
+    ],
+    "tone": null,
+    "provenance_label": "NEWS-REPORTED",
+    "credibility_prior": 0.6,
+    "license": "google_news_personal_use",
+    "redistributable": false,
+    "raw": {
+      "guid": "synthetic:sg-highway-5",
+      "source_domain": "news-b.example"
+    }
+  }
+}

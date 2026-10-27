@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 1322" width="1480" height="1322" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" role="img" aria-label="Veer V3 — Object page (/o/&lt;urn&gt;) — low-fidelity wireframe">
+  <title>Veer V3 — Object page (/o/&lt;urn&gt;) — low-fidelity wireframe</title>
+  <defs>
+    <pattern id="hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="14" height="14" fill="#EFEFEF"/>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#E0E0E0" stroke-width="5"/>
+    </pattern>
+  </defs>
+  <rect width="1480" height="1322" fill="#FFFFFF"/>
+  <text x="20" y="32" font-size="21" font-weight="700" fill="#262626">Veer V3 — Object page (/o/&lt;urn&gt;)</text>
+  <text x="20" y="56" font-size="13" fill="#5E5E5E">Low-fidelity wireframe of the shipped V3 layout at 1440 px wide (the 1366-class sizes apply below 1500 px: rail 76, top bar 60, gutter 24).</text>
+  <!-- frame -->
+  <rect x="20" y="78" width="1440" height="1180" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.5"/>
+  <!-- AppRail: 88 px at &gt;= 1500 px wide, 76 px below; icon + label, never icon-only -->
+  <rect x="20" y="78" width="76" height="1180" rx="0" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <rect x="36" y="90" width="44" height="44" rx="10" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="58" y="117" font-size="15" font-weight="700" text-anchor="middle" fill="#5E5E5E">V</text>
+  <rect x="28" y="148" width="60" height="56" rx="10" fill="#DCDCDC" stroke="#989898" stroke-width="1.6"/>
+  <circle cx="58.0" cy="168" r="8" fill="#CFCFCF" stroke="#8E8E8E"/>
+  <text x="58.0" y="194" font-size="10.5" font-weight="700" text-anchor="middle" fill="#262626">Home</text>
+  <rect x="28" y="212" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="232" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="258" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Map</text>
+  <rect x="28" y="276" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="296" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="322" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Decide</text>
+  <circle cx="72.0" cy="287" r="7" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <text x="72.0" y="291" font-size="9" font-weight="700" text-anchor="middle" fill="#262626">n</text>
+  <rect x="28" y="340" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="360" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="386" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Plan</text>
+  <rect x="28" y="404" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="424" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="450" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Assistant</text>
+  <rect x="28" y="468" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="488" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="514" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Advisories</text>
+  <line x1="34" y1="1174" x2="82" y2="1174" stroke="#B5B5B5" stroke-width="1.2"/>
+  <rect x="28" y="1186" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <circle cx="58.0" cy="1206" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="1232" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Analyst</text>
+  <!-- TopBar: 68 px at &gt;= 1500 px, 60 px below; title | search (centred, the prominent element) | menu, bell, officer -->
+  <rect x="96" y="78" width="1364" height="60" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="120" y="115" font-size="16" font-weight="700" text-anchor="start" fill="#262626">Vehicle</text>
+  <rect x="438" y="88" width="680" height="40" rx="20" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2"/>
+  <circle cx="460" cy="108" r="7" fill="#DCDCDC" stroke="#989898"/>
+  <text x="478" y="113" font-size="12.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Search a place, road, event or vehicle mark</text>
+  <rect x="1058" y="97" width="48" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1082.0" y="111.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">Ctrl K</text>
+  <rect x="1136" y="92" width="96" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1184.0" y="111.96000000000001" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">Menu · EN</text>
+  <circle cx="1260" cy="108" r="12" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <rect x="1286" y="88" width="150" height="40" rx="20" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <circle cx="1308" cy="108" r="11" fill="#DCDCDC" stroke="#989898"/>
+  <text x="1326" y="105" font-size="11.5" font-weight="650" text-anchor="start" fill="#262626">Duty officer</text>
+  <text x="1326" y="119" font-size="10" font-weight="400" text-anchor="start" fill="#5E5E5E">pill · plates hidden</text>
+  <!-- hero map: a raster map tile, not a 3D viewer -->
+  <rect x="96" y="138" width="1364" height="340" rx="0" fill="url(#hatch)" stroke="#9A9A9A" stroke-width="1.2"/>
+  <text x="660" y="248" font-size="13" font-weight="600" text-anchor="middle" fill="#7A7A7A">hero map of the place (raster tiles + SVG overlay — no 3D viewer per page)</text>
+  <rect x="120" y="160" width="76" height="28" rx="14" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="158.0" y="177.95999999999998" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">← Home</text>
+  <rect x="204" y="160" width="80" height="28" rx="14" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="244.0" y="177.95999999999998" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">Vehicles</text>
+  <rect x="1016" y="162" width="150" height="30" rx="15" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1091.0" y="180.95999999999998" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">Open in the map</text>
+  <rect x="1186" y="158" width="250" height="220" rx="16" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="1311" y="266" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">picture: vehicle shot,</text>
+  <text x="1311" y="282" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">key art or reference photo</text>
+  <!-- title bar -->
+  <rect x="120" y="378" width="100" height="100" rx="18" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="170" y="434" font-size="11" font-weight="400" text-anchor="middle" fill="#5E5E5E">art</text>
+  <text x="240" y="394" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Kind line (Vehicle · Car)</text>
+  <text x="240" y="432" font-size="30" font-weight="700" text-anchor="start" fill="#262626">Display title</text>
+  <rect x="460" y="406" width="160" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="540.0" y="425.96" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">plate chip (masked)</text>
+  <rect x="240" y="450" width="72.8" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A" stroke-dasharray="4 3"/>
+  <text x="276.4" y="465.78" font-size="10.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">Emulated</text>
+  <rect x="320.8" y="450" width="79.4" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="360.5" y="465.78" font-size="10.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">Watchlist</text>
+  <rect x="408.20000000000005" y="450" width="119.0" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="467.70000000000005" y="465.78" font-size="10.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">Reported stolen</text>
+  <rect x="535.2" y="450" width="178.39999999999998" height="24" rx="12" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="624.4000000000001" y="465.78" font-size="10.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">A decision waits for you</text>
+  <text x="727.6" y="467" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">(at most 4 tags)</text>
+  <rect x="1100" y="408" width="230" height="52" rx="26" fill="#276EF1" stroke="#276EF1"/>
+  <text x="1215.0" y="439.04" font-size="14" font-weight="650" text-anchor="middle" fill="#FFFFFF">Review and decide →</text>
+  <circle cx="1358" cy="434" r="22" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <text x="1358" y="438" font-size="10" font-weight="400" text-anchor="middle" fill="#262626">Ask</text>
+  <circle cx="1412" cy="434" r="22" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <text x="1412" y="438" font-size="12" font-weight="400" text-anchor="middle" fill="#262626">…</text>
+  <!-- tabs -->
+  <text x="134" y="528" font-size="14" font-weight="700" text-anchor="start" fill="#262626">Overview</text>
+  <line x1="120" y1="544" x2="216" y2="544" stroke="#4A4A4A" stroke-width="1.2"/>
+  <text x="254" y="528" font-size="14" font-weight="500" text-anchor="start" fill="#262626">Reads 20</text>
+  <text x="374" y="528" font-size="14" font-weight="500" text-anchor="start" fill="#262626">Timeline 60</text>
+  <text x="494" y="528" font-size="14" font-weight="500" text-anchor="start" fill="#262626">Nearby 64</text>
+  <text x="614" y="528" font-size="14" font-weight="500" text-anchor="start" fill="#262626">Record 10</text>
+  <text x="740" y="528" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">tabs per kind: Overview · Sources (reports) · Reads (vehicles) · Pursuit (when open) · Timeline · Nearby · Record</text>
+  <line x1="120" y1="548" x2="1056" y2="548" stroke="#C8C8C8" stroke-width="1.2"/>
+  <!-- two columns: main 1fr | side 360 px (420 px at &gt;= 1500 px) -->
+  <rect x="120" y="570" width="936" height="270" rx="8" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="132" y="590" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Overview, per kind — e.g. "The vehicle"</text>
+  <text x="132" y="608.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">vehicle shot · registration mark (masked until a duty officer is named; "every view is recorded") · kind · lawful basis · retention · last lawful read</text>
+  <text x="132" y="624.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Reported event: "What is reported" (redaction chips), "How sure are we" (credibility gauge, four plain checks, verification ladder),</text>
+  <text x="132" y="641.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">"What it may affect" (estimates labelled simulated). Place: the place section and its reports. Operation: progress and next junction.</text>
+  <rect x="136" y="668" width="200" height="130" rx="12" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="236" y="738" font-size="11" font-weight="400" text-anchor="middle" fill="#5E5E5E">vehicle shot</text>
+  <rect x="356" y="678" width="360" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="356" y="700" width="360" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="356" y="722" width="360" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="356" y="744" width="223" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="136" y="808" width="904" height="22" rx="6" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="148" y="824" font-size="10.5" font-weight="400" text-anchor="start" fill="#262626">Rule strip: "Evidence only. No e-challan for a stolen vehicle's owner; a sighting can only authorise one pursuit."</text>
+  <rect x="120" y="856" width="936" height="130" rx="8" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="132" y="876" font-size="13" font-weight="650" text-anchor="start" fill="#262626">At a glance — figures</text>
+  <rect x="136.0" y="890" width="217.0" height="80" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="150.0" y="924" font-size="18" font-weight="700" text-anchor="start" fill="#262626">figure</text>
+  <text x="150.0" y="946" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">label</text>
+  <rect x="365.0" y="890" width="217.0" height="80" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="379.0" y="924" font-size="18" font-weight="700" text-anchor="start" fill="#262626">figure</text>
+  <text x="379.0" y="946" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">label</text>
+  <rect x="594.0" y="890" width="217.0" height="80" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="608.0" y="924" font-size="18" font-weight="700" text-anchor="start" fill="#262626">figure</text>
+  <text x="608.0" y="946" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">label</text>
+  <rect x="823.0" y="890" width="217.0" height="80" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="837.0" y="924" font-size="18" font-weight="700" text-anchor="start" fill="#262626">figure</text>
+  <text x="837.0" y="946" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">label</text>
+  <line x1="96" y1="978" x2="1460" y2="978" stroke="#6A6A6A" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <rect x="132" y="968" width="97" height="20" rx="10" fill="#FFFFFF" stroke="#6A6A6A"/>
+  <text x="180.7" y="982" font-size="11" font-weight="400" text-anchor="middle" fill="#5E5E5E">fold at 900 px</text>
+  <rect x="120" y="1002" width="936" height="120" rx="8" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="132" y="1022" font-size="13" font-weight="650" text-anchor="start" fill="#262626">More panels by kind and by tab</text>
+  <text x="132" y="1040.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Reads: lawful reads only — a read without a lawful basis reads "Withheld: no lawful basis".</text>
+  <text x="132" y="1056.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Pursuit: ranked choke junctions and "Request a unit". Timeline: the full activity list.</text>
+  <text x="132" y="1073.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Nearby: linked records ("Open in graph" goes to Analyst). Record: every field the Analyst inspector shows.</text>
+  <text x="132" y="1090.1" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Event pages carry the lifecycle actions (cancel keeps its inline confirm).</text>
+  <!-- side column -->
+  <rect x="1076" y="570" width="360" height="40" rx="10" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="1088" y="595" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">"Ask about it" panel (read-only), when opened</text>
+  <rect x="1076" y="622" width="360" height="214" rx="8" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1088" y="642" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Decision waiting (CTA)</text>
+  <text x="1088" y="660.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">time left (role="timer") · kind</text>
+  <text x="1088" y="676.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">title + plate chip · one line</text>
+  <text x="1088" y="693.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">a SECONDARY "Review and decide →": the</text>
+  <text x="1088" y="710.1" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">decision's one home is Decide; no approve</text>
+  <text x="1088" y="726.8" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">control lives on an object page</text>
+  <rect x="1092" y="782" width="328" height="40" rx="20" fill="#FFFFFF" stroke="#8E8E8E" stroke-width="1.2"/>
+  <text x="1256.0" y="806.5" font-size="12.5" font-weight="600" text-anchor="middle" fill="#262626">Review and decide →</text>
+  <rect x="1076" y="850" width="360" height="236" rx="8" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="1088" y="870" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Key facts</text>
+  <text x="1088" y="888.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">registration mark · class · basis · reported (demo FIR)</text>
+  <text x="1088" y="904.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">retention · camera · time — each a link where it names a record</text>
+  <rect x="1092" y="918" width="320" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1092" y="940" width="320" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1092" y="962" width="320" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1092" y="984" width="320" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1092" y="1006" width="320" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1092" y="1028" width="198" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1076" y="1098" width="360" height="96" rx="8" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="1088" y="1118" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Recent activity (5)</text>
+  <rect x="1092" y="1138" width="320" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1092" y="1158" width="198" height="5" rx="2.5" fill="#DCDCDC"/>
+  <text x="1076" y="1222" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">Rule note of the kind (e.g. vehicles only; places, never persons).</text>
+  <!-- legend -->
+  <rect x="20" y="1273" width="14" height="14" rx="3" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <text x="42" y="1284" font-size="12" fill="#5E5E5E">layout region</text>
+  <rect x="140" y="1273" width="14" height="14" rx="3" fill="#FFFFFF" stroke="#8A8A8A" stroke-dasharray="4 3"/>
+  <text x="162" y="1284" font-size="12" fill="#5E5E5E">shown only when needed, or closed by default</text>
+  <rect x="450" y="1273" width="14" height="14" rx="3" fill="url(#hatch)" stroke="#9A9A9A"/>
+  <text x="472" y="1284" font-size="12" fill="#5E5E5E">map or picture</text>
+  <rect x="590" y="1273" width="14" height="14" rx="7" fill="#276EF1"/>
+  <text x="612" y="1284" font-size="12" fill="#5E5E5E">the one primary action of the screen (the only colour used)</text>
+  <text x="20" y="1306" font-size="12" fill="#5E5E5E">Ten record kinds share this layout (event, OSINT report, vehicle, place, operation, junction, camera, dispatch, recommendation, sighting) plus a generic one. A link that fails the URN grammar reads "Not a record" and fetches nothing.</text>
+</svg>

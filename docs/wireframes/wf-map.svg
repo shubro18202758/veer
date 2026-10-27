@@ -1,0 +1,195 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 1042" width="1480" height="1042" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" role="img" aria-label="Veer V3 — Map (/map) — low-fidelity wireframe">
+  <title>Veer V3 — Map (/map) — low-fidelity wireframe</title>
+  <defs>
+    <pattern id="hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="14" height="14" fill="#EFEFEF"/>
+      <line x1="0" y1="0" x2="0" y2="14" stroke="#E0E0E0" stroke-width="5"/>
+    </pattern>
+  </defs>
+  <rect width="1480" height="1042" fill="#FFFFFF"/>
+  <text x="20" y="32" font-size="21" font-weight="700" fill="#262626">Veer V3 — Map (/map)</text>
+  <text x="20" y="56" font-size="13" fill="#5E5E5E">Low-fidelity wireframe of the shipped V3 layout at 1440 px wide (the 1366-class sizes apply below 1500 px: rail 76, top bar 60, gutter 24).</text>
+  <!-- frame -->
+  <rect x="20" y="78" width="1440" height="900" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.5"/>
+  <!-- AppRail: 88 px at &gt;= 1500 px wide, 76 px below; icon + label, never icon-only -->
+  <rect x="20" y="78" width="76" height="900" rx="0" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <rect x="36" y="90" width="44" height="44" rx="10" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="58" y="117" font-size="15" font-weight="700" text-anchor="middle" fill="#5E5E5E">V</text>
+  <rect x="28" y="148" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="168" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="194" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Home</text>
+  <rect x="28" y="212" width="60" height="56" rx="10" fill="#DCDCDC" stroke="#989898" stroke-width="1.6"/>
+  <circle cx="58.0" cy="232" r="8" fill="#CFCFCF" stroke="#8E8E8E"/>
+  <text x="58.0" y="258" font-size="10.5" font-weight="700" text-anchor="middle" fill="#262626">Map</text>
+  <rect x="28" y="276" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="296" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="322" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Decide</text>
+  <circle cx="72.0" cy="287" r="7" fill="#FFFFFF" stroke="#4A4A4A"/>
+  <text x="72.0" y="291" font-size="9" font-weight="700" text-anchor="middle" fill="#262626">n</text>
+  <rect x="28" y="340" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="360" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="386" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Plan</text>
+  <rect x="28" y="404" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="424" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="450" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Assistant</text>
+  <rect x="28" y="468" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.0"/>
+  <circle cx="58.0" cy="488" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="514" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Advisories</text>
+  <line x1="34" y1="894" x2="82" y2="894" stroke="#B5B5B5" stroke-width="1.2"/>
+  <rect x="28" y="906" width="60" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <circle cx="58.0" cy="926" r="8" fill="#DCDCDC" stroke="#989898"/>
+  <text x="58.0" y="952" font-size="10.5" font-weight="500" text-anchor="middle" fill="#262626">Analyst</text>
+  <!-- TopBar: 68 px at &gt;= 1500 px, 60 px below; title | search (centred, the prominent element) | menu, bell, officer -->
+  <rect x="96" y="78" width="1364" height="60" rx="0" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <text x="120" y="115" font-size="16" font-weight="700" text-anchor="start" fill="#262626">Map</text>
+  <rect x="438" y="88" width="680" height="40" rx="20" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2"/>
+  <circle cx="460" cy="108" r="7" fill="#DCDCDC" stroke="#989898"/>
+  <text x="478" y="113" font-size="12.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Search a place, road, event or vehicle mark</text>
+  <rect x="1058" y="97" width="48" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1082.0" y="111.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">Ctrl K</text>
+  <rect x="1136" y="92" width="96" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="1184.0" y="111.96000000000001" font-size="11" font-weight="600" text-anchor="middle" fill="#5E5E5E">Menu · EN</text>
+  <circle cx="1260" cy="108" r="12" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <rect x="1286" y="88" width="150" height="40" rx="20" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <circle cx="1308" cy="108" r="11" fill="#DCDCDC" stroke="#989898"/>
+  <text x="1326" y="105" font-size="11.5" font-weight="650" text-anchor="start" fill="#262626">Duty officer</text>
+  <text x="1326" y="119" font-size="10" font-weight="400" text-anchor="start" fill="#5E5E5E">pill · plates hidden</text>
+  <rect x="96" y="138" width="1364" height="840" rx="0" fill="url(#hatch)" stroke="#9A9A9A" stroke-width="1.2"/>
+  <text x="765" y="408" font-size="14" font-weight="600" text-anchor="middle" fill="#7A7A7A">Photoreal 3D city when the deck holds the imagery key;</text>
+  <text x="765" y="428" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">the night city map (OpenStreetMap) otherwise, with the reason on the 3D tool</text>
+  <text x="765" y="446" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">clean by default: events, convoy, traces, enforcement and reports on;</text>
+  <text x="765" y="462" font-size="11.5" font-weight="400" text-anchor="middle" fill="#5E5E5E">cameras, junctions, flow, units, dispatch, anomalies and places one tap away</text>
+  <!-- summary chips: the four groups + Layers -->
+  <rect x="116" y="156" width="138" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="185.0" y="176.14" font-size="11.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">Live operations n</text>
+  <rect x="262" y="156" width="166" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="345.0" y="176.14" font-size="11.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">Needs your decision n</text>
+  <rect x="436" y="156" width="170" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="521.0" y="176.14" font-size="11.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">Reported in the city n</text>
+  <rect x="614" y="156" width="108" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="668.0" y="176.14" font-size="11.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">Coming up n</text>
+  <rect x="730" y="156" width="80" height="32" rx="16" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="770.0" y="176.14" font-size="11.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">Layers</text>
+  <rect x="116" y="198" width="380" height="30" rx="15" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="130" y="218" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Focused on &lt;event&gt; — others dimmed · Show all</text>
+  <rect x="116" y="236" width="560" height="30" rx="15" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="130" y="256" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Official weather warning (district) — a chip, never a ring</text>
+  <!-- Layers sheet (left, collapsible) and corridor stats (closed by default) -->
+  <rect x="116" y="276" width="340" height="300" rx="8" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="128" y="296" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Layers (collapsible left sheet)</text>
+  <text x="128" y="314.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Base map: Satellite 3D · City map (remembered</text>
+  <text x="128" y="330.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">per browser)</text>
+  <text x="128" y="347.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Operations: units, dispatches</text>
+  <text x="128" y="364.1" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">City: ANPR cameras ("read registration marks</text>
+  <text x="128" y="380.8" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">only"), junctions and signals, traffic flow</text>
+  <text x="128" y="397.5" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">("simulated on 49 roads"), named places,</text>
+  <text x="128" y="414.2" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">feed checks</text>
+  <text x="128" y="430.9" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E"></text>
+  <text x="128" y="447.6" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Rule: "Vehicles only. Cameras read registration</text>
+  <text x="128" y="464.29999999999995" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">marks; no images, frames or faces are kept."</text>
+  <rect x="116" y="586" width="340" height="110" rx="8" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="128" y="606" font-size="13" font-weight="650" text-anchor="start" fill="#262626">Corridor stats (closed by default)</text>
+  <text x="128" y="624.0" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">signal band · traffic on the corridors · escorts;</text>
+  <text x="128" y="640.7" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">the compact chips above stay the one always-</text>
+  <text x="128" y="657.4" font-size="11.5" font-weight="400" text-anchor="start" fill="#5E5E5E">visible readout</text>
+  <!-- selection card (bottom left) -->
+  <rect x="116" y="746" width="440" height="214" rx="16" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <rect x="132" y="762" width="56" height="56" rx="12" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <text x="200" y="778" font-size="11" font-weight="400" text-anchor="start" fill="#5E5E5E">Kind line · class</text>
+  <text x="200" y="800" font-size="16" font-weight="700" text-anchor="start" fill="#262626">Selection card — title</text>
+  <rect x="200" y="810" width="96" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="248.0" y="824.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">Live · on time</text>
+  <rect x="302" y="810" width="116" height="22" rx="11" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="360.0" y="824.6" font-size="10" font-weight="600" text-anchor="middle" fill="#5E5E5E">1 decision waits</text>
+  <rect x="132" y="844" width="128" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="144" y="870" font-size="14" font-weight="700" text-anchor="start" fill="#262626">figure</text>
+  <text x="144" y="888" font-size="10" font-weight="400" text-anchor="start" fill="#5E5E5E">what it means</text>
+  <rect x="272" y="844" width="128" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="284" y="870" font-size="14" font-weight="700" text-anchor="start" fill="#262626">figure</text>
+  <text x="284" y="888" font-size="10" font-weight="400" text-anchor="start" fill="#5E5E5E">what it means</text>
+  <rect x="412" y="844" width="128" height="56" rx="10" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="424" y="870" font-size="14" font-weight="700" text-anchor="start" fill="#262626">figure</text>
+  <text x="424" y="888" font-size="10" font-weight="400" text-anchor="start" fill="#5E5E5E">what it means</text>
+  <rect x="132" y="912" width="150" height="38" rx="19" fill="#276EF1" stroke="#276EF1"/>
+  <text x="207.0" y="935.5" font-size="12.5" font-weight="650" text-anchor="middle" fill="#FFFFFF">Review →</text>
+  <rect x="292" y="912" width="100" height="38" rx="19" fill="#FFFFFF" stroke="#8E8E8E" stroke-width="1.2"/>
+  <text x="342.0" y="935.32" font-size="12" font-weight="600" text-anchor="middle" fill="#262626">Follow</text>
+  <rect x="402" y="912" width="100" height="38" rx="19" fill="#FFFFFF" stroke="#8E8E8E" stroke-width="1.2"/>
+  <text x="452.0" y="935.32" font-size="12" font-weight="600" text-anchor="middle" fill="#262626">Details</text>
+  <rect x="572" y="880" width="250" height="80" rx="12" fill="#FFFFFF" stroke="#4A4A4A" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="586" y="904.0" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Legend (3 lines, can be hidden):</text>
+  <text x="586" y="919.2" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">a decision waits · stolen or watch-</text>
+  <text x="586" y="934.4" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">listed vehicle · protected route</text>
+  <text x="586" y="949.6" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">— drawn at &gt;= 1500 px only</text>
+  <rect x="840" y="928" width="210" height="26" rx="13" fill="#FFFFFF" stroke="#9A9A9A"/>
+  <text x="945.0" y="944.78" font-size="10.5" font-weight="600" text-anchor="middle" fill="#5E5E5E">3D credit · "not a live image"</text>
+  <!-- Now panel: 320 px below 1500 px, 380 px above -->
+  <rect x="1122" y="156" width="320" height="804" rx="16" fill="#F4F4F4" stroke="#ABABAB" stroke-width="1.2"/>
+  <circle cx="1144" cy="182" r="5" fill="#DCDCDC" stroke="#989898"/>
+  <text x="1156" y="188" font-size="14" font-weight="700" text-anchor="start" fill="#262626">Now · Live · 20:03 IST</text>
+  <text x="1426" y="188" font-size="12" font-weight="650" text-anchor="end" fill="#262626">Replay</text>
+  <text x="1140" y="222" font-size="11.5" font-weight="650" text-anchor="start" fill="#5E5E5E">Live operations</text>
+  <rect x="1138" y="236" width="40" height="40" rx="8" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <rect x="1188" y="246" width="180" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1188" y="258" width="112" height="5" rx="2.5" fill="#DCDCDC"/>
+  <text x="1426" y="260" font-size="10.5" font-weight="650" text-anchor="end" fill="#262626">Live</text>
+  <rect x="1138" y="288" width="40" height="40" rx="8" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <rect x="1188" y="298" width="180" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1188" y="310" width="112" height="5" rx="2.5" fill="#DCDCDC"/>
+  <text x="1426" y="312" font-size="10.5" font-weight="650" text-anchor="end" fill="#262626">Live</text>
+  <text x="1140" y="358" font-size="11.5" font-weight="650" text-anchor="start" fill="#5E5E5E">Needs your decision</text>
+  <rect x="1138" y="372" width="40" height="40" rx="8" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <rect x="1188" y="382" width="180" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1188" y="394" width="112" height="5" rx="2.5" fill="#DCDCDC"/>
+  <text x="1426" y="396" font-size="10.5" font-weight="650" text-anchor="end" fill="#262626">0:40</text>
+  <rect x="1138" y="424" width="40" height="40" rx="8" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <rect x="1188" y="434" width="180" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1188" y="446" width="112" height="5" rx="2.5" fill="#DCDCDC"/>
+  <text x="1426" y="448" font-size="10.5" font-weight="650" text-anchor="end" fill="#262626">0:40</text>
+  <text x="1140" y="494" font-size="11.5" font-weight="650" text-anchor="start" fill="#5E5E5E">Reported in the city</text>
+  <rect x="1138" y="508" width="40" height="40" rx="8" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <rect x="1188" y="518" width="180" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1188" y="530" width="112" height="5" rx="2.5" fill="#DCDCDC"/>
+  <text x="1426" y="532" font-size="10.5" font-weight="650" text-anchor="end" fill="#262626">0.65</text>
+  <rect x="1138" y="560" width="40" height="40" rx="8" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <rect x="1188" y="570" width="180" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1188" y="582" width="112" height="5" rx="2.5" fill="#DCDCDC"/>
+  <text x="1426" y="584" font-size="10.5" font-weight="650" text-anchor="end" fill="#262626">0.65</text>
+  <text x="1140" y="630" font-size="11.5" font-weight="650" text-anchor="start" fill="#5E5E5E">Coming up</text>
+  <rect x="1138" y="644" width="40" height="40" rx="8" fill="#DCDCDC" stroke="#989898" stroke-width="1.2"/>
+  <rect x="1188" y="654" width="180" height="5" rx="2.5" fill="#DCDCDC"/>
+  <rect x="1188" y="666" width="112" height="5" rx="2.5" fill="#DCDCDC"/>
+  <text x="1426" y="668" font-size="10.5" font-weight="650" text-anchor="end" fill="#262626">tomorrow</text>
+  <text x="1140" y="720.0" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">Grouped like the chips; selecting a row</text>
+  <text x="1140" y="735.2" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">selects it on the map. Replay of recorded</text>
+  <text x="1140" y="750.4" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">emulator runs is blocked while a movement</text>
+  <text x="1140" y="765.6" font-size="10.5" font-weight="400" text-anchor="start" fill="#5E5E5E">is live or a pursuit is open.</text>
+  <!-- map tools -->
+  <text x="1086" y="530" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">Tools</text>
+  <rect x="1064" y="542" width="44" height="44" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1086" y="569" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">3D</text>
+  <rect x="1064" y="596" width="44" height="44" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1086" y="623" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">Th</text>
+  <rect x="1064" y="650" width="44" height="44" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1086" y="677" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">Ms</text>
+  <rect x="1064" y="704" width="44" height="44" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1086" y="731" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">Fw</text>
+  <rect x="1064" y="758" width="44" height="44" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1086" y="785" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">+</text>
+  <rect x="1064" y="812" width="44" height="44" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1086" y="839" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">−</text>
+  <rect x="1064" y="866" width="44" height="44" rx="12" fill="#E8E8E8" stroke="#A2A2A2" stroke-width="1.2"/>
+  <text x="1086" y="893" font-size="11" font-weight="650" text-anchor="middle" fill="#262626">N</text>
+  <text x="1108" y="490.0" font-size="10.5" font-weight="400" text-anchor="end" fill="#5E5E5E">3D · thermal-style view ("a visual filter, no thermal sensor")</text>
+  <text x="1108" y="505.2" font-size="10.5" font-weight="400" text-anchor="end" fill="#5E5E5E">· measure · follow · zoom · north</text>
+  <!-- legend -->
+  <rect x="20" y="993" width="14" height="14" rx="3" fill="#E8E8E8" stroke="#A2A2A2"/>
+  <text x="42" y="1004" font-size="12" fill="#5E5E5E">layout region</text>
+  <rect x="140" y="993" width="14" height="14" rx="3" fill="#FFFFFF" stroke="#8A8A8A" stroke-dasharray="4 3"/>
+  <text x="162" y="1004" font-size="12" fill="#5E5E5E">shown only when needed, or closed by default</text>
+  <rect x="450" y="993" width="14" height="14" rx="3" fill="url(#hatch)" stroke="#9A9A9A"/>
+  <text x="472" y="1004" font-size="12" fill="#5E5E5E">map or picture</text>
+  <rect x="590" y="993" width="14" height="14" rx="7" fill="#276EF1"/>
+  <text x="612" y="1004" font-size="12" fill="#5E5E5E">the one primary action of the screen (the only colour used)</text>
+  <text x="20" y="1026" font-size="12" fill="#5E5E5E">Every overlay floats on translucent grey glass with a solid fallback; its alpha keeps every text ink &gt;= 4.5:1 over the darkest and lightest map pixel. The Now list is the accessible equivalent of the map.</text>
+</svg>

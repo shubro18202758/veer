@@ -1,0 +1,37 @@
+{
+  "_sample": {
+    "label": "SANDBOX SAMPLE - read-only GET against a private sandbox stack, not the live system",
+    "service": "traffic-oracle",
+    "port_on_sandbox": 8162,
+    "captured_at_utc": "2026-10-27T14:45Z",
+    "data": "The sandbox store holds emulated, simulated and synthetic data only (EMULATED camera reads and units, a SIMULATED traffic feed, OSINT situations built from the synthetic capture with fictional *.example publishers).",
+    "notes": "The one earmarked vehicle is the emulated stolen car of the exercise (EM series plate, source emulated_anpr)."
+  },
+  "request": "GET /api/v1/vehicles",
+  "status": 200,
+  "response": {
+    "vehicles": [
+      {
+        "vehicle_id": "1b94e9d2-7e11-4174-a735-7dd3be3189cf",
+        "plate": "GJ27EM9001",
+        "vehicle_class": "car",
+        "earmark_state": "flagged",
+        "earmark_reason": "STOLEN VEHICLE reported — FIR 4401/2026, Kalupur PS; God's Eye Morning flagship",
+        "lawful_basis": "stolen_vehicle_fir",
+        "retention_until": "2026-11-17T14:57:19.065631+00:00",
+        "last_sighting": {
+          "t": "2026-10-23T16:38:39.257228+00:00",
+          "position": [
+            72.599157,
+            23.021345
+          ],
+          "source": "emulated_anpr",
+          "camera_id": "EM-CAM-03",
+          "matched_plate_hit": "stolen_vehicle"
+        },
+        "source": "emulated_anpr"
+      }
+    ],
+    "source": "emulated_anpr"
+  }
+}
