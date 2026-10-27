@@ -604,10 +604,10 @@ const SPEC_NEW = {
 	'--v-map-route': ['#2DD4BF', '#00A396'], '--v-map-event': ['#5B91F5', '#276EF1'], '--v-map-marker': ['#C5CBD3', '#5F6B7C'],
 	'--v-map-marker-fill': ['rgba(17,17,17,0.88)', 'rgba(255,255,255,0.9)'], '--v-map-casing': ['rgba(17,17,17,0.8)', 'rgba(255,255,255,0.85)'],
 	'--v-map-label-bg': ['rgba(17,17,17,0.86)', 'rgba(255,255,255,0.9)'], '--v-map-label-ink': ['#F6F7F9', '#1C2127'],
-	'--v-flow-1': ['#9A9A9A', '#238551'], '--v-flow-2': ['#C8C8C8', '#8EB125'], '--v-flow-3': ['#E0E0E0', '#D1980B'],
-	'--v-flow-4': ['#F6F6F6', '#C87619'], '--v-flow-5': ['#FFFFFF', '#CD4246'],
-	'--v-flow-width-1': ['1.5px', '1.5px'], '--v-flow-width-2': ['2px', '2px'], '--v-flow-width-3': ['2.5px', '2.5px'],
-	'--v-flow-width-4': ['3.5px', '3.5px'], '--v-flow-width-5': ['4.5px', '4.5px'],
+	'--v-flow-1': ['#C4C4C4', '#238551'], '--v-flow-2': ['#D6D6D6', '#8EB125'], '--v-flow-3': ['#E6E6E6', '#D1980B'],
+	'--v-flow-4': ['#F3F3F3', '#C87619'], '--v-flow-5': ['#FFFFFF', '#CD4246'],
+	'--v-flow-width-1': ['3px', '3px'], '--v-flow-width-2': ['3.5px', '3.5px'], '--v-flow-width-3': ['4px', '4px'],
+	'--v-flow-width-4': ['5px', '5px'], '--v-flow-width-5': ['6px', '6px'],
 	'--v-z-content': [null, null], '--v-z-overlay': [null, null], '--v-z-dialog': [null, null], '--v-z-toast': [null, null]
 };
 
@@ -936,10 +936,10 @@ ok('hex sweep: no hex literal outside the token files', hexViolations.length ===
 	if (flowStop(Number.NaN) !== 1 || flowStop(-1) !== 1) tf.push('flowStop of NaN / a negative index is not "free"');
 	if ([0, 0.2, 0.21, 0.4, 0.41, 0.6, 0.61, 0.8, 0.81, 1].map(flowStop).join('') !== '1122334455') tf.push(`flowStop ${[0, 0.2, 0.21, 0.4, 0.41, 0.6, 0.61, 0.8, 0.81, 1].map(flowStop).join('')}`);
 	const s3 = flowStyle(3);
-	if (s3.color !== TOKENS.command['--v-flow-3'] || s3.width !== 2.5 || s3.casing !== TOKENS.command['--v-map-casing']) tf.push('flowStyle(3)');
-	if (flowStyle(1).casing !== null || flowStyle(5).width !== 4.5) tf.push('flowStyle(1|5)');
+	if (s3.color !== TOKENS.command['--v-flow-3'] || s3.width !== 4 || s3.casing !== TOKENS.command['--v-map-casing']) tf.push('flowStyle(3)');
+	if (flowStyle(1).casing !== null || flowStyle(5).width !== 6) tf.push('flowStyle(1|5)');
 	if (mapColor('alert') !== TOKENS.command['--v-map-alert'] || mapColor('nope') !== TOKENS.command['--v-map-marker']) tf.push('mapColor');
-	if (!Array.isArray(FLOW_RAMP_FALLBACK) || FLOW_RAMP_FALLBACK.length !== 5 || FLOW_RAMP_FALLBACK.map((s) => s.width).join() !== '1.5,2,2.5,3.5,4.5') tf.push('FLOW_RAMP_FALLBACK');
+	if (!Array.isArray(FLOW_RAMP_FALLBACK) || FLOW_RAMP_FALLBACK.length !== 5 || FLOW_RAMP_FALLBACK.map((s) => s.width).join() !== '3,3.5,4,5,6') tf.push('FLOW_RAMP_FALLBACK');
 	// the LEGACY flowColor keeps its pre-redesign comparisons exactly: NaN falls through to severe
 	const { flowColor } = MOD.tokens;
 	const legacy = [
@@ -947,7 +947,7 @@ ok('hex sweep: no hex literal outside the token files', hexViolations.length ===
 		[0.5, '--v-band-amber'], [0.7, '--v-act'], [0.9, '--v-band-red'], [-1, '--v-band-green']
 	];
 	for (const [c, key] of legacy) if (flowColor(c) !== TOKENS.command[key]) tf.push(`flowColor(${c}) ≠ ${key} (legacy)`);
-	ok('tokens.ts: flowStop thresholds 0.2/0.4/0.6/0.8, flowStyle, mapColor, the cerulean fallback ramp; legacy flowColor unchanged', tf.length === 0, tf.join(' | ') || 'as specified');
+	ok('tokens.ts: flowStop thresholds 0.2/0.4/0.6/0.8, flowStyle, mapColor, the bright neutral fallback ramp; legacy flowColor unchanged', tf.length === 0, tf.join(' | ') || 'as specified');
 }
 
 // ── 4–5. STYLE AND GLYPH LINTS over the targets union ────────────────────

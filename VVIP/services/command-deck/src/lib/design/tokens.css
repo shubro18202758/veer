@@ -208,16 +208,16 @@
 	--v-map-label-ink: #f6f7f9;
 
 	/* traffic flow: a neutral luminance and width ramp, free → jammed */
-	--v-flow-1: #9a9a9a;
-	--v-flow-2: #c8c8c8;
-	--v-flow-3: #e0e0e0;
-	--v-flow-4: #f6f6f6;
+	--v-flow-1: #c4c4c4;
+	--v-flow-2: #d6d6d6;
+	--v-flow-3: #e6e6e6;
+	--v-flow-4: #f3f3f3;
 	--v-flow-5: #ffffff;
-	--v-flow-width-1: 1.5px;
-	--v-flow-width-2: 2px;
-	--v-flow-width-3: 2.5px;
-	--v-flow-width-4: 3.5px;
-	--v-flow-width-5: 4.5px;
+	--v-flow-width-1: 3px;
+	--v-flow-width-2: 3.5px;
+	--v-flow-width-3: 4px;
+	--v-flow-width-4: 5px;
+	--v-flow-width-5: 6px;
 
 	/* layering */
 	--v-z-content: 10;
@@ -413,11 +413,11 @@
 	--v-flow-3: #d1980b;
 	--v-flow-4: #c87619;
 	--v-flow-5: #cd4246;
-	--v-flow-width-1: 1.5px;
-	--v-flow-width-2: 2px;
-	--v-flow-width-3: 2.5px;
-	--v-flow-width-4: 3.5px;
-	--v-flow-width-5: 4.5px;
+	--v-flow-width-1: 3px;
+	--v-flow-width-2: 3.5px;
+	--v-flow-width-3: 4px;
+	--v-flow-width-4: 5px;
+	--v-flow-width-5: 6px;
 
 	--v-z-content: 10;
 	--v-z-overlay: 20;

@@ -983,16 +983,16 @@ async function flowV2(body, view) {
 	const { lines, cards } = await flowV2({ observations: [liveRow(1005, 50, 0.1), liveRow(1006, 8, 0.95), liveRow(1015, 20, 0.5)] }, live);
 	const j = lines['seg:1006'];
 	check(
-		'v2 flow: a jammed road comes forward — stop 5 width + its casing, --v-flow-5 at 90 %',
-		j?.material?.outlined === true && j.width === jam.width + 2.5 && j.material.outlineWidth === 2.5 && cssOfColor(j.material.color) === M.SYM.inkAlpha(jam.color, 0.9),
+		'v2 flow: a jammed road comes forward — stop 5 width + its casing, --v-flow-5 opaque',
+		j?.material?.outlined === true && j.width === jam.width + 2.5 && j.material.outlineWidth === 2.5 && cssOfColor(j.material.color) === M.SYM.inkAlpha(jam.color, 1),
 		JSON.stringify({ w: j?.width, c: cssOfColor(j?.material?.color), o: j?.material?.outlineWidth }),
 	);
 	const m = lines['seg:1015'];
 	check('v2 flow: the casing starts at stop 3 (moderate)', m?.material?.outlined === true && m.width === mid.width + 2.5 && mid.casing !== null && free.casing === null);
 	const f = lines['seg:1005'];
 	check(
-		'v2 flow: a free road recedes — stop 1, thin, --v-flow-1 at 55 %, no casing (a schematic chord stays dashed)',
-		f?.material?.dashed === true && f.width === free.width && cssOfColor(f.material.color) === M.SYM.inkAlpha(free.color, 0.55) && !f.material.gapColor,
+		'v2 flow: a free road stays legible — stop 1, thin, --v-flow-1 at 95 %, its dashes on the dark ground casing (a schematic chord stays dashed)',
+		f?.material?.dashed === true && f.width === free.width && cssOfColor(f.material.color) === M.SYM.inkAlpha(free.color, 0.95) && !!f.material.gapColor,
 		JSON.stringify({ w: f?.width, c: cssOfColor(f?.material?.color) }),
 	);
 	const used = Object.values(lines).flatMap((l) => [cssOfColor(l.material?.color ?? l.material)].filter(Boolean));
@@ -1006,7 +1006,7 @@ async function flowV2(body, view) {
 	check('v2 flow: no band, act, data or tool colour on the roads', !used.some((css) => hues.some((h) => css.includes(h))));
 	const sel = await flowV2({ observations: [liveRow(1006, 8, 0.95)] }, { ...live, selection: 'vehicle:X', items: ['vehicle:X'], version: 2 });
 	const js = sel.lines['seg:1006'];
-	check('v2 flow: under a selection 60 % and 0.5 px thinner', js?.width === jam.width - 0.5 + 2.5 && cssOfColor(js.material.color) === M.SYM.inkAlpha(jam.color, 0.9 * 0.6), JSON.stringify({ w: js?.width, c: cssOfColor(js?.material?.color) }));
+	check('v2 flow: under a selection 60 % and 0.5 px thinner', js?.width === jam.width - 0.5 + 2.5 && cssOfColor(js.material.color) === M.SYM.inkAlpha(jam.color, 1 * 0.6), JSON.stringify({ w: js?.width, c: cssOfColor(js?.material?.color) }));
 	const nd = sel.lines['seg:1015'];
 	check('v2 flow: a NO DATA road is a 1 px trace dimmer than free', nd?.width === 1 && cssOfColor(nd.material) === M.SYM.inkAlpha(free.color, 0.35 * 0.6), JSON.stringify({ w: nd?.width, c: cssOfColor(nd?.material) }));
 	const emu = await flowV2({ observations: [liveRow(1005, 41, 0.35)], emulated_observations: [emuRow(1005, 8, 0.92)] }, live);

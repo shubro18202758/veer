@@ -12,7 +12,7 @@
  * Asserts:
  *   1. the page renders: zero page errors; the canvas is up (window.__GODS_EYE__ phase ready, its contract keys all
  *      present) and the V3 chrome around it; NO v2 canvas chrome on /map (no .ge-hud toolbar, no MapNav, no readout);
- *   2. clean by default: the canvas's layers are exactly events, convoy, traces, enforcement, osint;
+ *   2. by default: the canvas's layers are exactly events, convoy, traces, enforcement, osint + the live city (flow, cameras, units);
  *   3. counts: each chip's count = its Now group's rows; Needs your decision = selectors.decisionUnits() = the rail's
  *      Decide badge; the fixture's 3 live operations, 4 reports, 3 plans;
  *   4. a chip hides its group: Reported in the city off → the osint layer off and the group gone from the Now list;
@@ -99,7 +99,7 @@ const E = fx.expect;
 const writes = [];
 const errors = [];
 const HOOK_KEYS = ['phase', 'imageryMode', 'imageryNote', 'tilesLoaded', 'entityCount', 'distinctLayerIds', 'stats', 'offlineDetected', 'sensorMode', 'camera', 'orbiting', 'selectedEventId', 'subjectLockId', 'picked', 'amaAgeSec', 'pursuitEntities', 'layerStats', 'selection', 'registry', 'replay', 'vitals', 'locate', 'ready'];
-const DEFAULTS = ['events', 'convoy', 'traces', 'enforcement', 'osint'];
+const DEFAULTS = ['events', 'convoy', 'traces', 'enforcement', 'osint', 'flow', 'cameras', 'units'];
 
 const browser = await puppeteer.launch({
 	executablePath: CHROME,
@@ -175,7 +175,7 @@ try {
 	}, HOOK_KEYS);
 	ok('1. the canvas is up under chrome v3 (phase ready) and its __GODS_EYE__ contract is whole', s1.phase === 'ready' && s1.missing.length === 0, s1.missing.length ? `missing ${s1.missing.join(',')}` : 'all keys');
 	ok('1. the V3 chrome is there (chips, Now, tools) and NO v2 canvas chrome renders on /map', s1.chrome && !s1.v2Toolbar);
-	ok('2. clean by default: events, convoy, traces, enforcement, osint — nothing else', JSON.stringify(s1.layers) === JSON.stringify([...DEFAULTS].sort()), s1.layers.join(','));
+	ok('2. by default: events, convoy, traces, enforcement, osint + flow, cameras, units — nothing else', JSON.stringify(s1.layers) === JSON.stringify([...DEFAULTS].sort()), s1.layers.join(','));
 	ok('3. each chip counts its Now group', ['live', 'decide', 'reported', 'planned'].every((g) => s1.chips[g] === s1.rowsBy[g]), JSON.stringify({ chips: s1.chips, rows: s1.rowsBy }));
 	ok('3. Needs your decision = selectors.decisionUnits() = the Decide badge', s1.chips.decide === s1.hook?.canonical?.decisions && s1.badge === s1.chips.decide && s1.chips.decide === E.units, `${s1.chips.decide} / ${s1.hook?.canonical?.decisions} / ${s1.badge}`);
 	ok('3. the fixture world: 3 live operations, 4 reports, 3 plans', s1.rowsBy.live === E.liveOps && s1.rowsBy.reported === E.reports && s1.rowsBy.planned === E.planned, JSON.stringify(s1.rowsBy));
@@ -216,23 +216,23 @@ try {
 		};
 	});
 	ok('5. L opens the Layers sheet: base map (2), the seven switches, the Vehicles-only rule', s5.open && s5.base === 2 && s5.switches.length === 7 && s5.rule && s5.faces, JSON.stringify(s5));
-	await page.click('[data-testid="v3-layers-sheet"] [data-layer="cameras"]');
+	await page.click('[data-testid="v3-layers-sheet"] [data-layer="signals"]');
 	await sleep(2500);
 	const s5b = await page.evaluate(() => ({
 		layers: window.__GODS_EYE__?.distinctLayerIds ?? [],
-		checked: document.querySelector('[data-testid="v3-layers-sheet"] [data-layer="cameras"]')?.getAttribute('aria-checked'),
-		row: document.querySelector('[data-layer-row="cameras"]')?.textContent ?? '',
+		checked: document.querySelector('[data-testid="v3-layers-sheet"] [data-layer="signals"]')?.getAttribute('aria-checked'),
+		row: document.querySelector('[data-layer-row="signals"]')?.textContent ?? '',
 		count: document.querySelector('[data-testid="v3-map-layers"]')?.textContent ?? '',
 	}));
-	ok('5. a switch turns the canvas layer on (ANPR cameras), its provenance in words', s5b.layers.includes('cameras') && s5b.checked === 'true' && /Emulated/.test(s5b.row) && /28/.test(s5b.row), s5b.row.replace(/\s+/g, ' ').trim());
-	ok('5. the Layers chip says how many extra layers are on', /1 on/.test(s5b.count), s5b.count.trim());
+	ok('5. a switch turns the canvas layer on (junctions and signals), its row in words', s5b.layers.includes('signals') && s5b.checked === 'true' && /Junctions and signals/.test(s5b.row), s5b.row.replace(/\s+/g, ' ').trim());
+	ok('5. the Layers chip says how many extra layers are on (the three live-city layers + the one switched on)', /4 on/.test(s5b.count), s5b.count.trim());
 	await shot(page, 'map-1920-layers.png');
 	await page.keyboard.press('Escape');
 	await sleep(400);
 	ok('5. Esc closes the sheet first', !(await page.$('[data-testid="v3-layers-sheet"]')));
 	await page.keyboard.press('l');
-	await page.waitForSelector('[data-testid="v3-layers-sheet"] [data-layer="cameras"]', { timeout: 5000 }).catch(() => {});
-	await page.click('[data-testid="v3-layers-sheet"] [data-layer="cameras"]').catch(() => {});
+	await page.waitForSelector('[data-testid="v3-layers-sheet"] [data-layer="signals"]', { timeout: 5000 }).catch(() => {});
+	await page.click('[data-testid="v3-layers-sheet"] [data-layer="signals"]').catch(() => {});
 	await page.keyboard.press('Escape');
 	await sleep(600);
 

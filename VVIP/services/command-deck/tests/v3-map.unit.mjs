@@ -10,7 +10,7 @@
  *              word outside the acronyms); HI / GU translated and in their own script; the honesty words hold in all
  *              three: the thermal-style view is a visual filter with no thermal sensor, the 3D city is not a live
  *              image, Vehicles only and no faces kept; no string says infrared / FLIR / thermal camera / night vision
- *   defaults   V3_DEFAULT_LAYERS is §5.6's five; V3_OFF_LAYERS the seven others; together they are every canvas layer
+ *   defaults   V3_DEFAULT_LAYERS is §5.6's five + the live city (flow, cameras, units); V3_OFF_LAYERS the four others; together they are every canvas layer
  *              but the photoreal city (read from layers/*.ts); the Layers sheet lists exactly the OFF ones
  *   groups     groupLayerState: a layer two groups draw stays while either is on; every group's layers exist
  *   now items  nowFrom* keep Home's masked titles and provenance; pickItem prefers the officer's row, then live →
@@ -153,11 +153,11 @@ const text = (v) => (typeof v === 'function' ? String(v('‹x›', '‹y›')) :
 		.filter((f) => f.endsWith('.ts'))
 		.flatMap((f) => [...readFileSync(path.join(SRC, 'lib/gods-eye/layers', f), 'utf8').matchAll(/^\tid: '([a-z0-9-]+)',$/gm)].map((m) => m[1]));
 	const layerIds = new Set(ids.filter((x) => x !== 'photoreal-3d'));
-	ok('defaults: §5.6 — events, convoy, traces, enforcement, osint on', JSON.stringify([...model.V3_DEFAULT_LAYERS].sort()) === JSON.stringify(['convoy', 'enforcement', 'events', 'osint', 'traces']));
-	ok('defaults: cameras, signals, flow, units, dispatch, anomalies, places off', JSON.stringify([...model.V3_OFF_LAYERS].sort()) === JSON.stringify(['anomalies', 'cameras', 'dispatch', 'flow', 'places', 'signals', 'units']));
+	ok('defaults: §5.6 — events, convoy, traces, enforcement, osint on, plus the live city (flow, cameras, units)', JSON.stringify([...model.V3_DEFAULT_LAYERS].sort()) === JSON.stringify(['cameras', 'convoy', 'enforcement', 'events', 'flow', 'osint', 'traces', 'units']));
+	ok('defaults: signals, dispatch, anomalies, places off (flow, cameras and units open on)', JSON.stringify([...model.V3_OFF_LAYERS].sort()) === JSON.stringify(['anomalies', 'dispatch', 'places', 'signals']) && ['flow', 'cameras', 'units'].every((l) => model.V3_DEFAULT_LAYERS.includes(l)));
 	const union = new Set([...model.V3_DEFAULT_LAYERS, ...model.V3_OFF_LAYERS]);
 	ok('defaults: on + off = every canvas layer but the photoreal city (layers/*.ts)', union.size === layerIds.size && [...layerIds].every((x) => union.has(x)), [...layerIds].sort().join(','));
-	ok('sheet: lists exactly the layers that start off', JSON.stringify([...model.SHEET_LAYER_IDS].sort()) === JSON.stringify([...model.V3_OFF_LAYERS].sort()));
+	ok('sheet: lists the layers that start off plus the live-city layers that open on', JSON.stringify([...model.SHEET_LAYER_IDS].sort()) === JSON.stringify([...model.V3_OFF_LAYERS, 'flow', 'cameras', 'units'].sort()));
 	ok('groups: every group layer is a real layer and on by default', Object.values(model.GROUP_LAYERS).flat().every((x) => layerIds.has(x) && model.V3_DEFAULT_LAYERS.includes(x)));
 	const st = (o) => model.groupLayerState({ live: true, decide: true, reported: true, planned: true, ...o });
 	ok('groups: Live off keeps events (Coming up still draws them), drops convoy and traces', st({ live: false }).events === true && st({ live: false }).convoy === false && st({ live: false }).traces === false);

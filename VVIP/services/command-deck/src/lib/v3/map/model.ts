@@ -38,11 +38,12 @@ export const GROUP_LAYERS: Readonly<Record<GroupId, readonly string[]>> = {
 	planned: ['events'],
 };
 
-/** V3-SPEC §5.6: the layers on when the map opens (no share link). */
-export const V3_DEFAULT_LAYERS: readonly string[] = ['events', 'convoy', 'traces', 'enforcement', 'osint'];
+/** The layers on when the map opens (no share link): §5.6's five, plus the live city — traffic on every road, the
+ *  ANPR cameras and the field units — so the map opens alive; each of those three stays a switch in the sheet. */
+export const V3_DEFAULT_LAYERS: readonly string[] = ['events', 'convoy', 'traces', 'enforcement', 'osint', 'flow', 'cameras', 'units'];
 
-/** The layers §5.6 starts OFF (each one a switch in the Layers sheet). */
-export const V3_OFF_LAYERS: readonly string[] = ['cameras', 'signals', 'flow', 'units', 'dispatch', 'anomalies', 'places'];
+/** The layers the map starts OFF (each one a switch in the Layers sheet). */
+export const V3_OFF_LAYERS: readonly string[] = ['signals', 'dispatch', 'anomalies', 'places'];
 
 /** Each group layer's wanted state for the chips' on/off set: on while ANY group drawing it is on. */
 export function groupLayerState(on: Readonly<Record<GroupId, boolean>>): Record<string, boolean> {

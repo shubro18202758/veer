@@ -127,7 +127,8 @@ function rampColor(idx: number): string {
  * trace, px), its alphas, and how long a reading that changes the picture
  * may wait for a draped build still in flight (ms).
  */
-export const FLOW_V2 = { casing: 1.25, noData: 1, freeAlpha: 0.55, alpha: 0.9, noDataAlpha: 0.35, deferMaxMs: 45_000 } as const;
+/** The road under every reading keeps a dark casing: a light line alone vanishes into satellite and 3D imagery. */
+export const FLOW_V2 = { casing: 1.25, noData: 1, freeAlpha: 0.95, alpha: 1, noDataAlpha: 0.35, deferMaxMs: 45_000, groundCasing: 'rgba(17, 17, 17, 0.85)' } as const;
 
 /**
  * Chrome v2: one segment on the neutral ramp (flowStyle(flowStop(c))) — its
@@ -147,7 +148,7 @@ function v2Line(
 	const alpha = (ramp.stop === 1 ? FLOW_V2.freeAlpha : FLOW_V2.alpha) * dim.alpha;
 	const core = Math.max(1, ramp.width - dim.thinPx);
 	const color = cesium.Color.fromCssColorString(inkAlpha(ramp.color, alpha));
-	const casing = ramp.casing ? cesium.Color.fromCssColorString(inkAlpha(ramp.casing, Math.min(1, 0.85 * dim.alpha))) : null;
+	const casing = cesium.Color.fromCssColorString(inkAlpha(ramp.casing ?? FLOW_V2.groundCasing, Math.min(1, 0.85 * dim.alpha)));
 	if (schematic) {
 		// a chord is not the road's true shape: dashed, its gaps the casing (or clear)
 		return { width: core, material: new cesium.PolylineDashMaterialProperty({ color, gapColor: casing ?? undefined, dashLength: 12 }) };
