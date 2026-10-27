@@ -1,3 +1,16 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="VVIP/services/command-deck/static/brand/veer-lockup.svg">
+    <img alt="Veer" src="VVIP/services/command-deck/static/brand/veer-lockup-day.svg" width="220">
+  </picture>
+</p>
+
+<p align="center">
+  <img alt="Technical design" src="https://img.shields.io/badge/document-technical%20design-276EF1?style=flat-square">
+  <img alt="Diagrams" src="https://img.shields.io/badge/diagrams-29%20Mermaid-FF3E00?style=flat-square&logo=mermaid&logoColor=white">
+  <img alt="ADRs" src="https://img.shields.io/badge/design%20decisions-17%20ADRs-111111?style=flat-square">
+</p>
+
 # Veer — Technical Design Document
 
 Veer is a city operations platform for Ahmedabad. It plans corridor events (protected movements, processions,

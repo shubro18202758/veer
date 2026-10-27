@@ -1,3 +1,13 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../VVIP/services/command-deck/static/brand/veer-lockup.svg">
+    <img alt="Veer" src="../VVIP/services/command-deck/static/brand/veer-lockup-day.svg" width="180">
+  </picture>
+</p>
+<p align="center">
+  <img alt="environment reference" src="https://img.shields.io/badge/document-environment%20reference-276EF1?style=flat-square"> <img alt="Secrets" src="https://img.shields.io/badge/secrets-never%20committed-FF5C61?style=flat-square">
+</p>
+
 # Veer — Environment Variable Reference
 
 Every environment variable the Veer stack reads, where it is read, its default, and what it does. The values here

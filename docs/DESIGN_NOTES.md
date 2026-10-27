@@ -1,3 +1,13 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../VVIP/services/command-deck/static/brand/veer-lockup.svg">
+    <img alt="Veer" src="../VVIP/services/command-deck/static/brand/veer-lockup-day.svg" width="180">
+  </picture>
+</p>
+<p align="center">
+  <img alt="design notes" src="https://img.shields.io/badge/document-design%20notes-FF9F43?style=flat-square"> <img alt="Wireframes" src="https://img.shields.io/badge/wireframes-8%20%2B%205%20prototypes-111111?style=flat-square">
+</p>
+
 # Veer — design notes
 
 These notes describe the design of Veer's interface as it ships (the **V3** interface, deployed on 2026-10-27):

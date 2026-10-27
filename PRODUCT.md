@@ -1,3 +1,16 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="VVIP/services/command-deck/static/brand/veer-lockup.svg">
+    <img alt="Veer" src="VVIP/services/command-deck/static/brand/veer-lockup-day.svg" width="220">
+  </picture>
+</p>
+
+<p align="center">
+  <img alt="Product description" src="https://img.shields.io/badge/document-product%20description-276EF1?style=flat-square">
+  <img alt="Audience" src="https://img.shields.io/badge/for-officials%20%C2%B7%20officers%20%C2%B7%20engineers-111111?style=flat-square">
+  <img alt="Live" src="https://img.shields.io/badge/V3-live%20since%202026--10--27-2ea44f?style=flat-square">
+</p>
+
 # Veer — Product Description
 
 Veer is a city-scale, multi-agency operations platform for Ahmedabad, Gujarat. It gives the city's traffic police,

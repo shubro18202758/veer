@@ -1,3 +1,13 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../VVIP/services/command-deck/static/brand/veer-lockup.svg">
+    <img alt="Veer" src="../VVIP/services/command-deck/static/brand/veer-lockup-day.svg" width="180">
+  </picture>
+</p>
+<p align="center">
+  <img alt="sample data and tests" src="https://img.shields.io/badge/document-sample%20data%20and%20tests-2ea44f?style=flat-square"> <img alt="Test cases" src="https://img.shields.io/badge/test%20cases-35-111111?style=flat-square">
+</p>
+
 # Veer — sample data and tests
 
 This document lists every dataset the repository ships, says what each one is and where it comes from, and

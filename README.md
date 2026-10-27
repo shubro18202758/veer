@@ -1,8 +1,48 @@
-<h1 align="center">Veer</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="VVIP/services/command-deck/static/brand/veer-lockup.svg">
+    <img alt="Veer" src="VVIP/services/command-deck/static/brand/veer-lockup-day.svg" width="300">
+  </picture>
+</p>
 
 <p align="center">
   <strong>Ahmedabad's city-scale operating picture for corridor events and vehicle enforcement —<br/>
   the AI proposes, a named officer decides.</strong>
+</p>
+
+<p align="center">
+  <img alt="Status: live on the edge server" src="https://img.shields.io/badge/status-live%20on%20the%20edge%20server-2ea44f?style=flat-square">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-276EF1?style=flat-square">
+  <img alt="Tests: 5,123 pytest + 120 cargo" src="https://img.shields.io/badge/tests-5%2C123%20pytest%20%2B%20120%20cargo-2ea44f?style=flat-square">
+  <img alt="Migrations 001–025" src="https://img.shields.io/badge/migrations-001%E2%80%93025-555555?style=flat-square">
+  <img alt="Languages: English, Hindi, Gujarati" src="https://img.shields.io/badge/languages-EN%20%C2%B7%20%E0%A4%B9%E0%A4%BF%E0%A4%82%E0%A4%A6%E0%A5%80%20%C2%B7%20%E0%AA%97%E0%AB%81%E0%AA%9C%E0%AA%B0%E0%AA%BE%E0%AA%A4%E0%AB%80-FF9F43?style=flat-square">
+  <img alt="City: Ahmedabad, Gujarat" src="https://img.shields.io/badge/city-Ahmedabad%2C%20Gujarat-FF5C61?style=flat-square">
+</p>
+
+<p align="center">
+  <img alt="Human in the loop" src="https://img.shields.io/badge/AI-proposes%20%C2%B7%20officer%20decides-111111?style=flat-square">
+  <img alt="Vehicles only" src="https://img.shields.io/badge/privacy-vehicles%20only%20%C2%B7%20no%20faces-111111?style=flat-square">
+  <img alt="Plates masked" src="https://img.shields.io/badge/plates-masked%20until%20an%20officer%20is%20named-111111?style=flat-square">
+  <img alt="Honest labels" src="https://img.shields.io/badge/labels-emulated%20%C2%B7%20simulated%20%C2%B7%20official-111111?style=flat-square">
+  <img alt="Local AI" src="https://img.shields.io/badge/AI-local%20models%20on%20one%20edge%20server-111111?style=flat-square">
+</p>
+
+<p align="center">
+  <img alt="SvelteKit" src="https://img.shields.io/badge/SvelteKit-Svelte%205-FF3E00?style=for-the-badge&logo=svelte&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white">
+  <img alt="CesiumJS" src="https://img.shields.io/badge/CesiumJS-photoreal%203D-6CADDF?style=for-the-badge&logo=cesium&logoColor=white">
+  <img alt="MapLibre" src="https://img.shields.io/badge/MapLibre-396CB2?style=for-the-badge&logo=maplibre&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-signal--ingress-000000?style=for-the-badge&logo=rust&logoColor=white">
+  <br/>
+  <img alt="PostgreSQL + PostGIS" src="https://img.shields.io/badge/PostGIS%20%2B%20pgRouting-PostgreSQL%2016-4169E1?style=for-the-badge&logo=postgresql&logoColor=white">
+  <img alt="Valkey" src="https://img.shields.io/badge/Valkey-cache-DC382D?style=for-the-badge&logo=redis&logoColor=white">
+  <img alt="NATS" src="https://img.shields.io/badge/NATS-JetStream-27AAE1?style=for-the-badge&logo=natsdotio&logoColor=white">
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white">
+  <img alt="NVIDIA GB10" src="https://img.shields.io/badge/NVIDIA-GB10%20edge-76B900?style=for-the-badge&logo=nvidia&logoColor=white">
+  <img alt="OpenStreetMap" src="https://img.shields.io/badge/OpenStreetMap-real%20roads-7EBC6F?style=for-the-badge&logo=openstreetmap&logoColor=white">
+  <img alt="Bun" src="https://img.shields.io/badge/Bun-000000?style=for-the-badge&logo=bun&logoColor=white">
 </p>
 
 <p align="center">
@@ -49,7 +89,7 @@ Everything the system emulates or simulates says so on screen.
 2. [How a decision flows](#how-a-decision-flows) — the stolen-vehicle chain and a protected movement, end to end
 3. [Principles the code enforces](#principles-the-code-enforces)
 4. [Capabilities at a glance](#capabilities-at-a-glance)
-5. [Architecture](#architecture)
+5. [Packages](#packages) and [Architecture](#architecture)
 6. [Measured, verified, modelled](#measured-verified-modelled)
 7. [Honest status](#honest-status)
 8. [Setup](#setup) — prerequisites, install, bring-up, verify
@@ -286,24 +326,57 @@ flowchart LR
 
 ## Capabilities at a glance
 
-| Area | What Veer does | Real or emulated in this build |
+|  | Area | What Veer does | Real or emulated in this build |
+|:-:|---|---|---|
+| <img src="VVIP/services/command-deck/static/illustrations/agencies/traffic.svg" width="72" alt=""> | Road network | Ahmedabad's real roads traced on OpenStreetMap — 49 segments, 34 junctions — with pgRouting | **Real** (© OpenStreetMap contributors) |
+| <img src="VVIP/services/command-deck/static/artwork/events/procession.svg" width="72" alt=""> | Corridor events | Eight event classes on one engine: protected movements, processions (Rath Yatra), mass gatherings, races, ceremonial days, stadium egress, flood evacuation, metro work zones | Engine real; scenarios injected by the emulator, labelled |
+| <img src="VVIP/services/command-deck/static/artwork/events/protected_movement.svg" width="72" alt=""> | Predictive rolling holds | Closures 60–180 s ahead per segment, ~2–3-minute holds instead of 15–45-minute freezes | Modelled on the traffic twin |
+| <img src="VVIP/services/command-deck/static/artwork/vehicles/convoy_zplus.svg" width="72" alt=""> | Escort authority | The AI proposes switches / Plan B / holds; an officer approves each; timeout → hold | **Real** workflow |
+| <img src="VVIP/services/command-deck/static/artwork/events/egress_surge.svg" width="72" alt=""> | Adaptive movement adaptation (AMA) | City band (GREEN / AMBER / RED / BLACK) with hysteresis and floors, shadow-evaluated on the twin | Engine real; traffic feed **simulated** |
+| <img src="VVIP/services/command-deck/static/artwork/events/infra_failure.svg" width="72" alt=""> | City signal plans | Band → corridor priority and cross-street green; apply / restore / history behind guards | Writer **off** by default; guarded |
+| <img src="VVIP/services/command-deck/static/artwork/events/vehicle_pursuit.svg" width="72" alt=""> | Stolen-vehicle chain | FIR → earmark → ANPR → evidence-only sighting → officer → pursuit → interception plan | Chain real; ANPR reads **emulated** |
+| <img src="VVIP/services/command-deck/static/artwork/vehicles/ambulance.svg" width="72" alt=""> | 108 green corridor | Driver request → officer approval → timed window with a live countdown | **Real** workflow |
+| <img src="VVIP/services/command-deck/static/artwork/vehicles/patrol.svg" width="72" alt=""> | Multi-agency dispatch | Jan Rakshak, police, 108, fire — each dispatch its own approved request | Units **emulated** |
+| <img src="VVIP/services/command-deck/static/artwork/events/weather.svg" width="72" alt=""> | OSINT event intelligence | Official alerts (NDMA Sachet, IMD), news and public posts → redacted, geolocated, fused situations about places | **Live** public sources (offline mode available) |
+| <img src="VVIP/services/command-deck/static/illustrations/agencies/control_room.svg" width="72" alt=""> | Decision support | Ranked courses of action over nine criteria, simulated on the twin, every decision logged | **Real** engine |
+| <img src="VVIP/services/command-deck/static/artwork/events/advisory.svg" width="72" alt=""> | Two-tier AI | A 27B decider and Gemma 4 12B on the edge box, embeddings for similar past situations, a grounding validator | **Real**, local |
+| <img src="VVIP/services/command-deck/static/artwork/events/advisory.svg" width="72" alt=""> | Advisories | EN / HI / GU drafts for four audiences, "Drafted — not delivered" | Drafts real; no gateway |
+| <img src="VVIP/services/command-deck/static/illustrations/agencies/police.svg" width="72" alt=""> | Audit | Append-only trail of every decision, band change and approval, with "Ask why" | **Real** |
+| <img src="VVIP/services/command-deck/static/artwork/events/mass_gathering.svg" width="72" alt=""> | 3D God's-eye | Google Photorealistic 3D Tiles with every overlay draped on the city | **Real** imagery, labelled not live |
+| <img src="VVIP/services/command-deck/static/illustrations/agencies/police.svg" width="72" alt=""> | Operator gate | Name + duty PIN sign-in; every action recorded under the named officer | **Real** |
+
+---
+
+## Packages
+
+| Package | Stack | What it does |
 |---|---|---|
-| Road network | Ahmedabad's real roads traced on OpenStreetMap — 49 segments, 34 junctions — with pgRouting | **Real** (© OpenStreetMap contributors) |
-| Corridor events | Eight event classes on one engine: protected movements, processions (Rath Yatra), mass gatherings, races, ceremonial days, stadium egress, flood evacuation, metro work zones | Engine real; scenarios injected by the emulator, labelled |
-| Predictive rolling holds | Closures 60–180 s ahead per segment, ~2–3-minute holds instead of 15–45-minute freezes | Modelled on the traffic twin |
-| Escort authority | The AI proposes switches / Plan B / holds; an officer approves each; timeout → hold | **Real** workflow |
-| Adaptive movement adaptation (AMA) | City band (GREEN / AMBER / RED / BLACK) with hysteresis and floors, shadow-evaluated on the twin | Engine real; traffic feed **simulated** |
-| City signal plans | Band → corridor priority and cross-street green; apply / restore / history behind guards | Writer **off** by default; guarded |
-| Stolen-vehicle chain | FIR → earmark → ANPR → evidence-only sighting → officer → pursuit → interception plan | Chain real; ANPR reads **emulated** |
-| 108 green corridor | Driver request → officer approval → timed window with a live countdown | **Real** workflow |
-| Multi-agency dispatch | Jan Rakshak, police, 108, fire — each dispatch its own approved request | Units **emulated** |
-| OSINT event intelligence | Official alerts (NDMA Sachet, IMD), news and public posts → redacted, geolocated, fused situations about places | **Live** public sources (offline mode available) |
-| Decision support | Ranked courses of action over nine criteria, simulated on the twin, every decision logged | **Real** engine |
-| Two-tier AI | A 27B decider and Gemma 4 12B on the edge box, embeddings for similar past situations, a grounding validator | **Real**, local |
-| Advisories | EN / HI / GU drafts for four audiences, "Drafted — not delivered" | Drafts real; no gateway |
-| Audit | Append-only trail of every decision, band change and approval, with "Ask why" | **Real** |
-| 3D God's-eye | Google Photorealistic 3D Tiles with every overlay draped on the city | **Real** imagery, labelled not live |
-| Operator gate | Name + duty PIN sign-in; every action recorded under the named officer | **Real** |
+| [`command-deck`](VVIP/services/command-deck/) | <img src="https://img.shields.io/badge/-SvelteKit-FF3E00?style=flat-square&logo=svelte&logoColor=white"> <img src="https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white"> <img src="https://img.shields.io/badge/-CesiumJS-6CADDF?style=flat-square&logo=cesium&logoColor=white"> | The console for every audience, the operator gate, the public pages, the landing page |
+| [`traffic-oracle`](VVIP/services/traffic-oracle/) | <img src="https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white"> <img src="https://img.shields.io/badge/-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white"> | Traffic, routing, AMA, the twin, enforcement, dispatch, OSINT situations, decision support |
+| [`convoy-brain`](VVIP/services/convoy-brain/) | <img src="https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white"> <img src="https://img.shields.io/badge/-MCP-111111?style=flat-square"> | Two-tier AI, escort workflows, chat, the grounding validator, 29 MCP tools |
+| [`event-emulator`](VVIP/services/event-emulator/) | <img src="https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white"> | The use-case library and the living city, injected through the real APIs |
+| [`signal-ingress`](VVIP/services/signal-ingress/) | <img src="https://img.shields.io/badge/-Rust-000000?style=flat-square&logo=rust&logoColor=white"> <img src="https://img.shields.io/badge/-NATS-27AAE1?style=flat-square&logo=natsdotio&logoColor=white"> | Traffic feed adapters and plausibility checks, Arrow IPC to NATS |
+| [`corridor-store`](VVIP/services/corridor-store/) | <img src="https://img.shields.io/badge/-PostGIS-4169E1?style=flat-square&logo=postgresql&logoColor=white"> <img src="https://img.shields.io/badge/-pgRouting-4169E1?style=flat-square"> | Migrations 001–025, the real-road seed |
+| [`osint-ingress` · `osint-geo` · `osint-analysis` · `osint-common`](VVIP/services/) | <img src="https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white"> | Connectors and redaction, the gazetteer, fusion and credibility, shared ethics checks |
+| [`embedding-service` · `model-host`](VVIP/services/) | <img src="https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white"> <img src="https://img.shields.io/badge/-NVIDIA-76B900?style=flat-square&logo=nvidia&logoColor=white"> | Retrieval for similar past situations; the 27B decider as typed questions |
+
+### Data from, and built for
+
+<p align="center">
+  <img src="VVIP/services/command-deck/static/logos/openstreetmap.svg" height="40" alt="OpenStreetMap">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/cesium.svg" height="40" alt="Cesium">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/ndma.png" height="40" alt="NDMA">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/ndma-sachet.png" height="28" alt="NDMA Sachet">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/imd.png" height="40" alt="IMD">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/gsdma.png" height="28" alt="GSDMA">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/gujarat-police.png" height="40" alt="Gujarat Police">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/ahmedabad-city-police.png" height="40" alt="Ahmedabad City Police">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/emri-108.png" height="28" alt="108 Emergency">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/amc.png" height="40" alt="Ahmedabad Municipal Corporation">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/gmrc.png" height="40" alt="Gujarat Metro">&nbsp;&nbsp;
+  <img src="VVIP/services/command-deck/static/logos/amts.png" height="40" alt="AMTS">
+</p>
+<p align="center"><sub>Agency and data-source marks belong to their owners; Veer is a prototype and is not affiliated with or endorsed by them.</sub></p>
 
 ---
 
