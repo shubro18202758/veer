@@ -1071,8 +1071,8 @@ VVIP/
 
 **1. Clone the repository**
 ```bash
-git clone https://github.com/shubro18202758/VVIP.git
-cd VVIP
+git clone https://github.com/shubro18202758/veer.git
+cd veer/VVIP
 ```
 
 **2. One-time setup** — the host environment and the systemd units
