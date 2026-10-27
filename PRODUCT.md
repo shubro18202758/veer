@@ -150,6 +150,8 @@ level down.
 
 ### 3.2 Home (`/`, also `/home`)
 
+![Home](VVIP/docs/screenshots/home.jpg)
+
 The first screen answers three questions: what needs me, what is happening, what is coming.
 
 - **Featured decision**: the waiting decision with the soonest deadline, over the real satellite map of its place,
@@ -169,6 +171,8 @@ The first screen answers three questions: what needs me, what is happening, what
   named officer decides every action."
 
 ### 3.3 Decide (`/decide`, `/decide/<unit>`)
+
+![Decide](VVIP/docs/screenshots/decide.jpg)
 
 One decision at a time, soonest deadline first. Three zones: the queue on the left, the **real map of the place**
 in the middle, and one decision sheet on the right.
@@ -196,6 +200,10 @@ or dismissed, deferred, expired with the plan kept), with a link to the full rec
 
 ### 3.4 Object page (`/o/<urn>`)
 
+| Vehicle | Reported event | Place |
+|---|---|---|
+| ![Vehicle](VVIP/docs/screenshots/object-vehicle.jpg) | ![Reported event](VVIP/docs/screenshots/object-report.jpg) | ![Place](VVIP/docs/screenshots/object-place.jpg) |
+
 Every record has a page: corridor event, reported (OSINT) event, vehicle, place, operation (convoy), junction,
 camera, dispatch, recommendation and sighting, with a generic layout for any other valid record. Each page has a
 hero map of the place (a lightweight map tile, not a 3D viewer), the title and honest tags, key facts, a timeline
@@ -208,6 +216,8 @@ vehicle page lists only lawful reads; a read without a lawful basis reads "Withh
 record" and fetches nothing.
 
 ### 3.5 Map (`/map`)
+
+![Map on the photoreal 3D city](VVIP/docs/screenshots/map-3d.jpg)
 
 The God's-eye city canvas, clean by default.
 
@@ -233,6 +243,8 @@ The God's-eye city canvas, clean by default.
 
 ### 3.6 Plan a movement (`/plan`)
 
+![Plan a movement](VVIP/docs/screenshots/plan.jpg)
+
 A four-step flow beside a satellite map: **Where to → Routes → Launch → Live**.
 
 1. **Where to** — From and To with place search; the **protection class** as four cards read from the protocol
@@ -252,6 +264,8 @@ A four-step flow beside a satellite map: **Where to → Routes → Launch → Li
 
 ### 3.7 Assistant (`/assistant`)
 
+![Assistant](VVIP/docs/screenshots/assistant.jpg)
+
 "Ask about the city." A conversation with the two-tier AI that reads live operations, decisions, reported events
 and the traffic feed — never people — and **cannot approve, unmask or dispatch**. Answers are short prose with
 tappable object chips; a proposal arrives as a card that opens in Decide, never with an approve button. Suggested
@@ -261,6 +275,8 @@ example, that a figure is simulated or that a backup model answered); model and 
 Every answer is checked against what the tools actually returned (§4.12).
 
 ### 3.8 Advisories (`/comms`)
+
+![Advisories](VVIP/docs/screenshots/advisories.jpg)
 
 The communications desk: "One fact, every audience, every language — drafted for an officer to send, never
 auto-sent."
@@ -277,6 +293,10 @@ auto-sent."
   citizens, and the rule fails closed.
 
 ### 3.9 Analyst (`/analyst` and its family)
+
+| Workspace | Situation wall | City map (3D) |
+|---|---|---|
+| ![Workspace](VVIP/docs/screenshots/analyst-workspace.jpg) | ![Situation wall](VVIP/docs/screenshots/situation-wall.jpg) | ![City map](VVIP/docs/screenshots/city-map-3d.jpg) |
 
 Analyst keeps the full-density professional workspace for supervisors and control-room analysts. Its sub-navigation
 joins four views:
@@ -302,6 +322,10 @@ joins four views:
 
 ### 3.10 Public pages: Citizen and 108 driver
 
+| Citizen | Driver (Gujarati first) |
+|---|---|
+| ![Citizen](VVIP/docs/screenshots/citizen.jpg) | ![Driver](VVIP/docs/screenshots/driver-gujarati.jpg) |
+
 Both public pages need no sign-in, load no operator code, run under a strict content-security policy, receive no map
 key, and are served only from the deck's own public projection of events — never from an operator feed. The
 browser's geolocation, camera and microphone are disabled for the whole site by policy. They use the day theme and
@@ -323,6 +347,10 @@ never use the alert red or the decision orange, whose meanings belong to the ope
   public event up, a labelled scripted fallback walks the steps and sends nothing.
 
 ### 3.11 Languages and accessibility
+
+| Home in Hindi | Decide in Gujarati | Citizen in Gujarati |
+|---|---|---|
+| ![Home in Hindi](VVIP/docs/screenshots/home-hindi.jpg) | ![Decide in Gujarati](VVIP/docs/screenshots/decide-gujarati.jpg) | ![Citizen in Gujarati](VVIP/docs/screenshots/citizen-gujarati.jpg) |
 
 Every user-visible string of the operator screens ships in English, Hindi and Gujarati, loaded on the route that
 needs it; the language follows a cookie shared by all pages. Operational numbers and times stay in Latin digits on
