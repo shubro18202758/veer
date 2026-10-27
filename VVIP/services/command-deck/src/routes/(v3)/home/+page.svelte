@@ -44,7 +44,9 @@
 	import '$lib/v3/packs.v3';
 	import Glyph from '$lib/v3/Glyph.svelte';
 	import { v3Bar } from '$lib/v3/shell/v3-bar.svelte';
-	import { V3_ANALYST } from '$lib/v3/shell/nav';
+	import { V3_NAV } from '$lib/v3/shell/nav';
+	/** "Plan a movement" on the Coming-up rail opens the planner (Plan), not the analyst workspace. */
+	const V3_PLAN = V3_NAV.find((n) => n.id === 'plan') ?? { href: '/plan' };
 	import { earlyHandOverTag, workspaceHandOver } from '$lib/shell/root-flip';
 	import FeatureHero from '$lib/v3/home/FeatureHero.svelte';
 	import CityPulse from '$lib/v3/home/CityPulse.svelte';
@@ -453,7 +455,7 @@
 			title={L('v3_rail_planned')}
 			count={plannedVMs.length}
 			sub={L('v3_rail_planned_sub')}
-			more={{ href: V3_ANALYST.href, text: L('v3_rail_planned_more'), glyph: 'plus' }}
+			more={{ href: V3_PLAN.href, text: L('v3_rail_planned_more'), glyph: 'plus' }}
 			empty={plannedVMs.length ? null : L('v3_rail_empty_planned')}
 			{lang}
 		>
